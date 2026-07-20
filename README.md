@@ -107,6 +107,8 @@ uv run ruff check .
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md). Security reports: [SECURITY.md](./SECURITY.md).
 
+**If Caspian saved you time, [a star](https://github.com/TryCaspian/caspian-sdk/stargazers) helps other agent builders find it.** ⭐
+
 ## License
 
 Apache-2.0 for this repository. The `caspian-sdk` package on PyPI is MIT.
