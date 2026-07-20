@@ -128,6 +128,7 @@ class SESEmailProvider:
             raise ValueError("COMM_SES_DOMAIN is required for the ses provider")
         self._region = region
         self._domain = domain
+        self.default_domain = domain  # platform domain used when no custom domain
         self._bucket = s3_bucket
         self._topic_arns = {t.strip() for t in topic_arn.split(",") if t.strip()}
         self._verify_sns = verify_sns

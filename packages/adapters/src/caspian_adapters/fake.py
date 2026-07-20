@@ -25,6 +25,7 @@ class FakeEmailProvider:
     name = "fake"
     channel = "email"
     capabilities = frozenset({Capability.RECEIVE, Capability.REPLY})
+    default_domain = "sandbox.comm.local"
 
     def __init__(self) -> None:
         self.inboxes: dict[str, dict] = {}
@@ -53,7 +54,7 @@ class FakeEmailProvider:
         local_part = request.username or (
             f"{_slug(request.display_name or request.agent_id)}-{secrets.token_hex(3)}"
         )
-        address = f"{local_part}@{request.domain or 'sandbox.comm.local'}"
+        address = f"{local_part}@{request.domain or self.default_domain}"
         self.inboxes[inbox_id] = {"address": address, "connection_id": request.connection_id}
         return ProvisionResult(
             address=address,
