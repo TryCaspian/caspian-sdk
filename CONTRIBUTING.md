@@ -5,8 +5,8 @@ Thanks for helping build Caspian's open core.
 ## Setup
 
 ```bash
-git clone https://github.com/Clawies/caspian.git
-cd caspian && uv sync
+git clone https://github.com/TryCaspian/caspian-sdk.git
+cd caspian-sdk && uv sync
 uv run pytest        # everything should be green before you start
 uv run ruff check .
 ```

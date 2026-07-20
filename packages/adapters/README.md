@@ -19,4 +19,4 @@ Additional providers (hosted channels like WhatsApp Business numbers, phone/voic
 my-channel = "my_pkg.providers:build_my_channel"
 ```
 
-Part of [Caspian](https://github.com/Clawies/caspian). Managed channels with the same interface: [trycaspianai.com](https://trycaspianai.com).
+Part of [Caspian](https://github.com/TryCaspian/caspian-sdk). Managed channels with the same interface: [trycaspianai.com](https://trycaspianai.com).
