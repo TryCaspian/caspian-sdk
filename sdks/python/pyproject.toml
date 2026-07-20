@@ -1,0 +1,34 @@
+[project]
+name = "caspian-sdk"
+version = "0.1.2"
+description = "One identity for your AI agent across every channel — email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage — behind a single on_message handler."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Caspian", email = "ayushguptadev1@gmail.com" }]
+keywords = ["ai", "agents", "communication", "sdk", "slack", "discord", "whatsapp", "sms", "chatbot"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+]
+
+[project.urls]
+Homepage = "https://trycaspianai.com"
+Documentation = "https://api.trycaspianai.com/SKILL.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# PyPI name is "caspian-sdk"; the import package is "caspian_sdk".
+packages = ["src/caspian_sdk"]

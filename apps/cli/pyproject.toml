@@ -1,0 +1,15 @@
+[project]
+name = "comm-cli"
+version = "0.1.0"
+description = "CLI for the communication gateway: init, connect, listen, test"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx>=0.28,<1",
+]
+
+[project.scripts]
+comm = "comm_cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

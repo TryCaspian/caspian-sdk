@@ -1,0 +1,40 @@
+[project]
+name = "caspian-sdk-workspace"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "comm-cli",
+  "caspian-adapters",
+  "caspian-sdk",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+comm-cli = { workspace = true }
+caspian-adapters = { workspace = true }
+caspian-sdk = { workspace = true }
+
+[tool.uv.workspace]
+members = ["apps/cli", "packages/adapters", "sdks/python"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/adapters/tests", "sdks/python/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+
