@@ -188,8 +188,13 @@ class CommClient:
         username: str | None = None,
         **kwargs,
     ) -> dict:
-        """Connect an email inbox. Pass domain= for a verified custom domain and
-        username= to pick the exact local part (custom domains only)."""
+        """Connect an email inbox.
+
+        Pass username= to pick a readable mailbox name (e.g. "scout" ->
+        scout@agents.trycaspianai.com); it works on the default platform domain
+        or a verified custom domain (pass domain= too). If the name is taken the
+        API returns 409 with a ``suggestions`` list of free alternatives.
+        """
         return self._connect(
             "email", customer_id, agent_id, domain=domain, username=username, **kwargs
         )
