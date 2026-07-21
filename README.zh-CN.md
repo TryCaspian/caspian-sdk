@@ -301,7 +301,8 @@ providers = build_providers(Settings(
 
 ## 社区与支持
 
-- **Bug / 想法**——[GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
+- **提问、想法、作品展示**——[GitHub Discussions](https://github.com/TryCaspian/caspian-sdk/discussions)
+- **Bug**——[GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
 - **安全问题**——见 [SECURITY.md](./SECURITY.md)（请勿公开提交漏洞 issue）
 - **托管产品与联系**——[trycaspianai.com](https://trycaspianai.com)
 

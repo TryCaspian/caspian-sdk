@@ -300,7 +300,8 @@ providers = build_providers(Settings(
 
 ## Community & support
 
-- **Bugs / ideas** — [GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
+- **Questions, ideas, show & tell** — [GitHub Discussions](https://github.com/TryCaspian/caspian-sdk/discussions)
+- **Bugs** — [GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
 - **Security** — see [SECURITY.md](./SECURITY.md) (please, no public issues for vulnerabilities)
 - **Hosted product & contact** — [trycaspianai.com](https://trycaspianai.com)
 
