@@ -302,8 +302,9 @@ providers = build_providers(Settings(
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 70 tests, all offline
+uv run pytest        # 70 Python tests, all offline
 uv run ruff check .
+cd sdks/typescript && npm ci && npm test   # 10 vitest tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
