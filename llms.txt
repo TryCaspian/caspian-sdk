@@ -56,7 +56,8 @@ Each provider implements: `provision(request)`, `send(inbox_id, message, credent
 
 - README.md — overview, channel matrix, quickstart
 - packages/adapters/src/caspian_adapters/ — one module per channel; base.py is the interface; registry.py builds providers from Settings
-- sdks/python/src/caspian_sdk/client.py — the full client surface
+- sdks/python/src/caspian_sdk/client.py — the full Python client surface
+- sdks/typescript/src/client.ts — the full TypeScript client surface (same API, camelCase)
 - apps/cli/ — `comm init | connect | status | listen | test-email`
 - .env.example — every adapter configuration knob, documented
 - CONTRIBUTING.md — adapter authoring rules (official APIs only, fakes + tests required)
