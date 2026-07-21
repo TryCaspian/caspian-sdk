@@ -72,6 +72,46 @@ def test_connect_email_waits_for_provisioning():
     assert ("GET", "/v1/connections/conn_1") in calls
 
 
+def test_connect_telegram_waits_for_provisioning():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        calls.append((request.method, request.url.path, body))
+        if request.method == "POST":
+            return httpx.Response(
+                201,
+                json={"id": "conn_tg", "status": "provisioning", "address": None},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "conn_tg",
+                "status": "active",
+                "address": "@acme_support_bot",
+            },
+        )
+
+    client = _client(handler)
+    try:
+        connection = client.connect_telegram(
+            bot_token="123456:ABC-DEF",
+            display_name="Acme Telegram Support",
+            poll_interval=0.01,
+        )
+    finally:
+        client.close()
+    assert connection["status"] == "active"
+    assert connection["address"] == "@acme_support_bot"
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == "/v1/connections/telegram"
+    assert calls[0][2]["bot_token"] == "123456:ABC-DEF"
+    assert calls[0][2]["display_name"] == "Acme Telegram Support"
+    assert ("GET", "/v1/connections/conn_tg", {}) in [
+        (m, p, b) for m, p, b in calls
+    ]
+
+
 def test_connect_no_wait_returns_immediately():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(201, json={"id": "conn_2", "status": "provisioning"})
