@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="Caspian — one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="720">
+    <img alt="Caspian — one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
   </picture>
 </p>
 
@@ -26,9 +26,13 @@
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
 </p>
 
+<p align="center">
+  <strong>The largest OSS agent frameworks each built 25+ channel adapters — and still spend<br/>8–15% of their issue trackers on channel plumbing. Caspian makes it one handler.</strong>
+</p>
+
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on Slack, Discord, Telegram, Instagram, email, X, and beyond — one connect call per channel, one handler for all of them, threading and webhook verification handled.
+Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
 ```bash
 pip install caspian-sdk      # Python
@@ -72,7 +76,7 @@ Adding a channel is one more `connect_*()` call — never new handler code.
 
 ## Why Caspian exists
 
-Teams that put agents on human channels drown in communication plumbing — and the pain isn't `send()`, it's **lifecycle and identity**: session/auth desync, reconnect loops, silent connection failures, cross-channel identity bugs. In our survey of 42 open-source agent projects, the largest frameworks each built **25+ internal channel adapters** and *still* spend **8–15% of their entire issue trackers** on channel plumbing.
+The pain isn't `send()` — it's **lifecycle and identity**: session/auth desync, reconnect loops, silent connection failures, cross-channel identity bugs. We measured it across 42 open-source agent projects before writing a line of this code.
 
 Caspian's answer: **channels are transports, not identities.** The agent is one identity; every channel binds to it through the same small adapter interface, and your handler code never learns which platform it's on.
 
