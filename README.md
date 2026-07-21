@@ -18,6 +18,10 @@
 </p>
 
 <p align="center">
+  <b>English</b> · <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
   <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
@@ -42,6 +46,14 @@ Your agent's reasoning decides **what** to say. Caspian is **how it exists** on 
 pip install caspian-sdk      # Python
 npm install caspian-sdk      # TypeScript / Node 18+
 ```
+
+Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `COMM_API_KEY` + `COMM_BASE_URL` to your `.env`:
+
+```bash
+comm init
+```
+
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `COMM_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`comm login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **Python:**
 
@@ -120,11 +132,21 @@ client.listen()
 
 > **Using a coding agent?** Point it at [`llms.txt`](./llms.txt) — or, against a running gateway, `GET /SKILL.md` — and it can do the entire integration for you.
 
-## Why Caspian exists
+## The problem
 
-The pain isn't `send()` — it's **lifecycle and identity**: session/auth desync, reconnect loops, silent connection failures, cross-channel identity bugs. We measured it across 42 open-source agent projects before writing a line of this code.
+Every agent team ends up rebuilding the same four things — and none of them make the agent smarter.
 
-Caspian's answer: **channels are transports, not identities.** The agent is one identity; every channel binds to it through the same small adapter interface, and your handler code never learns which platform it's on.
+**1. You own infrastructure you never wanted.** Writing the Slack bot is a weekend; owning it is forever. Session/auth desync, reconnect loops, silent connection failures, payload changes on every platform version bump. The pain isn't `send()` — sending is a solved call. The pain is the **lifecycle**. The largest OSS agent frameworks each maintain 25+ channel adapters in-tree and still spend 8–15% of their issue trackers on channel plumbing. (We measured 42 open-source agent projects before writing a line of this code.)
+
+**2. Communication isn't part of your agent's decision-making.** With one-off, per-channel integrations, a developer decided at build time where and how the agent talks. The agent itself can't reason *"this deserves a quick Telegram ping now and an email summary afterwards"* — each channel is a separate bot with separate code and a separate identity. Communication stays hardcoded plumbing instead of becoming a capability the model can actually decide with.
+
+**3. You maintain N identities for every one person.** The same human DMs your agent on Instagram today and emails it tomorrow. Now *your* database needs its own concept of "this is one person, one relationship, one running conversation" — who said what on which channel, and what should happen next in the flow. Every team rebuilds that continuity layer from scratch, per app, and it never stops needing care.
+
+**4. A single-channel agent is a competitive disadvantage.** If a competing agent is reachable on five channels and yours on one, users go where they get answered. The open-source numbers show it: the agents people actually rely on are exactly the ones deployed across dozens of human channels — and that reach is exactly where their engineering time goes.
+
+## Caspian's answer
+
+**Channels are transports, not identities.** The agent is one identity; every channel binds to it through the same small adapter interface, and your handler code never learns which platform it's on. Messages arrive in one normalized conversation/message model regardless of transport, threading is owned by the layer, and `message.reply()` always answers in the right place — so cross-channel continuity lives in one place instead of five databases. Per-channel etiquette comes from `client.behavior_prompt()`, so *how to talk where* becomes something your model reasons about, not something you hardcode.
 
 ```mermaid
 flowchart LR
@@ -232,6 +254,19 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 </details>
 
+## Where to use it
+
+If your agent needs to talk to humans, this is the layer under it:
+
+- **Customer support agents** — answer on email, Slack, Instagram DM, or wherever the customer opened the thread; hand off to a human without dropping context.
+- **Sales & lead follow-up** — first touch on the channel the lead used, follow-ups where they actually respond.
+- **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
+- **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
+- **OpenClaw agents** — [`openclaw-caspian`](./packages/openclaw) is one plugin install for every Caspian channel.
+- **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
+
+Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
+
 ## Recipes
 
 **Same agent, three channels:**
@@ -284,6 +319,7 @@ providers = build_providers(Settings(
 | [`packages/adapters`](./packages/adapters) | `caspian-adapters` — the channel adapters. One small interface per platform (`provision` / `send` / `reply` / `parse_webhook`), real signature verification, an offline fake per channel. |
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
+| [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
 | [`apps/cli`](./apps/cli) | `comm` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
 
@@ -296,7 +332,8 @@ providers = build_providers(Settings(
 
 ## Community & support
 
-- **Bugs / ideas** — [GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
+- **Questions, ideas, show & tell** — [GitHub Discussions](https://github.com/TryCaspian/caspian-sdk/discussions)
+- **Bugs** — [GitHub issues](https://github.com/TryCaspian/caspian-sdk/issues)
 - **Security** — see [SECURITY.md](./SECURITY.md) (please, no public issues for vulnerabilities)
 - **Hosted product & contact** — [trycaspianai.com](https://trycaspianai.com)
 

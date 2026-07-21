@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { CommClient, CommError, Message } from "../src/index.js";
+import {
+  AccountRequiredError,
+  CommClient,
+  CommError,
+  InsufficientCreditError,
+  Message,
+} from "../src/index.js";
 
 /** Build a client whose fetch is driven by a route table. */
 function makeClient(routes: Record<string, (req: Request) => Response | Promise<Response>>) {
@@ -213,6 +219,112 @@ describe("CommClient", () => {
     await client.dispatchPending(0); // now dispatches with the ack configured
     expect(replies[0]).toBe("On it, one moment…"); // ack fired first
     expect(seen).toEqual(["hi"]); // handler still ran
+  });
+
+  it("raises AccountRequiredError on a 401 account_required body", async () => {
+    const { client } = makeClient({
+      "POST /v1/connections/x": () =>
+        json(
+          {
+            detail: {
+              reason: "account_required",
+              message: "Sign in to use paid channels.",
+              login_options: [{ start: "/v1/auth/device/start" }],
+            },
+          },
+          401,
+        ),
+    });
+    const err = await client
+      .connectX({ accessToken: "a", userId: "1" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(AccountRequiredError);
+    expect(err).toBeInstanceOf(CommError);
+    expect(err.reason).toBe("account_required");
+    expect(err.detail).toBe("Sign in to use paid channels.");
+    expect(err.loginOptions).toEqual([{ start: "/v1/auth/device/start" }]);
+  });
+
+  it("raises InsufficientCreditError on a 402 insufficient_credit body", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json(
+          {
+            detail: {
+              reason: "insufficient_credit",
+              message: "Out of credit.",
+              balance_cents: 42,
+              payment_options: [{ url: "https://pay/1", create: { body: { amount_cents: 5000 } } }],
+            },
+          },
+          402,
+        ),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+    expect(err.statusCode).toBe(402);
+    expect(err.balanceCents).toBe(42);
+    expect(err.paymentOptions[0].url).toBe("https://pay/1");
+  });
+
+  it("raises InsufficientCreditError on a 429 monthly_cap_reached body", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json({ detail: { reason: "monthly_cap_reached", message: "Capped." } }, 429),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+    expect(err.statusCode).toBe(429);
+  });
+
+  it("billing methods hit the right endpoints with snake_case bodies", async () => {
+    const { client, calls } = makeClient({
+      "GET /v1/billing": () => json({ balance_cents: 100 }),
+      "POST /v1/billing/topup": () => json({ checkout_url: "https://pay" }),
+      "PUT /v1/billing/limits": () => json({ ok: true }),
+      "PUT /v1/billing/autopay": () => json({ ok: true }),
+    });
+    await client.billing();
+    await client.topUp();
+    await client.setSpendLimits({ monthlyCapCents: 10000, channelCaps: { whatsapp: 5000 } });
+    await client.setAutopay({ thresholdCents: 500, topupCents: 2000, monthlyCapCents: 10000 });
+
+    const topup = calls.find((c) => c.path === "/v1/billing/topup");
+    expect(topup?.body).toEqual({ amount_cents: 2000 });
+    const limits = calls.find((c) => c.path === "/v1/billing/limits");
+    expect(limits?.body).toEqual({ monthly_cap_cents: 10000, channel_caps: { whatsapp: 5000 } });
+    const autopay = calls.find((c) => c.path === "/v1/billing/autopay");
+    expect(autopay?.body).toMatchObject({ enabled: true, threshold_cents: 500, topup_cents: 2000 });
+  });
+
+  it("out-of-credit in a handler warns but does not stop the drain", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "message.received",
+            data: { message: { id: "m1", conversation_id: "c", connection_id: "cn", text: "hi" } },
+          },
+        ]);
+      },
+      "POST /v1/messages/m1/typing": () => json({}),
+    });
+    client.onMessage(() => {
+      throw new InsufficientCreditError(
+        402,
+        { reason: "insufficient_credit", message: "Out of credit.", balance_cents: 0 },
+        client,
+      );
+    });
+    const last = await client.dispatchPending(0);
+    expect(last).toBe(1);
+    const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("OUT OF CREDIT");
+    errSpy.mockRestore();
   });
 
   it("a throwing handler does not stop the drain", async () => {

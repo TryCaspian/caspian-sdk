@@ -53,7 +53,7 @@ export interface WhatsappOnboarding {
 export interface ClientOptions {
   /** Falls back to COMM_API_KEY (env or ./.env). */
   apiKey?: string;
-  /** Falls back to COMM_BASE_URL (env or ./.env), then http://127.0.0.1:8000. */
+  /** Falls back to COMM_BASE_URL (env or ./.env), then https://api.trycaspianai.com. */
   baseUrl?: string;
   /** Per-request timeout in seconds (default 30). */
   timeout?: number;
@@ -73,6 +73,31 @@ export interface ConnectOptions {
   timeout?: number;
   /** Poll interval while provisioning, in seconds (default 0.5). */
   pollInterval?: number;
+}
+
+export interface LoginOptions {
+  /** Seconds between device-token polls (default: value the gateway suggests). */
+  pollInterval?: number;
+  /** Give up waiting for approval after this many seconds (default 600). */
+  timeout?: number;
+}
+
+export interface SpendLimitsOptions {
+  /** Cap total monthly spend, in cents. */
+  monthlyCapCents?: number;
+  /** Cap per-channel spend, in cents (e.g. { whatsapp: 5000 }). */
+  channelCaps?: Record<string, number>;
+}
+
+export interface AutopayOptions {
+  /** Turn autopay on (default) or off. */
+  enabled?: boolean;
+  /** Refill when the balance drops below this, in cents. */
+  thresholdCents?: number;
+  /** Amount to add on each auto-refill, in cents. */
+  topupCents?: number;
+  /** Required monthly spend cap, in cents — autopay can't run uncapped. */
+  monthlyCapCents?: number;
 }
 
 export interface ListenOptions {

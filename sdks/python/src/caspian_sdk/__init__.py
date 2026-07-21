@@ -1,3 +1,15 @@
-from .client import CommClient, CommError, Message
+from .client import (
+    AccountRequiredError,
+    CommClient,
+    CommError,
+    InsufficientCreditError,
+    Message,
+)
 
-__all__ = ["CommClient", "CommError", "Message"]
+__all__ = [
+    "AccountRequiredError",
+    "CommClient",
+    "CommError",
+    "InsufficientCreditError",
+    "Message",
+]

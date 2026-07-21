@@ -1,0 +1,52 @@
+{
+  "id": "caspian",
+  "name": "Caspian",
+  "description": "Caspian channel plugin — one agent identity across every channel Caspian connects.",
+  "channels": ["caspian"],
+  "activation": {
+    "onStartup": false
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "caspian": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "description": "Caspian gateway API key. Falls back to the COMM_API_KEY environment variable."
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Caspian gateway base URL. Falls back to COMM_BASE_URL, then the caspian-sdk default."
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Display name the agent posts under on channels that support per-agent branding."
+          },
+          "channels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional allowlist of Caspian sub-channels (e.g. slack, whatsapp) to dispatch inbound from. Omit for all connected channels."
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional DM allowlist of sender ids permitted to reach the agent."
+          }
+        }
+      },
+      "uiHints": {
+        "apiKey": {
+          "label": "Caspian API key",
+          "sensitive": true
+        }
+      }
+    }
+  }
+}

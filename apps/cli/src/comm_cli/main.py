@@ -6,6 +6,9 @@ Commands:
   comm status                               list connections
   comm listen                               tail inbound/outbound mail live
   comm test-email [TEXT]                    deliver a test email to your agent
+  comm login                                sign in once (enables paid channels)
+  comm billing                              show credit balance, spend, limits
+  comm topup [DOLLARS]                      add credit via a Stripe checkout link
 """
 
 import argparse
@@ -17,7 +20,8 @@ from pathlib import Path
 
 import httpx
 
-DEFAULT_GATEWAY = "http://127.0.0.1:8000"
+DEFAULT_GATEWAY = "https://api.trycaspianai.com"
+DASHBOARD_URL = "https://dashboard.trycaspianai.com"
 ENV_PATH = Path.cwd() / ".env"
 
 
@@ -56,8 +60,33 @@ def _request(method: str, path: str, *, json_body: dict | None = None, params: d
             detail = response.json().get("detail", response.text)
         except ValueError:
             detail = response.text
+        # A billing block (out of credit / spend cap) comes back as a structured
+        # body - print a clear, actionable message instead of a raw dict.
+        if isinstance(detail, dict) and detail.get("reason") in {
+            "insufficient_credit", "monthly_cap_reached", "channel_cap_reached"
+        }:
+            _exit_out_of_credit(detail)
+        # A paid channel used before the developer signed in.
+        if isinstance(detail, dict) and detail.get("reason") == "account_required":
+            print(f"\n{detail.get('message', 'Sign-in required for paid channels.')}",
+                  file=sys.stderr)
+            print("  Sign in once:  comm login\n", file=sys.stderr)
+            sys.exit(3)
         sys.exit(f"Error {response.status_code}: {detail}")
     return response.json()
+
+
+def _exit_out_of_credit(detail: dict) -> None:
+    balance = detail.get("balance_cents")
+    bal = f"${balance / 100:.2f}" if isinstance(balance, int) else "unknown"
+    opts = detail.get("payment_options") or []
+    dash = next((o.get("url") for o in opts if o.get("url")),
+                "https://dashboard.trycaspianai.com")
+    print("\nOut of Caspian credit - this paid channel is blocked.", file=sys.stderr)
+    print(f"  {detail.get('message', '')}", file=sys.stderr)
+    print(f"  Balance: {bal}", file=sys.stderr)
+    print(f"  Add credit in the dashboard:  {dash}\n", file=sys.stderr)
+    sys.exit(2)
 
 
 def _write_env(values: dict[str, str]) -> None:
@@ -86,6 +115,32 @@ def cmd_init(args) -> None:
     print(f"Project {data['project_id']} created.")
     print(f"Wrote COMM_API_KEY and COMM_BASE_URL to {ENV_PATH}")
     print("Next: comm connect email")
+
+
+def cmd_domains(args) -> None:
+    if args.action == "add":
+        domain = _request("POST", "/v1/domains", json_body={"domain": args.domain})
+        print(f"Domain {domain['domain']} registered ({domain['status']}).")
+        print("Add these DNS records at your registrar:")
+        for record in domain["dns_records"]:
+            priority = f" {record['priority']}" if record.get("priority") else ""
+            print(f"  {record['type']:<6} {record['name']}  ->{priority} {record['value']}")
+        print(f"Zone file: comm domains zone-file {domain['id']}")
+        print(f"Check status: comm domains status {domain['id']}")
+    elif args.action == "list":
+        for domain in _request("GET", "/v1/domains"):
+            print(f"{domain['id']}  {domain['status']:<12} {domain['domain']}")
+    elif args.action == "status":
+        domain = _request("GET", f"/v1/domains/{args.domain}")
+        print(f"{domain['domain']}: {domain['status']}")
+    elif args.action == "zone-file":
+        api_key, base_url = _config()
+        response = httpx.get(
+            f"{base_url}/v1/domains/{args.domain}/zone-file",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        print(response.text)
 
 
 # Pure-OAuth connect (returns an authorize_url straight from /connections/{ch}).
@@ -303,6 +358,73 @@ def cmd_test_email(args) -> None:
     print(f"Delivering test email to {result['to']}")
 
 
+def cmd_login(args) -> None:
+    """One-time developer sign-in that ties this project to a Caspian account.
+    Required before paid channels; the project + key carry over unchanged."""
+    api_key, _ = _config()
+    start = _request("POST", "/v1/auth/device/start", json_body={"api_key": api_key})
+    url = start.get("verification_uri_complete") or start.get("verification_uri")
+    print("Sign in to Caspian (one-time - enables paid channels like X, WhatsApp):")
+    print(f"\n  {url}\n")
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(url)
+    print("Waiting for you to approve in the browser...")
+    interval = start.get("interval", 5)
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        result = _request("POST", "/v1/auth/device/token",
+                          json_body={"device_code": start["device_code"]})
+        status = result.get("status")
+        if status == "approved":
+            print("\nSigned in. This project is now tied to your account.")
+            print(f"Next: add credit in the dashboard:  {DASHBOARD_URL}")
+            return
+        if status in ("expired", "not_found"):
+            sys.exit(f"Login {status}. Run comm login again.")
+        time.sleep(interval)
+    sys.exit("Login timed out. Run comm login again.")
+
+
+def _fmt_cents(cents) -> str:
+    return f"${cents / 100:.2f}" if isinstance(cents, int) else "-"
+
+
+def cmd_billing(args) -> None:
+    b = _request("GET", "/v1/billing")
+    print(f"Balance:        {_fmt_cents(b['balance_cents'])}")
+    print(f"Credit added:   {_fmt_cents(b['credit_cents'])}")
+    print(f"Spent (total):  {_fmt_cents(b['spent_cents'])}")
+    print(f"Spent (month):  {_fmt_cents(b['spent_this_month_cents'])}")
+    print(f"Paid channels:  {', '.join(b['paid_channels'])}")
+    limits = b.get("limits", {})
+    monthly = limits.get("monthly_cap_cents")
+    print(f"Monthly cap:    {_fmt_cents(monthly) if monthly else 'none'}")
+    if limits.get("channel_caps"):
+        caps = ", ".join(f"{k}={_fmt_cents(v)}" for k, v in limits["channel_caps"].items())
+        print(f"Channel caps:   {caps}")
+    ap = b.get("autopay", {})
+    if ap.get("enabled"):
+        print(f"Autopay:        on (refill {_fmt_cents(ap.get('topup_cents'))} below "
+              f"{_fmt_cents(ap.get('threshold_cents'))})")
+    else:
+        print("Autopay:        off")
+    if b["balance_cents"] <= 0:
+        print(f"\nYou're out of credit. Add credit in the dashboard:  {DASHBOARD_URL}")
+
+
+def cmd_topup(args) -> None:
+    cents = args.amount_cents if args.amount_cents is not None else int(round(args.amount * 100))
+    result = _request("POST", "/v1/billing/topup", json_body={"amount_cents": cents})
+    url = result["checkout_url"]
+    print(f"Add {_fmt_cents(cents)} of credit - pay here:\n\n  {url}\n")
+    print(result.get("note", ""))
+    if args.open:
+        import webbrowser
+        webbrowser.open(url)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="comm", description="Communication gateway CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -334,6 +456,11 @@ def main() -> None:
     )
     p_connect.set_defaults(func=cmd_connect)
 
+    p_domains = sub.add_parser("domains", help="Manage custom email domains")
+    p_domains.add_argument("action", choices=["add", "list", "status", "zone-file"])
+    p_domains.add_argument("domain", nargs="?", help="Domain name (add) or domain id")
+    p_domains.set_defaults(func=cmd_domains)
+
     p_status = sub.add_parser("status", help="List connections")
     p_status.set_defaults(func=cmd_status)
 
@@ -345,6 +472,24 @@ def main() -> None:
     p_test.add_argument("--subject", default="Test email")
     p_test.add_argument("--connection", default=None)
     p_test.set_defaults(func=cmd_test_email)
+
+    p_login = sub.add_parser("login", help="Sign in once (enables paid channels)")
+    p_login.add_argument("--open", action="store_true", help="Open the sign-in link in a browser")
+    p_login.set_defaults(func=cmd_login)
+
+    p_billing = sub.add_parser("billing", help="Show credit balance, spend, and limits")
+    p_billing.set_defaults(func=cmd_billing)
+
+    p_topup = sub.add_parser("topup", help="Add credit (opens a Stripe checkout link)")
+    p_topup.add_argument(
+        "amount", type=float, nargs="?", default=20.0, help="Dollars to add (default 20)"
+    )
+    p_topup.add_argument(
+        "--cents", dest="amount_cents", type=int, default=None,
+        help="Exact amount in cents (overrides the dollar amount)",
+    )
+    p_topup.add_argument("--open", action="store_true", help="Open the checkout link in a browser")
+    p_topup.set_defaults(func=cmd_topup)
 
     args = parser.parse_args()
     try:
