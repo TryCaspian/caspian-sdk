@@ -289,6 +289,8 @@ providers = build_providers(Settings(
 ## Roadmap
 
 - **MCP server** — connect and message channels straight from any MCP-capable agent
+- **Reddit & LinkedIn adapters** — next channels in the pipeline
+- **Agent-native payments** — pay-as-you-go via API, x402-ready, no dashboard
 - **More adapters** — the interface is small on purpose; [add one](./CONTRIBUTING.md#adding-a-new-channel-adapter)
 
 ## Community & support
