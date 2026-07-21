@@ -61,5 +61,8 @@
   "allowScripts": {
     "esbuild@0.27.7": true,
     "esbuild@0.21.5": true
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }

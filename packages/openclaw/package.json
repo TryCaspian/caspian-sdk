@@ -1,7 +1,7 @@
 {
   "name": "openclaw-caspian",
   "version": "0.1.0",
-  "description": "OpenClaw channel plugin for Caspian — give an OpenClaw agent iMessage, WhatsApp Business, phone/SMS, email, Slack, Discord, Telegram and more behind one Caspian identity.",
+  "description": "OpenClaw channel plugin for Caspian \u2014 give an OpenClaw agent iMessage, WhatsApp Business, phone/SMS, email, Slack, Discord, Telegram and more behind one Caspian identity.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Caspian <ayushguptadev1@gmail.com>",
@@ -43,13 +43,17 @@
     "test": "vitest run"
   },
   "openclaw": {
-    "extensions": ["./index.ts"],
+    "extensions": [
+      "./index.ts"
+    ],
     "setupEntry": "./setup-entry.ts",
     "channel": {
       "id": "caspian",
       "configuredState": {
         "env": {
-          "allOf": ["COMM_API_KEY"]
+          "allOf": [
+            "COMM_API_KEY"
+          ]
         }
       },
       "label": "Caspian",
@@ -58,7 +62,9 @@
       "docsPath": "/channels/caspian",
       "docsLabel": "caspian",
       "blurb": "one Caspian identity across iMessage, WhatsApp Business, phone/SMS, email, Slack, Discord, Telegram and more.",
-      "aliases": ["caspian-comm"],
+      "aliases": [
+        "caspian-comm"
+      ],
       "systemImage": "antenna.radiowaves.left.and.right",
       "markdownCapable": false
     },
@@ -95,5 +101,8 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
