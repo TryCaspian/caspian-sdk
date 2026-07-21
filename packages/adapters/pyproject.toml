@@ -9,7 +9,7 @@ dependencies = [
   "boto3>=1.34,<2",
   "httpx>=0.28,<1",
   "pydantic-settings>=2.10,<3",
-  "cryptography>=42,<47",
+  "cryptography>=48.0.1,<50",
 ]
 
 [project.optional-dependencies]
