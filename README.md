@@ -287,6 +287,7 @@ providers = build_providers(Settings(
 | [`packages/adapters`](./packages/adapters) | `caspian-adapters` — the channel adapters. One small interface per platform (`provision` / `send` / `reply` / `parse_webhook`), real signature verification, an offline fake per channel. |
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
+| [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
 | [`apps/cli`](./apps/cli) | `comm` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
 
