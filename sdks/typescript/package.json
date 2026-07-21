@@ -1,0 +1,65 @@
+{
+  "name": "caspian-sdk",
+  "version": "0.1.2",
+  "description": "One identity for your AI agent across every channel \u2014 email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage \u2014 behind a single onMessage handler.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "communication",
+    "sdk",
+    "slack",
+    "discord",
+    "whatsapp",
+    "sms",
+    "telegram",
+    "imessage",
+    "chatbot"
+  ],
+  "author": "Caspian <ayushguptadev1@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://trycaspianai.com",
+  "bugs": {
+    "url": "https://github.com/TryCaspian/caspian-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TryCaspian/caspian-sdk.git",
+    "directory": "sdks/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "esbuild@0.21.5": true
+  }
+}
