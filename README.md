@@ -10,6 +10,8 @@
   ·
   <a href="https://pypi.org/project/caspian-sdk/">PyPI</a>
   ·
+  <a href="https://www.npmjs.com/package/caspian-sdk">npm</a>
+  ·
   <a href="./llms.txt">llms.txt for agents</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
@@ -18,6 +20,7 @@
 <p align="center">
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
+  <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
@@ -28,8 +31,11 @@
 Your agent's reasoning decides **what** to say. Caspian is **how it exists** on Slack, Discord, Telegram, Instagram, email, X, and beyond — one connect call per channel, one handler for all of them, threading and webhook verification handled.
 
 ```bash
-pip install caspian-sdk
+pip install caspian-sdk      # Python
+npm install caspian-sdk      # TypeScript / Node 18+
 ```
+
+**Python:**
 
 ```python
 from caspian_sdk import CommClient
@@ -43,6 +49,21 @@ def handle(message):
     message.reply(f"You said: {message.text}")
 
 client.listen()  # one loop, every channel
+```
+
+**TypeScript** — same contract, zero runtime dependencies:
+
+```ts
+import { CommClient } from "caspian-sdk";
+
+const client = new CommClient();  // reads COMM_API_KEY / COMM_BASE_URL
+const inbox = await client.connectEmail({ displayName: "My Agent" });
+
+client.onMessage(async (message) => {
+  await message.reply(`You said: ${message.text}`);
+});
+
+await client.listen();
 ```
 
 Adding a channel is one more `connect_*()` call — never new handler code.
@@ -140,9 +161,9 @@ providers = build_providers(Settings(
 
 ## Roadmap
 
-- **TypeScript SDK** — same `on_message` contract for the Node ecosystem
 - **MCP server** — connect and message channels straight from any MCP-capable agent
 - **More adapters** — the interface is small on purpose; [add one](./CONTRIBUTING.md#adding-a-new-channel-adapter)
+- **TypeScript SDK source release** — the npm package ([`caspian-sdk`](https://www.npmjs.com/package/caspian-sdk)) ships today; its source joins this repo
 
 ## Community & support
 

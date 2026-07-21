@@ -4,7 +4,7 @@
 
 ## Integrate an agent (the common task)
 
-1. Install: `pip install caspian-sdk` (or `uv add caspian-sdk`).
+1. Install: Python `pip install caspian-sdk` — or TypeScript/Node 18+ `npm install caspian-sdk` (same API, camelCase: `connectEmail`, `onMessage`, `listen({ ack })`; zero runtime deps).
 2. Config: the client reads `COMM_API_KEY` and `COMM_BASE_URL` from env or `./.env`. Against a running Caspian gateway, mint a key with `POST {base}/v1/projects/sandbox` (no signup) — or fetch `{base}/SKILL.md`, which is the gateway's own agent-readable integration guide with exact, current instructions. Prefer SKILL.md when a gateway URL is available.
 3. Write ONE handler; it fires for every connected channel:
 
