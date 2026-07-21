@@ -17,6 +17,7 @@ Usage:
 
 import logging
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,55 @@ class CommError(Exception):
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class AccountRequiredError(CommError):
+    """Raised when a paid channel needs a one-time developer sign-in first (HTTP
+    401). Paid channels are tied to a real Caspian account (identity) before any
+    spend; free channels never raise this. Call ``.login()`` to run the sign-in,
+    or read ``login_options`` for the raw device-flow endpoints."""
+
+    def __init__(self, status_code: int, payload: dict, client: "CommClient") -> None:
+        self.reason = payload.get("reason", "account_required")
+        self.message = payload.get("message", "Sign in to Caspian to use paid channels.")
+        self.login_options = payload.get("login_options", [])
+        self._client = client
+        super().__init__(status_code, self.message)
+
+    def login(self, **kwargs) -> dict:
+        """Run the one-time developer sign-in (prints a URL, waits for approval)."""
+        return self._client.login(**kwargs)
+
+
+class InsufficientCreditError(CommError):
+    """Raised when a paid channel is blocked because the project is out of credit
+    (HTTP 402) or has hit a spend cap (HTTP 429).
+
+    Carries the machine-actionable fields the gateway returns so you can react in
+    code: ``balance_cents`` and ``payment_options`` (each option describes the
+    request that mints a Stripe checkout URL). ``top_up(amount_cents)`` is a
+    shortcut that mints that link for you.
+    """
+
+    def __init__(self, status_code: int, payload: dict, client: "CommClient") -> None:
+        self.reason = payload.get("reason", "insufficient_credit")
+        self.message = payload.get("message", "Out of Caspian credit.")
+        self.balance_cents = payload.get("balance_cents")
+        self.payment_options = payload.get("payment_options", [])
+        self._client = client
+        super().__init__(status_code, self.message)
+
+    def top_up(self, amount_cents: int | None = None) -> dict:
+        """Mint a Stripe-hosted checkout link to refill credit. Defaults to the
+        amount the gateway suggested in the 402. Returns ``{"checkout_url", ...}``;
+        open it (or hand it to whoever holds the card)."""
+        if amount_cents is None:
+            for option in self.payment_options:
+                body = (option.get("create") or {}).get("body") or {}
+                if body.get("amount_cents"):
+                    amount_cents = body["amount_cents"]
+                    break
+        return self._client.top_up(amount_cents or 2000)
 
 
 @dataclass
@@ -87,11 +137,12 @@ class CommClient:
         api_key = _config(api_key, "COMM_API_KEY")
         if not api_key:
             raise CommError(401, "No API key: pass api_key or set COMM_API_KEY (env or ./.env)")
-        base_url = _config(base_url, "COMM_BASE_URL", "http://127.0.0.1:8000")
+        base_url = _config(base_url, "COMM_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         self._handlers: list[Callable[[Message], None]] = []
         self._ack: str | None = None
+        self._last_credit_warning: float = 0.0
 
     def close(self) -> None:
         self._http.close()
@@ -111,6 +162,17 @@ class CommClient:
                 detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
+            # A paid channel needs a one-time developer sign-in first.
+            if response.status_code == 401 and isinstance(detail, dict) and detail.get(
+                "reason"
+            ) == "account_required":
+                raise AccountRequiredError(response.status_code, detail, self)
+            # A billing block (out of credit / spend cap) carries a structured
+            # body; raise the typed error so callers can react in code.
+            if response.status_code in (402, 429) and isinstance(detail, dict) and detail.get(
+                "reason"
+            ) in {"insufficient_credit", "monthly_cap_reached", "channel_cap_reached"}:
+                raise InsufficientCreditError(response.status_code, detail, self)
             raise CommError(response.status_code, str(detail))
         if response.status_code == 204:
             return None
@@ -242,9 +304,9 @@ class CommClient:
 
         Returns ``{"session", "launcher_url", "expires_in"}``. Hand ``launcher_url``
         to whoever owns the WhatsApp Business account (open it, or embed it in your
-        own UI): they click through Meta's popup once and their number is provisioned
-        onto this agent - no tokens to copy, no Meta console steps on your side. The
-        API key never reaches the browser (the session token stands in for it).
+        own UI): they click through a popup once and their number is provisioned
+        onto this agent - no tokens to copy on your side. The API key never reaches
+        the browser (the session token stands in for it).
 
         Omit customer_id/agent_id to onboard onto this project's default scope, or
         pass both to target a specific customer+agent. Poll list_connections() /
@@ -411,6 +473,94 @@ class CommClient:
         """Configured transports and their capabilities."""
         return self._request("GET", "/v1/channels")
 
+    # Account sign-in (one-time, required before paid channels)
+
+    def login(self, poll_interval: float | None = None, timeout: float = 600.0) -> dict:
+        """Sign the developer in once to open a billing account for this project.
+
+        Paid channels (X, WhatsApp, iMessage) require a real account before any
+        spend. This prints a URL for the developer to open in a browser and blocks
+        until they approve with Google. The project you've already built with is
+        carried over - same API key, nothing lost. After this, add credit with
+        ``top_up()`` and connect paid channels freely; the agent needs no further
+        human sign-in.
+        """
+        start = self._request("POST", "/v1/auth/device/start", json={"api_key": self._api_key})
+        url = start.get("verification_uri_complete") or start.get("verification_uri")
+        interval = poll_interval or start.get("interval", 5)
+        print(
+            "\n  Sign in to Caspian to enable paid channels (one-time):\n"
+            f"    {url}\n"
+            "  Waiting for the developer to approve in the browser...\n",
+            file=sys.stderr, flush=True,
+        )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = self._request(
+                "POST", "/v1/auth/device/token", json={"device_code": start["device_code"]}
+            )
+            status = result.get("status")
+            if status == "approved":
+                print("  Signed in. Add credit to start using paid channels.",
+                      file=sys.stderr, flush=True)
+                return result
+            if status in ("expired", "not_found"):
+                raise CommError(408, f"device login {status}")
+            time.sleep(interval)
+        raise CommError(408, "device login timed out")
+
+    # Billing (pay-as-you-go credit)
+
+    def billing(self) -> dict:
+        """Current credit balance, spend, spend caps, and autopay state. Paid
+        channels (e.g. WhatsApp, X, iMessage) draw down this balance; free
+        channels (email, Telegram, Discord, Slack) never do."""
+        return self._request("GET", "/v1/billing")
+
+    def balance_cents(self) -> int:
+        """Shortcut for the current credit balance in cents."""
+        return self.billing()["balance_cents"]
+
+    def top_up(self, amount_cents: int = 2000) -> dict:
+        """Mint a Stripe-hosted checkout link to add credit. Returns
+        ``{"checkout_url", "session_id", "amount_cents", ...}`` - open the URL
+        (or hand it to whoever holds the card). Credit lands seconds after
+        payment; poll ``billing()`` or watch for the ``billing.credited`` event.
+        Minimum 100 cents ($1)."""
+        return self._request("POST", "/v1/billing/topup", json={"amount_cents": amount_cents})
+
+    def set_spend_limits(
+        self, monthly_cap_cents: int | None = None, channel_caps: dict | None = None
+    ) -> dict:
+        """Cap spend so autopay/credit can't run away. ``monthly_cap_cents`` caps
+        total monthly spend; ``channel_caps`` caps per channel (e.g.
+        {"whatsapp": 5000}). Returns the updated billing state."""
+        body: dict = {}
+        if monthly_cap_cents is not None:
+            body["monthly_cap_cents"] = monthly_cap_cents
+        if channel_caps is not None:
+            body["channel_caps"] = channel_caps
+        return self._request("PUT", "/v1/billing/limits", json=body)
+
+    def set_autopay(
+        self,
+        enabled: bool = True,
+        threshold_cents: int | None = None,
+        topup_cents: int | None = None,
+        monthly_cap_cents: int | None = None,
+    ) -> dict:
+        """Auto-refill the balance from a saved card when it drops below
+        ``threshold_cents`` (adds ``topup_cents``). Requires a card on file
+        (complete one ``top_up()`` checkout first) and a ``monthly_cap_cents`` -
+        an uncapped auto-replenishing budget is not allowed. Pass
+        ``enabled=False`` to turn it off."""
+        return self._request("PUT", "/v1/billing/autopay", json={
+            "enabled": enabled,
+            "threshold_cents": threshold_cents,
+            "topup_cents": topup_cents,
+            "monthly_cap_cents": monthly_cap_cents,
+        })
+
     def send_message(
         self, conversation_id: str, text: str | None = None, html: str | None = None
     ) -> dict:
@@ -477,15 +627,65 @@ class CommClient:
             if self._ack:
                 try:
                     message.reply(self._ack)
+                except InsufficientCreditError as exc:
+                    self._warn_out_of_credit(exc)
                 except Exception:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
                 handler(message)
+            except AccountRequiredError as exc:
+                # Paid channel used before the developer signed in. Surface the
+                # one-time sign-in prompt loudly (e.g. in Claude Code).
+                self._warn_account_required(exc)
+            except InsufficientCreditError as exc:
+                # The agent tried to reply on a paid channel but the project is
+                # out of credit / capped. Make it loud on the CLI so the operator
+                # (e.g. running this in Claude Code) sees it and can top up.
+                self._warn_out_of_credit(exc)
             except Exception:
                 logger.exception(
                     "on_message handler failed for message %s; continuing", message.id
                 )
+
+    def _warn_account_required(self, exc: "AccountRequiredError") -> None:
+        """Print a prominent, rate-limited banner when a paid action needs sign-in."""
+        now = time.monotonic()
+        if now - self._last_credit_warning < 60:
+            return
+        self._last_credit_warning = now
+        lines = [
+            "",
+            "  ┌─────────────────────────────────────────────────────────────┐",
+            "  │  Caspian: SIGN-IN REQUIRED for paid channels                 │",
+            "  └─────────────────────────────────────────────────────────────┘",
+            f"  {exc.message}",
+            "  Run:  comm login          (or client.login() in code)",
+            "",
+        ]
+        print("\n".join(lines), file=sys.stderr, flush=True)
+
+    def _warn_out_of_credit(self, exc: "InsufficientCreditError") -> None:
+        """Print a prominent, rate-limited banner when a paid reply is blocked."""
+        now = time.monotonic()
+        if now - self._last_credit_warning < 60:
+            return
+        self._last_credit_warning = now
+        balance = exc.balance_cents
+        bal = f"${balance / 100:.2f}" if isinstance(balance, int) else "unknown"
+        dash = next((o.get("url") for o in exc.payment_options if o.get("url")),
+                    "https://dashboard.trycaspianai.com")
+        lines = [
+            "",
+            "  ┌─────────────────────────────────────────────────────────────┐",
+            "  │  Caspian: OUT OF CREDIT - your agent could not reply         │",
+            "  └─────────────────────────────────────────────────────────────┘",
+            f"  {exc.message}",
+            f"  Balance: {bal}",
+            f"  Add credit in the dashboard:  {dash}",
+            "",
+        ]
+        print("\n".join(lines), file=sys.stderr, flush=True)
 
     def dispatch_pending(self, after_seq: int = 0) -> int:
         """Process all currently available events once. Returns the last seen seq.

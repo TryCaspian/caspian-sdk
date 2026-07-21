@@ -12,7 +12,7 @@ from caspian_sdk import CommClient
 
 client = CommClient(
     api_key=os.environ.get("COMM_BOOTSTRAP_API_KEY", "comm_test_replace_me"),
-    base_url=os.environ.get("COMM_BASE_URL", "http://127.0.0.1:8000"),
+    base_url=os.environ.get("COMM_BASE_URL", "https://api.trycaspianai.com"),
 )
 
 customer = client.create_customer("Acme")

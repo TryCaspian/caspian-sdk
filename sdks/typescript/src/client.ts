@@ -1,7 +1,8 @@
 import { config } from "./config.js";
-import { CommError } from "./errors.js";
+import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
 import type {
   Agent,
+  AutopayOptions,
   ClientOptions,
   Connection,
   ConnectOptions,
@@ -10,6 +11,8 @@ import type {
   Domain,
   EventRecord,
   ListenOptions,
+  LoginOptions,
+  SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";
 
@@ -17,6 +20,10 @@ const logger = {
   warn: (...args: unknown[]) => console.warn("[caspian-sdk]", ...args),
   error: (...args: unknown[]) => console.error("[caspian-sdk]", ...args),
 };
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null;
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -78,6 +85,7 @@ export class CommClient {
   private readonly fetchImpl: typeof fetch;
   private readonly handlers: MessageHandler[] = [];
   private ackMessage?: string;
+  private lastCreditWarning = 0;
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "COMM_API_KEY");
@@ -85,7 +93,7 @@ export class CommClient {
       throw new CommError(401, "No API key: pass apiKey or set COMM_API_KEY (env or ./.env)");
     }
     this.apiKey = apiKey;
-    this.baseUrl = (config(options.baseUrl, "COMM_BASE_URL", "http://127.0.0.1:8000") as string)
+    this.baseUrl = (config(options.baseUrl, "COMM_BASE_URL", "https://api.trycaspianai.com") as string)
       .replace(/\/+$/, "");
     this.timeoutMs = (options.timeout ?? 30) * 1000;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
@@ -118,9 +126,11 @@ export class CommClient {
     });
 
     if (response.status >= 400) {
+      let detailValue: unknown;
       let detail: string;
       try {
         const body = (await response.json()) as { detail?: unknown };
+        detailValue = body?.detail;
         if (body && body.detail != null) {
           // FastAPI validation errors put an array/object under `detail`.
           detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
@@ -129,6 +139,25 @@ export class CommClient {
         }
       } catch {
         detail = await response.text().catch(() => response.statusText);
+      }
+      // A paid channel needs a one-time developer sign-in first.
+      if (
+        response.status === 401 &&
+        isRecord(detailValue) &&
+        detailValue.reason === "account_required"
+      ) {
+        throw new AccountRequiredError(response.status, detailValue, this);
+      }
+      // A billing block (out of credit / spend cap) carries a structured body;
+      // raise the typed error so callers can react in code.
+      if (
+        (response.status === 402 || response.status === 429) &&
+        isRecord(detailValue) &&
+        ["insufficient_credit", "monthly_cap_reached", "channel_cap_reached"].includes(
+          detailValue.reason,
+        )
+      ) {
+        throw new InsufficientCreditError(response.status, detailValue, this);
       }
       throw new CommError(response.status, detail);
     }
@@ -462,6 +491,96 @@ export class CommClient {
     return this.request("GET", "/v1/channels");
   }
 
+  // ---- Account sign-in (one-time, required before paid channels) -----------
+
+  /**
+   * Sign the developer in once to open a billing account for this project.
+   *
+   * Paid channels require a real account before any spend. This prints a URL for
+   * the developer to open in a browser and resolves once they approve. The
+   * project you've already built with is carried over — same API key, nothing
+   * lost. After this, add credit with `topUp()` and connect paid channels
+   * freely; the agent needs no further human sign-in.
+   */
+  async login(opts: LoginOptions = {}): Promise<Record<string, unknown>> {
+    const start = await this.request<any>("POST", "/v1/auth/device/start", {
+      json: { api_key: this.apiKey },
+    });
+    const url = start.verification_uri_complete ?? start.verification_uri;
+    const interval = opts.pollInterval ?? start.interval ?? 5;
+    process.stderr.write(
+      "\n  Sign in to Caspian to enable paid channels (one-time):\n" +
+        `    ${url}\n` +
+        "  Waiting for the developer to approve in the browser...\n\n",
+    );
+    const deadline = Date.now() + (opts.timeout ?? 600) * 1000;
+    while (Date.now() < deadline) {
+      const result = await this.request<any>("POST", "/v1/auth/device/token", {
+        json: { device_code: start.device_code },
+      });
+      const status = result.status;
+      if (status === "approved") {
+        process.stderr.write("  Signed in. Add credit to start using paid channels.\n");
+        return result;
+      }
+      if (status === "expired" || status === "not_found") {
+        throw new CommError(408, `device login ${status}`);
+      }
+      await sleep(interval * 1000);
+    }
+    throw new CommError(408, "device login timed out");
+  }
+
+  // ---- Billing (pay-as-you-go credit) --------------------------------------
+
+  /**
+   * Current credit balance, spend, spend caps, and autopay state. Paid channels
+   * draw down this balance; free channels (email, Telegram, Discord, Slack)
+   * never do.
+   */
+  billing(): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/billing");
+  }
+
+  /**
+   * Mint a hosted checkout link to add credit. Returns
+   * `{ checkout_url, session_id, amount_cents, ... }` — open the URL (or hand it
+   * to whoever holds the card). Credit lands seconds after payment; poll
+   * `billing()` or watch for the `billing.credited` event. Minimum 100 cents.
+   */
+  topUp(amountCents = 2000): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/billing/topup", { json: { amount_cents: amountCents } });
+  }
+
+  /**
+   * Cap spend so autopay/credit can't run away. `monthlyCapCents` caps total
+   * monthly spend; `channelCaps` caps per channel (e.g. { whatsapp: 5000 }).
+   * Returns the updated billing state.
+   */
+  setSpendLimits(opts: SpendLimitsOptions = {}): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = {};
+    if (opts.monthlyCapCents !== undefined) body.monthly_cap_cents = opts.monthlyCapCents;
+    if (opts.channelCaps !== undefined) body.channel_caps = opts.channelCaps;
+    return this.request("PUT", "/v1/billing/limits", { json: body });
+  }
+
+  /**
+   * Auto-refill the balance from a saved card when it drops below
+   * `thresholdCents` (adds `topupCents`). Requires a card on file (complete one
+   * `topUp()` checkout first) and a `monthlyCapCents` — an uncapped
+   * auto-replenishing budget is not allowed. Pass `enabled: false` to turn off.
+   */
+  setAutopay(opts: AutopayOptions = {}): Promise<Record<string, unknown>> {
+    return this.request("PUT", "/v1/billing/autopay", {
+      json: {
+        enabled: opts.enabled ?? true,
+        threshold_cents: opts.thresholdCents ?? null,
+        topup_cents: opts.topupCents ?? null,
+        monthly_cap_cents: opts.monthlyCapCents ?? null,
+      },
+    });
+  }
+
   /** Proactively send into an existing conversation (needs Capability.SEND). */
   sendMessage(
     conversationId: string,
@@ -546,7 +665,13 @@ export class CommClient {
         try {
           await message.reply(this.ackMessage);
         } catch (err) {
-          logger.error(`ack reply failed for message ${message.id}`, err);
+          if (err instanceof AccountRequiredError) {
+            this.warnAccountRequired(err);
+          } else if (err instanceof InsufficientCreditError) {
+            this.warnOutOfCredit(err);
+          } else {
+            logger.error(`ack reply failed for message ${message.id}`, err);
+          }
         }
       }
     }
@@ -554,9 +679,63 @@ export class CommClient {
       try {
         await handler(message);
       } catch (err) {
-        logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+        // Paid channel used before the developer signed in, or the project is
+        // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
+        // keep the loop alive so one blocked reply can't stop the listener.
+        if (err instanceof AccountRequiredError) {
+          this.warnAccountRequired(err);
+        } else if (err instanceof InsufficientCreditError) {
+          this.warnOutOfCredit(err);
+        } else {
+          logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+        }
       }
     }
+  }
+
+  /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
+  private warnAccountRequired(err: AccountRequiredError): void {
+    const now = Date.now();
+    if (now - this.lastCreditWarning < 60_000) return;
+    this.lastCreditWarning = now;
+    const lines = [
+      "",
+      "  ┌─────────────────────────────────────────────────────────────┐",
+      "  │  Caspian: SIGN-IN REQUIRED for paid channels                 │",
+      "  └─────────────────────────────────────────────────────────────┘",
+      `  ${err.detail}`,
+      "  Run:  comm login          (or client.login() in code)",
+      "",
+    ];
+    process.stderr.write(lines.join("\n") + "\n");
+  }
+
+  /** Print a prominent, rate-limited banner when a paid reply is blocked. */
+  private warnOutOfCredit(err: InsufficientCreditError): void {
+    const now = Date.now();
+    if (now - this.lastCreditWarning < 60_000) return;
+    this.lastCreditWarning = now;
+    const balance = err.balanceCents;
+    const bal = typeof balance === "number" ? `$${(balance / 100).toFixed(2)}` : "unknown";
+    let dash = "https://dashboard.trycaspianai.com";
+    for (const option of err.paymentOptions) {
+      const url = (option as Record<string, unknown>).url;
+      if (typeof url === "string") {
+        dash = url;
+        break;
+      }
+    }
+    const lines = [
+      "",
+      "  ┌─────────────────────────────────────────────────────────────┐",
+      "  │  Caspian: OUT OF CREDIT - your agent could not reply         │",
+      "  └─────────────────────────────────────────────────────────────┘",
+      `  ${err.detail}`,
+      `  Balance: ${bal}`,
+      `  Add credit in the dashboard:  ${dash}`,
+      "",
+    ];
+    process.stderr.write(lines.join("\n") + "\n");
   }
 
   /**

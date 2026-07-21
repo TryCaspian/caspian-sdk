@@ -47,6 +47,14 @@ pip install caspian-sdk      # Python
 npm install caspian-sdk      # TypeScript / Node 18+
 ```
 
+Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `COMM_API_KEY` + `COMM_BASE_URL` to your `.env`:
+
+```bash
+comm init
+```
+
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `COMM_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`comm login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+
 **Python:**
 
 ```python
