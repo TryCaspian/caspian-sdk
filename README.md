@@ -141,38 +141,95 @@ flowchart LR
 
 ## Features
 
-- **One handler, every channel** — `message.reply()` answers in the right thread on whatever platform the message arrived from.
-- **Webhook verification as a hard boundary** — Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES/SNS signatures. Mismatches are rejected, always.
-- **Capability negotiation** — each adapter declares what its channel can physically do (send, reply, initiate, typing, group visibility); agents can never be granted more than the transport supports.
-- **In-memory fakes for every channel** — the fakes consume each platform's *real* inbound payload shapes, so you test the full path offline. 70 tests, zero network.
-- **Typing indicators & instant acks** — native "typing…" where the platform supports it (Discord, Telegram); `listen(ack="On it…")` for channels that don't.
-- **Behavior guides** — `client.behavior_prompt()` returns per-channel etiquette (Slack threads, SMS length, X's 280 cap) to inject into your agent's system prompt.
-- **Idempotent connects** — restart-safe: `connect_email()` returns the same inbox, never a duplicate.
-- **Pluggable registry** — any provider package can register under the `caspian.providers` entry-point group. No forks.
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**🧵 One handler, every channel**<br/>
+`message.reply()` answers in the right thread on whatever platform the message arrived from.
+
+</td>
+<td width="50%" valign="top">
+
+**🔐 Webhook verification, always**<br/>
+Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES/SNS. Mismatches rejected.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**🎚 Capability negotiation**<br/>
+Adapters declare what the channel can physically do; an agent can never be granted more than the transport supports.
+
+</td>
+<td valign="top">
+
+**🧪 Offline fakes for every channel**<br/>
+Fakes consume each platform's *real* payload shapes — 80 tests across Python + TS, zero network.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**⌨️ Typing indicators & instant acks**<br/>
+Native "typing…" on Discord/Telegram; `listen(ack="On it…")` everywhere else.
+
+</td>
+<td valign="top">
+
+**🧭 Behavior guides**<br/>
+`client.behavior_prompt()` returns per-channel etiquette to drop into your system prompt.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**♻️ Idempotent connects**<br/>
+Restart-safe: `connect_email()` returns the same inbox, never a duplicate.
+
+</td>
+<td valign="top">
+
+**🔌 Pluggable registry**<br/>
+Any provider package registers under the `caspian.providers` entry-point group. No forks.
+
+</td>
+</tr>
+</table>
 
 ## Channels
 
 | Channel | This repo (your credentials) | Caspian hosted |
 |---|:---:|:---:|
-| Email (AWS SES) | ✅ | ✅ instant inbox |
-| Telegram (bot) | ✅ | ✅ |
-| Discord | ✅ | ✅ one-click |
-| Slack | ✅ | ✅ one-click |
-| Instagram DM | ✅ | ✅ |
-| Facebook Messenger | ✅ | ✅ |
-| X / Twitter | ✅ * | ✅ |
-| Google Meet | ✅ | ✅ |
-| SMS (GSM modem) | ✅ * | ✅ no hardware |
-| Telegram (user account) | ⚠️ opt-in * | — |
-| WhatsApp Business | — | ✅ one-click |
-| Phone / voice · iMessage · RCS | — | ✅ |
+| <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email (AWS SES) | ✅ | ✅ instant inbox |
+| <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
+| <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
+| <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
+| <img src="https://cdn.simpleicons.org/googlemeet" width="14"/> &nbsp;Google Meet | ✅ | ✅ |
+| 📶 SMS (GSM modem) | ✅ * | ✅ no hardware |
+| <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram (user account) | ⚠️ opt-in * | — |
+| <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | — | ✅ one-click |
+| <img src="https://cdn.simpleicons.org/apple/6c7078/9ea3ad" width="14"/> &nbsp;Phone / voice · iMessage · RCS | — | ✅ |
 
-Hosted channels are the same API — no numbers to buy, no platform review: **[trycaspianai.com](https://trycaspianai.com)**.
+<p align="center">
+  <a href="https://trycaspianai.com"><img alt="Get hosted channels" src="https://img.shields.io/badge/Need_WhatsApp,_phone,_or_iMessage%3F-Caspian_hosted_→-fc2c83?style=for-the-badge" /></a>
+</p>
 
-**\* The fine print** — read before you promise features:
+<details>
+<summary><b>* The fine print</b> — read before you promise features</summary>
+<br/>
+
 - **X is not free**: DM send/receive needs a paid X API subscription on your X developer app (the free tier is write-only and capped).
 - **Telegram user-account automation is ToS-gray**: it drives a personal account over MTProto and requires explicit opt-in config; bans are your risk. Never for spam.
 - **GSM modem SMS**: your own modem + SIM; carrier compliance (A2P rules) is on you.
+
+</details>
 
 ## Recipes
 
@@ -192,7 +249,8 @@ print("Add to Slack:", slack["authorize_url"])   # one click, then it's live
 system_prompt += "\n\n" + client.behavior_prompt()
 ```
 
-**Multi-tenant** — one agent per customer, isolated by scope:
+<details>
+<summary><b>Multi-tenant</b> — one agent per customer, isolated by scope</summary>
 
 ```python
 acme = client.create_customer("Acme")
@@ -200,7 +258,10 @@ agent = client.create_agent("Support")
 client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
 ```
 
-**Adapters without the SDK** — use the channel layer directly:
+</details>
+
+<details>
+<summary><b>Adapters without the SDK</b> — use the channel layer directly</summary>
 
 ```python
 from caspian_adapters import Settings, build_providers
@@ -212,6 +273,8 @@ providers = build_providers(Settings(
     instagram_app_secret="<app secret>",
 ))
 ```
+
+</details>
 
 ## What's in this repo
 
