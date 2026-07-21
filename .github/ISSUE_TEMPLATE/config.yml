@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/TryCaspian/caspian-sdk/blob/main/SECURITY.md
+    about: Please report vulnerabilities privately — never as a public issue.
+  - name: Caspian hosted (WhatsApp, phone, iMessage, RCS)
+    url: https://trycaspianai.com
+    about: Questions about the hosted product.

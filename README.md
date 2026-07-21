@@ -30,6 +30,10 @@
   <strong>The largest OSS agent frameworks each built 25+ channel adapters — and still spend<br/>8–15% of their issue trackers on channel plumbing. Caspian makes it one handler.</strong>
 </p>
 
+<p align="center">
+  <img alt="One agent answering on Telegram, email, and Slack from a single handler" src="assets/demo.svg" width="760">
+</p>
+
 ---
 
 Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
@@ -72,6 +76,48 @@ await client.listen();
 
 Adding a channel is one more `connect_*()` call — never new handler code.
 
+## Delete your adapter layer
+
+<table>
+<tr>
+<th>Without Caspian</th>
+<th>With Caspian</th>
+</tr>
+<tr>
+<td>
+
+```python
+# slack_bolt app + socket handler
+# discord.py client + intents + reconnect
+# python-telegram-bot + webhook server
+# smtplib/imap polling + threading logic
+# 4 auth flows, 4 payload shapes,
+# 4 retry/backoff paths, 4 dedup caches,
+# per-channel identity bugs...
+# ~1,500 lines before your agent
+# says a single word
+```
+
+</td>
+<td>
+
+```python
+client.connect_email(...)
+client.connect_telegram(...)
+client.install_slack(...)
+client.install_discord(...)
+
+@client.on_message
+def handle(message):
+    message.reply(agent(message.text))
+
+client.listen()
+```
+
+</td>
+</tr>
+</table>
+
 > **Using a coding agent?** Point it at [`llms.txt`](./llms.txt) — or, against a running gateway, `GET /SKILL.md` — and it can do the entire integration for you.
 
 ## Why Caspian exists
@@ -79,6 +125,19 @@ Adding a channel is one more `connect_*()` call — never new handler code.
 The pain isn't `send()` — it's **lifecycle and identity**: session/auth desync, reconnect loops, silent connection failures, cross-channel identity bugs. We measured it across 42 open-source agent projects before writing a line of this code.
 
 Caspian's answer: **channels are transports, not identities.** The agent is one identity; every channel binds to it through the same small adapter interface, and your handler code never learns which platform it's on.
+
+```mermaid
+flowchart LR
+    S[Slack] --> A
+    D[Discord] --> A
+    T[Telegram] --> A
+    E[Email] --> A
+    M[Instagram · Messenger] --> A
+    X[X] --> A
+    A["caspian-adapters<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
+    I --> H["your on_message handler"]
+    H -->|"message.reply()"| I
+```
 
 ## Features
 
