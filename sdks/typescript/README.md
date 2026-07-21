@@ -38,13 +38,14 @@ await client.listen(); // one loop, every channel
 | **Email** | `connectEmail()` — default domain or your own |
 | **Slack** | `installSlack()` (one-click) or `connectSlack({...})` (your own app) |
 | **Discord** | `installDiscord()` (one-click) or `connectDiscord({...})` |
+| **GitHub issues / PRs** | `installGitHub()` or `connectGitHub({...})` |
 | **X / Twitter** | `installX()` (one-click) or `connectX({...})` |
 | **WhatsApp** | `connectWhatsapp({...})` (Caspian hosted) |
 | **SMS / phone** | `connectPhone({...})` — own GSM modem, or Caspian hosted |
 | **Telegram** | `connectTelegram({ botToken })` |
 | **iMessage** | `connectImessage()` |
 
-OAuth channels (Slack/Discord/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
+Install channels (Slack/Discord/GitHub/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
 
 ## Make your agent platform-aware
 

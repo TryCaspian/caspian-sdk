@@ -12,11 +12,16 @@ def test_build_fake_provider_by_default():
 
 def test_providers_list_builds_each():
     providers = build_providers(
-        Settings(providers="fake,fake-telegram,fake-discord,fake-slack,fake-instagram")
+        Settings(
+            providers=(
+                "fake,fake-telegram,fake-discord,fake-slack,fake-github,fake-instagram"
+            )
+        )
     )
     assert set(providers) == {"fake", "fake-telegram", "fake-discord", "fake-slack",
-                             "fake-instagram"}
+                             "fake-github", "fake-instagram"}
     assert providers["fake-instagram"].channel == "instagram"
+    assert providers["fake-github"].channel == "github"
 
 
 def test_instagram_and_facebook_build_from_settings():

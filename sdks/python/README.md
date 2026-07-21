@@ -34,6 +34,7 @@ client.listen()  # one loop, every channel
 | **Email** | `connect_email()` — default domain or your own |
 | **Slack** | `install_slack()` (one-click) or `connect_slack(...)` |
 | **Discord** | `install_discord()` (one-click) or `connect_discord(...)` |
+| **GitHub issues / PRs** | `install_github()` or `connect_github(...)` |
 | **X / Twitter** | `install_x()` (one-click) or `connect_x(...)` |
 | **WhatsApp** | `connect_whatsapp(...)` (Caspian hosted) |
 | **SMS / phone** | `connect_phone(...)` — own GSM modem, or Caspian hosted |

@@ -84,6 +84,42 @@ def test_connect_no_wait_returns_immediately():
     assert connection["status"] == "provisioning"
 
 
+def test_connect_and_install_github_use_expected_contract():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(
+            201,
+            json={
+                "id": "conn_gh",
+                "status": "pending_oauth",
+                "authorize_url": "https://github.com/apps/caspian/installations/new",
+            },
+        )
+
+    client = _client(handler)
+    try:
+        connected = client.connect_github(
+            github_app_id="123",
+            github_app_slug="my-app",
+            github_private_key="pem",
+            github_webhook_secret="secret",
+            customer_id="cus_1",
+        )
+        installed = client.install_github(display_name="Review Agent")
+    finally:
+        client.close()
+
+    assert connected["status"] == "pending_oauth"
+    assert installed["authorize_url"].startswith("https://github.com/apps/")
+    assert seen[0][0] == "/v1/connections/github"
+    assert seen[0][1]["github_app_slug"] == "my-app"
+    assert seen[0][1]["receive_mode"] == "mentions"
+    assert seen[1][0] == "/v1/connections/github/install"
+    assert seen[1][1]["display_name"] == "Review Agent"
+
+
 def test_provisioning_failure_raises():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":

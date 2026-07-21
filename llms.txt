@@ -26,6 +26,7 @@ client.listen()  # blocks; dedupes within a run
    - `connect_telegram(bot_token=...)` — token from @BotFather; ask the developer for it, never invent one.
    - `connect_discord(bot_token=...)` or `install_discord(display_name=...)` → returns an `authorize_url` to open.
    - `connect_slack(slack_client_id=..., slack_client_secret=..., slack_signing_secret=...)` or `install_slack(...)` → `authorize_url`.
+   - `connect_github(github_app_id=..., github_app_slug=..., github_private_key=..., github_webhook_secret=...)` or `install_github(...)` → GitHub App installation URL; issue/PR comments mentioning the App become messages.
    - `connect_instagram(...)` / `connect_facebook(...)` — developer's own Meta app + Page.
    - `connect_x(access_token=..., access_secret=..., user_id=...)` or `install_x()` — reactive DMs only; X API paid tier required.
    - `connect_whatsapp()` / `connect_imessage()` / `connect_phone()` / `connect_rcs()` — hosted-gateway channels; 400 if not available on this deployment.
@@ -43,7 +44,7 @@ from caspian_adapters import Settings, build_providers
 providers = build_providers(Settings(providers="slack", slack_client_id=..., slack_client_secret=..., slack_signing_secret=...))
 ```
 
-Each provider implements: `provision(request)`, `send(inbox_id, message, credentials)`, `reply(inbox_id, message_id, message, credentials)`, `parse_webhook(payload, headers, credentials)` (verifies platform signatures; raises `WebhookVerificationError`), plus a `capabilities` frozenset. In-memory fakes exist for every channel (`fake`, `fake-telegram`, `fake-discord`, `fake-slack`, `fake-instagram`, ...) — use them in tests; they consume the platform's real inbound payload shapes. Third-party providers register via the `caspian.providers` entry-point group.
+Each provider implements: `provision(request)`, `send(inbox_id, message, credentials)`, `reply(inbox_id, message_id, message, credentials)`, `parse_webhook(payload, headers, credentials)` (verifies platform signatures; raises `WebhookVerificationError`), plus a `capabilities` frozenset. In-memory fakes exist for every channel (`fake`, `fake-telegram`, `fake-discord`, `fake-slack`, `fake-github`, `fake-instagram`, ...) — use them in tests; they consume the platform's real inbound payload shapes. Third-party providers register via the `caspian.providers` entry-point group.
 
 ## Constraints to respect
 
