@@ -261,7 +261,7 @@ If your agent needs to talk to humans, this is the layer under it:
 - **Sales & lead follow-up** — first touch on the channel the lead used, follow-ups where they actually respond.
 - **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
 - **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
-- **OpenClaw agents** — [`openclaw-caspian`](./packages/openclaw) is one plugin install for every Caspian channel.
+- **OpenClaw agents** — `clawhub install @trycaspian/caspian` ([the skill](./packages/clawhub-skill)) teaches your agent to wire itself up; [`openclaw-caspian`](./packages/openclaw) is the native channel plugin.
 - **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
 
 Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
@@ -319,6 +319,7 @@ providers = build_providers(Settings(
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
+| [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
 
