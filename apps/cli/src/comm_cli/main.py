@@ -36,11 +36,22 @@ def _dotenv() -> dict[str, str]:
     return values
 
 
+def _resolve(*keys: str, default: str | None = None) -> str | None:
+    """Resolve a value per source (env, then ./.env), preferring the branded
+    CASPIAN_* name over legacy COMM_*. Matches the SDK: a source is only consulted
+    for a non-empty value, so an empty env var can't mask a real ./.env value."""
+    dotenv = _dotenv()
+    for source in (os.environ.get, dotenv.get):
+        for key in keys:
+            value = source(key)
+            if value:
+                return value
+    return default
+
+
 def _config() -> tuple[str, str]:
-    # Prefer the branded CASPIAN_* names; fall back to legacy COMM_* for back-compat.
-    env = {**_dotenv(), **os.environ}
-    api_key = env.get("CASPIAN_API_KEY") or env.get("COMM_API_KEY")
-    base_url = env.get("CASPIAN_BASE_URL") or env.get("COMM_BASE_URL", DEFAULT_GATEWAY)
+    api_key = _resolve("CASPIAN_API_KEY", "COMM_API_KEY")
+    base_url = _resolve("CASPIAN_BASE_URL", "COMM_BASE_URL", default=DEFAULT_GATEWAY)
     if not api_key:
         sys.exit("No CASPIAN_API_KEY found. Run: caspian init --gateway <url>")
     return api_key, base_url
@@ -99,8 +110,7 @@ def _write_env(values: dict[str, str]) -> None:
 
 
 def cmd_init(args) -> None:
-    env = {**_dotenv(), **os.environ}
-    if (env.get("CASPIAN_API_KEY") or env.get("COMM_API_KEY")) and not args.force:
+    if _resolve("CASPIAN_API_KEY", "COMM_API_KEY") and not args.force:
         print("CASPIAN_API_KEY already configured in .env (use --force to replace).")
         return
     gateway = args.gateway.rstrip("/")

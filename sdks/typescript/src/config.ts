@@ -29,12 +29,13 @@ export function config(
   envKey: string,
   fallback?: string,
 ): string | undefined {
+  if (explicit) return explicit;
   const keys = envKey.startsWith("CASPIAN_")
     ? [envKey, "COMM_" + envKey.slice("CASPIAN_".length)]
     : [envKey];
-  const env = dotenv();
-  if (explicit) return explicit;
   for (const k of keys) if (process.env[k]) return process.env[k];
+  // Only touch the filesystem if env didn't resolve it.
+  const env = dotenv();
   for (const k of keys) if (env[k]) return env[k];
   return fallback;
 }
