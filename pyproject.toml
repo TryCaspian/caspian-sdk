@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/adapters/tests", "sdks/python/tests"]
+testpaths = ["apps/cli/tests", "packages/adapters/tests", "sdks/python/tests"]
 addopts = "-q"
 
 [tool.ruff]
@@ -36,5 +36,4 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
 
