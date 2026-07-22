@@ -29,8 +29,9 @@ def test_write_env_preserves_unrelated_values_and_replaces_keys(env_path):
 def test_config_prefers_environment_over_dotenv(env_path, monkeypatch):
     env_path.write_text("CASPIAN_API_KEY=file-key\nCASPIAN_BASE_URL=https://file.test\n")
     monkeypatch.setenv("CASPIAN_API_KEY", "env-key")
+    monkeypatch.setenv("CASPIAN_BASE_URL", "https://env.test")
 
-    assert main._config() == ("env-key", "https://file.test")
+    assert main._config() == ("env-key", "https://env.test")
 
 
 def test_config_exits_when_api_key_is_missing(env_path):
@@ -101,10 +102,22 @@ def test_cmd_init_writes_mocked_project_credentials(env_path, monkeypatch, capsy
         request=request,
         json={"project_id": "project_1", "api_key": "sandbox-key"},
     )
-    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: response)
+    calls = []
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return response
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
 
     main.cmd_init(Namespace(gateway="https://gateway.test/", name="demo", force=False))
 
+    assert calls == [
+        (
+            ("https://gateway.test/v1/projects/sandbox",),
+            {"json": {"name": "demo"}, "timeout": 30},
+        )
+    ]
     assert env_path.read_text() == (
         "CASPIAN_API_KEY=sandbox-key\nCASPIAN_BASE_URL=https://gateway.test\n"
     )
