@@ -75,7 +75,7 @@ export type MessageHandler = (message: Message) => void | Promise<void>;
 
 /**
  * One identity for your AI agent across every channel — behind a single
- * onMessage handler. Reads COMM_API_KEY / COMM_BASE_URL from the environment or
+ * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
  * ./.env when not passed explicitly.
  */
 export class CommClient {
@@ -88,12 +88,12 @@ export class CommClient {
   private lastCreditWarning = 0;
 
   constructor(options: ClientOptions = {}) {
-    const apiKey = config(options.apiKey, "COMM_API_KEY");
+    const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
     if (!apiKey) {
-      throw new CommError(401, "No API key: pass apiKey or set COMM_API_KEY (env or ./.env)");
+      throw new CommError(401, "No API key: pass apiKey or set CASPIAN_API_KEY (env or ./.env)");
     }
     this.apiKey = apiKey;
-    this.baseUrl = (config(options.baseUrl, "COMM_BASE_URL", "https://api.trycaspianai.com") as string)
+    this.baseUrl = (config(options.baseUrl, "CASPIAN_BASE_URL", "https://api.trycaspianai.com") as string)
       .replace(/\/+$/, "");
     this.timeoutMs = (options.timeout ?? 30) * 1000;
     this.fetchImpl = options.fetch ?? globalThis.fetch;

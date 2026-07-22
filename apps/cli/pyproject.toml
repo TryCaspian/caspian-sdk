@@ -8,7 +8,8 @@ dependencies = [
 ]
 
 [project.scripts]
-comm = "comm_cli.main:main"
+caspian = "comm_cli.main:main"
+comm = "comm_cli.main:main"  # legacy alias; use `caspian`
 
 [build-system]
 requires = ["hatchling"]

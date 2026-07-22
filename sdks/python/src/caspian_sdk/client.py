@@ -41,7 +41,19 @@ def _dotenv() -> dict[str, str]:
 
 
 def _config(explicit: str | None, env_key: str, default: str | None = None) -> str | None:
-    return explicit or os.environ.get(env_key) or _dotenv().get(env_key) or default
+    """Resolve a value from an explicit arg, env, or ./.env. Prefers the branded
+    CASPIAN_* name, falling back to the legacy COMM_* one for back-compat."""
+    dotenv = _dotenv()
+    keys = [env_key]
+    if env_key.startswith("CASPIAN_"):
+        keys.append("COMM_" + env_key[len("CASPIAN_"):])  # legacy alias
+    for source in (lambda k: explicit if k == env_key else None,
+                   os.environ.get, dotenv.get):
+        for key in keys:
+            value = source(key)
+            if value:
+                return value
+    return default
 
 
 class CommError(Exception):
@@ -134,10 +146,10 @@ class CommClient:
         http: httpx.Client | None = None,
         timeout: float = 30.0,
     ) -> None:
-        api_key = _config(api_key, "COMM_API_KEY")
+        api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
-            raise CommError(401, "No API key: pass api_key or set COMM_API_KEY (env or ./.env)")
-        base_url = _config(base_url, "COMM_BASE_URL", "https://api.trycaspianai.com")
+            raise CommError(401, "No API key: pass api_key or set CASPIAN_API_KEY (env or ./.env)")
+        base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         self._handlers: list[Callable[[Message], None]] = []

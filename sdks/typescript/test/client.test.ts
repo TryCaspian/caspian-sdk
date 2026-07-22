@@ -36,8 +36,35 @@ function json(body: unknown, status = 200) {
 
 describe("CommClient", () => {
   it("requires an API key", () => {
+    delete process.env.CASPIAN_API_KEY;
     delete process.env.COMM_API_KEY;
     expect(() => new CommClient({ baseUrl: "http://gw" })).toThrow(CommError);
+  });
+
+  it("reads CASPIAN_API_KEY, and falls back to legacy COMM_API_KEY", async () => {
+    // Capture the bearer token actually sent, to prove which env var resolved.
+    async function resolvedKey(): Promise<string> {
+      let seen = "";
+      const fetchImpl = (async (url: any, init: any = {}) => {
+        seen = (init.headers?.Authorization as string) ?? "";
+        return new Response(JSON.stringify({ id: "cus_1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+      const client = new CommClient({ baseUrl: "http://gw", fetch: fetchImpl });
+      await client.createCustomer("Acme");
+      return seen.replace(/^Bearer /, "");
+    }
+
+    delete process.env.CASPIAN_API_KEY;
+    delete process.env.COMM_API_KEY;
+    process.env.COMM_API_KEY = "legacy_key"; // legacy var still works
+    expect(await resolvedKey()).toBe("legacy_key");
+    process.env.CASPIAN_API_KEY = "new_key"; // new var preferred even when both set
+    expect(await resolvedKey()).toBe("new_key");
+    delete process.env.CASPIAN_API_KEY;
+    delete process.env.COMM_API_KEY;
   });
 
   it("sends bearer auth and parses JSON", async () => {
