@@ -180,7 +180,7 @@ Slack signing secret、Meta `X-Hub-Signature-256`、Telegram secret header、X C
 <td valign="top">
 
 **🧪 每个渠道的离线 fake**<br/>
-fake 消费各平台*真实*的入站消息格式——Python + TS 共 80 个测试，零网络请求。
+fake 消费各平台*真实*的入站消息格式——Python + TS 共 85 个测试，零网络请求。
 
 </td>
 </tr>
@@ -336,7 +336,7 @@ git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
 uv run pytest        # 70 个 Python 测试，全部离线
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 10 个 vitest 测试
+cd sdks/typescript && npm ci && npm test   # 15 个 vitest 测试
 ```
 
 欢迎贡献——见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
