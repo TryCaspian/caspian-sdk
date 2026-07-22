@@ -1,6 +1,6 @@
 [project]
 name = "caspian-sdk"
-version = "0.2.0"
+version = "0.2.1"
 description = "One identity for your AI agent across every channel — email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage — behind a single on_message handler."
 readme = "README.md"
 license = "MIT"
