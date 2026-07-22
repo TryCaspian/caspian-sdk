@@ -68,6 +68,63 @@ def test_request_exits_with_api_error_detail(env_path, monkeypatch):
         main._request("GET", "/v1/private")
 
 
+@pytest.mark.parametrize("status_code", [401, 500])
+def test_request_exits_with_plain_http_error(env_path, monkeypatch, status_code):
+    env_path.write_text("CASPIAN_API_KEY=test-key\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: httpx.Response(status_code, text="gateway error"),
+    )
+
+    with pytest.raises(SystemExit, match=f"Error {status_code}: gateway error"):
+        main._request("GET", "/v1/private")
+
+
+def test_request_handles_non_object_json_error(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: httpx.Response(502, json=["gateway error"]),
+    )
+
+    with pytest.raises(SystemExit, match=r"Error 502: \[\"gateway error\"\]"):
+        main._request("GET", "/v1/private")
+
+
+def test_request_exits_with_account_required_code(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: httpx.Response(
+            403,
+            json={"detail": {"reason": "account_required", "message": "Sign in"}},
+        ),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        main._request("GET", "/v1/private")
+    assert error.value.code == 3
+
+
+def test_request_exits_with_out_of_credit_code(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        ),
+    )
+
+    with pytest.raises(SystemExit) as error:
+        main._request("GET", "/v1/private")
+    assert error.value.code == 2
+
+
 def test_domains_zone_file_uses_shared_error_mapping(env_path, monkeypatch):
     env_path.write_text("CASPIAN_API_KEY=test-key\nCASPIAN_BASE_URL=https://gateway.test\n")
     monkeypatch.setattr(

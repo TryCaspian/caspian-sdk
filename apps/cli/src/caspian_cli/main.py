@@ -75,7 +75,12 @@ def _raise_for_error(response: httpx.Response) -> None:
     """Map an unsuccessful gateway response to the CLI's user-facing errors."""
     if response.status_code >= 400:
         try:
-            detail = response.json().get("detail", response.text)
+            payload = response.json()
+            detail = (
+                payload.get("detail", response.text)
+                if isinstance(payload, dict)
+                else response.text
+            )
         except ValueError:
             detail = response.text
         # A billing block (out of credit / spend cap) comes back as a structured
