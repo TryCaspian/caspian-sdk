@@ -44,6 +44,17 @@ Your agent's reasoning decides **what** to say. Caspian is **how it exists** on 
 
 ## Get started in 30 seconds
 
+**Building in a coding agent** (Claude Code, Codex, Cursor, Kimi, …)? Paste this — it reads the live guide and does the whole integration for you:
+
+```text
+Integrate Caspian so my agent can message people on email, Slack, Discord, Telegram, and more.
+Read https://api.trycaspianai.com/SKILL.md and follow it end to end.
+```
+
+That's the fastest path — the guide at [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md) is always current, so your agent installs the SDK, mints a key, connects a channel, and writes the handler itself.
+
+**Or set it up by hand:**
+
 ```bash
 cd your-project
 pip install caspian-sdk        # the library (import into your code)
