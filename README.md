@@ -42,14 +42,35 @@
 
 Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
-### Get started in 10 seconds
+## Get started in 30 seconds
 
 ```bash
 cd your-project
-pip install caspian-sdk        # the library (import into your app)
-pip install caspian-cli        # the CLI (the `caspian` command) — or: uvx caspian-cli
-caspian init                   # mints a sandbox key, writes CASPIAN_API_KEY + CASPIAN_BASE_URL to .env
-caspian connect email          # free, instant — then drop the snippet below into your app
+pip install caspian-sdk        # the library (import into your code)
+pipx install caspian-cli       # the CLI (gives the `caspian` command) — or: uvx caspian-cli
+caspian init                   # mints a key, writes CASPIAN_API_KEY + CASPIAN_BASE_URL to .env
+caspian connect email          # free, instant
+```
+
+Then in your code:
+
+```python
+from caspian_sdk import CommClient
+
+client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
+email = client.connect_email(display_name="Example CLI Agent")
+print(f"Agent email: {email['address']}")
+print("Listening (Ctrl+C to stop).")
+
+
+@client.on_message
+def handle(message):
+    sender = (message.sender or {}).get("address", "?")
+    print(f"<- {sender}: {message.text!r}")
+    message.reply(f"You said: {message.text}")
+
+
+client.listen()  # one loop, every channel
 ```
 
 > **Node / TypeScript:** the library is `npm install caspian-sdk`. The `caspian` CLI is a
@@ -57,22 +78,6 @@ caspian connect email          # free, instant — then drop the snippet below i
 > or just use the SDK directly (below); nothing else about the flow changes.
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
-
-**Python:**
-
-```python
-from caspian_sdk import CommClient
-
-client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
-email = client.connect_email(display_name="My Agent")
-print("Agent email:", email["address"])
-
-@client.on_message
-def handle(message):
-    message.reply(f"You said: {message.text}")
-
-client.listen()  # one loop, every channel
-```
 
 **TypeScript** — same contract, zero runtime dependencies:
 
