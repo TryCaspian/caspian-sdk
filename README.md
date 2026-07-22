@@ -42,16 +42,19 @@
 
 Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
-```bash
-pip install caspian-sdk      # Python
-npm install caspian-sdk      # TypeScript / Node 18+
-```
-
-Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `CASPIAN_API_KEY` + `CASPIAN_BASE_URL` to your `.env`:
+### Get started in 10 seconds
 
 ```bash
-caspian init
+cd your-project
+pip install caspian-sdk        # the library (import into your app)
+pip install caspian-cli        # the CLI (the `caspian` command) — or: uvx caspian-cli
+caspian init                   # mints a sandbox key, writes CASPIAN_API_KEY + CASPIAN_BASE_URL to .env
+caspian connect email          # free, instant — then drop the snippet below into your app
 ```
+
+> **Node / TypeScript:** the library is `npm install caspian-sdk`. The `caspian` CLI is a
+> standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
+> or just use the SDK directly (below); nothing else about the flow changes.
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
