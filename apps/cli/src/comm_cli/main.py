@@ -37,11 +37,12 @@ def _dotenv() -> dict[str, str]:
 
 
 def _config() -> tuple[str, str]:
+    # Prefer the branded CASPIAN_* names; fall back to legacy COMM_* for back-compat.
     env = {**_dotenv(), **os.environ}
-    api_key = env.get("COMM_API_KEY")
-    base_url = env.get("COMM_BASE_URL", DEFAULT_GATEWAY)
+    api_key = env.get("CASPIAN_API_KEY") or env.get("COMM_API_KEY")
+    base_url = env.get("CASPIAN_BASE_URL") or env.get("COMM_BASE_URL", DEFAULT_GATEWAY)
     if not api_key:
-        sys.exit("No COMM_API_KEY found. Run: comm init --gateway <url>")
+        sys.exit("No CASPIAN_API_KEY found. Run: comm init --gateway <url>")
     return api_key, base_url
 
 
@@ -99,8 +100,8 @@ def _write_env(values: dict[str, str]) -> None:
 
 def cmd_init(args) -> None:
     env = {**_dotenv(), **os.environ}
-    if env.get("COMM_API_KEY") and not args.force:
-        print("COMM_API_KEY already configured in .env (use --force to replace).")
+    if (env.get("CASPIAN_API_KEY") or env.get("COMM_API_KEY")) and not args.force:
+        print("CASPIAN_API_KEY already configured in .env (use --force to replace).")
         return
     gateway = args.gateway.rstrip("/")
     response = httpx.post(
@@ -111,9 +112,9 @@ def cmd_init(args) -> None:
     if response.status_code >= 400:
         sys.exit(f"Error {response.status_code}: {response.text}")
     data = response.json()
-    _write_env({"COMM_API_KEY": data["api_key"], "COMM_BASE_URL": gateway})
+    _write_env({"CASPIAN_API_KEY": data["api_key"], "CASPIAN_BASE_URL": gateway})
     print(f"Project {data['project_id']} created.")
-    print(f"Wrote COMM_API_KEY and COMM_BASE_URL to {ENV_PATH}")
+    print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
     print("Next: comm connect email")
 
 

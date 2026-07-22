@@ -36,8 +36,20 @@ function json(body: unknown, status = 200) {
 
 describe("CommClient", () => {
   it("requires an API key", () => {
+    delete process.env.CASPIAN_API_KEY;
     delete process.env.COMM_API_KEY;
     expect(() => new CommClient({ baseUrl: "http://gw" })).toThrow(CommError);
+  });
+
+  it("reads CASPIAN_API_KEY, and falls back to legacy COMM_API_KEY", () => {
+    delete process.env.CASPIAN_API_KEY;
+    delete process.env.COMM_API_KEY;
+    process.env.COMM_API_KEY = "legacy_key"; // old var still works
+    expect(() => new CommClient({ baseUrl: "http://gw" })).not.toThrow();
+    process.env.CASPIAN_API_KEY = "new_key"; // new var preferred
+    expect(() => new CommClient({ baseUrl: "http://gw" })).not.toThrow();
+    delete process.env.CASPIAN_API_KEY;
+    delete process.env.COMM_API_KEY;
   });
 
   it("sends bearer auth and parses JSON", async () => {

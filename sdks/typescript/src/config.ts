@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Parse ./.env (best-effort) so COMM_API_KEY / COMM_BASE_URL work with no setup. */
+/** Parse ./.env (best-effort) so CASPIAN_API_KEY / CASPIAN_BASE_URL work with no setup. */
 function dotenv(): Record<string, string> {
   const values: Record<string, string> = {};
   const path = join(process.cwd(), ".env");
@@ -20,11 +20,21 @@ function dotenv(): Record<string, string> {
   return values;
 }
 
-/** explicit arg > process.env > ./.env > fallback. */
+/**
+ * explicit arg > process.env > ./.env > fallback. Prefers the branded CASPIAN_*
+ * name and falls back to the legacy COMM_* name for back-compat.
+ */
 export function config(
   explicit: string | undefined,
   envKey: string,
   fallback?: string,
 ): string | undefined {
-  return explicit ?? process.env[envKey] ?? dotenv()[envKey] ?? fallback;
+  const keys = envKey.startsWith("CASPIAN_")
+    ? [envKey, "COMM_" + envKey.slice("CASPIAN_".length)]
+    : [envKey];
+  const env = dotenv();
+  if (explicit) return explicit;
+  for (const k of keys) if (process.env[k]) return process.env[k];
+  for (const k of keys) if (env[k]) return env[k];
+  return fallback;
 }

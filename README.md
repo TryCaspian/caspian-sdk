@@ -47,20 +47,20 @@ pip install caspian-sdk      # Python
 npm install caspian-sdk      # TypeScript / Node 18+
 ```
 
-Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `COMM_API_KEY` + `COMM_BASE_URL` to your `.env`:
+Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `CASPIAN_API_KEY` + `CASPIAN_BASE_URL` to your `.env`:
 
 ```bash
 comm init
 ```
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `COMM_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`comm login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`comm login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **Python:**
 
 ```python
 from caspian_sdk import CommClient
 
-client = CommClient()  # reads COMM_API_KEY / COMM_BASE_URL from .env
+client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
 email = client.connect_email(display_name="My Agent")
 print("Agent email:", email["address"])
 
@@ -76,7 +76,7 @@ client.listen()  # one loop, every channel
 ```ts
 import { CommClient } from "caspian-sdk";
 
-const client = new CommClient();  // reads COMM_API_KEY / COMM_BASE_URL
+const client = new CommClient();  // reads CASPIAN_API_KEY / CASPIAN_BASE_URL
 const inbox = await client.connectEmail({ displayName: "My Agent" });
 
 client.onMessage(async (message) => {

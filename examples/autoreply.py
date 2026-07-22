@@ -1,6 +1,6 @@
 """Minimal auto-reply agent.
 
-Point COMM_BASE_URL and COMM_API_KEY at a Caspian gateway (hosted, or any
+Point CASPIAN_BASE_URL and CASPIAN_API_KEY at a Caspian gateway (hosted, or any
 deployment of the Caspian gateway), then:
 
     uv run python examples/autoreply.py
@@ -12,7 +12,7 @@ from caspian_sdk import CommClient
 
 client = CommClient(
     api_key=os.environ.get("COMM_BOOTSTRAP_API_KEY", "comm_test_replace_me"),
-    base_url=os.environ.get("COMM_BASE_URL", "https://api.trycaspianai.com"),
+    base_url=os.environ.get("CASPIAN_BASE_URL", "https://api.trycaspianai.com"),
 )
 
 customer = client.create_customer("Acme")

@@ -52,7 +52,7 @@ npm install caspian-sdk      # TypeScript / Node 18+
 ```python
 from caspian_sdk import CommClient
 
-client = CommClient()  # 从 .env 读取 COMM_API_KEY / COMM_BASE_URL
+client = CommClient()  # 从 .env 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
 email = client.connect_email(display_name="My Agent")
 print("Agent email:", email["address"])
 
@@ -68,7 +68,7 @@ client.listen()  # 一个循环，覆盖所有渠道
 ```ts
 import { CommClient } from "caspian-sdk";
 
-const client = new CommClient();  // 读取 COMM_API_KEY / COMM_BASE_URL
+const client = new CommClient();  // 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
 const inbox = await client.connectEmail({ displayName: "My Agent" });
 
 client.onMessage(async (message) => {
