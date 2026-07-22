@@ -64,4 +64,10 @@ describe("config", () => {
 
     expect(config(undefined, "CASPIAN_API_KEY")).toBe("legacy-env");
   });
+
+  it("falls back to the legacy COMM name from dotenv", () => {
+    writeFileSync(".env", "COMM_API_KEY=legacy-dotenv\n");
+
+    expect(config(undefined, "CASPIAN_API_KEY")).toBe("legacy-dotenv");
+  });
 });
