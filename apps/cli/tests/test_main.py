@@ -2,7 +2,7 @@ from argparse import Namespace
 
 import httpx
 import pytest
-from comm_cli import main
+from caspian_cli import main
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@ name = "caspian-sdk-workspace"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "comm-cli",
+  "caspian-cli",
   "caspian-adapters",
   "caspian-sdk",
 ]
@@ -12,7 +12,7 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-comm-cli = { workspace = true }
+caspian-cli = { workspace = true }
 caspian-adapters = { workspace = true }
 caspian-sdk = { workspace = true }
 
