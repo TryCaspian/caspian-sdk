@@ -68,6 +68,31 @@ def test_request_exits_with_api_error_detail(env_path, monkeypatch):
         main._request("GET", "/v1/private")
 
 
+def test_domains_zone_file_uses_shared_error_mapping(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\nCASPIAN_BASE_URL=https://gateway.test\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "get",
+        lambda *args, **kwargs: httpx.Response(404, json={"detail": "domain not found"}),
+    )
+
+    with pytest.raises(SystemExit, match="Error 404: domain not found"):
+        main.cmd_domains(Namespace(action="zone-file", domain="dom_missing"))
+
+
+def test_domains_zone_file_preserves_text_output(env_path, monkeypatch, capsys):
+    env_path.write_text("CASPIAN_API_KEY=test-key\nCASPIAN_BASE_URL=https://gateway.test\n")
+    monkeypatch.setattr(
+        main.httpx,
+        "get",
+        lambda *args, **kwargs: httpx.Response(200, text="$ORIGIN example.test."),
+    )
+
+    main.cmd_domains(Namespace(action="zone-file", domain="dom_1"))
+
+    assert capsys.readouterr().out == "$ORIGIN example.test.\n"
+
+
 @pytest.mark.parametrize(
     ("cents", "expected"),
     [(None, "-"), (0, "$0.00"), (123, "$1.23")],
