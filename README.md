@@ -50,10 +50,10 @@ npm install caspian-sdk      # TypeScript / Node 18+
 Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `CASPIAN_API_KEY` + `CASPIAN_BASE_URL` to your `.env`:
 
 ```bash
-comm init
+caspian init
 ```
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`comm login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **Python:**
 
@@ -319,7 +319,7 @@ providers = build_providers(Settings(
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
-| [`apps/cli`](./apps/cli) | `comm` — init a project, connect channels, tail events from your terminal. |
+| [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
 
 ## Roadmap

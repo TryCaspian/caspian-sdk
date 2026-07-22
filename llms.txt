@@ -1,6 +1,6 @@
 # Caspian
 
-> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`comm`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
+> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
 
 ## Integrate an agent (the common task)
 
@@ -59,6 +59,6 @@ Each provider implements: `provision(request)`, `send(inbox_id, message, credent
 - sdks/python/src/caspian_sdk/client.py — the full Python client surface
 - sdks/typescript/src/client.ts — the full TypeScript client surface (same API, camelCase)
 - packages/openclaw/ — OpenClaw channel plugin (openclaw-caspian)
-- apps/cli/ — `comm init | connect | status | listen | test-email`
+- apps/cli/ — `caspian init | connect | status | listen | test-email`
 - .env.example — every adapter configuration knob, documented
 - CONTRIBUTING.md — adapter authoring rules (official APIs only, fakes + tests required)

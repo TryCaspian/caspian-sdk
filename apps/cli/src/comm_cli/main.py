@@ -1,14 +1,14 @@
-"""comm - CLI for the communication gateway.
+"""caspian - CLI for the Caspian communication gateway.
 
 Commands:
-  comm init [--gateway URL] [--name NAME]   mint a sandbox key, write .env
-  comm connect email [--name NAME]          provision an email inbox
-  comm status                               list connections
-  comm listen                               tail inbound/outbound mail live
-  comm test-email [TEXT]                    deliver a test email to your agent
-  comm login                                sign in once (enables paid channels)
-  comm billing                              show credit balance, spend, limits
-  comm topup [DOLLARS]                      add credit via a Stripe checkout link
+  caspian init [--gateway URL] [--name NAME]   mint a sandbox key, write .env
+  caspian connect email [--name NAME]          provision an email inbox
+  caspian status                               list connections
+  caspian listen                               tail inbound/outbound mail live
+  caspian test-email [TEXT]                    deliver a test email to your agent
+  caspian login                                sign in once (enables paid channels)
+  caspian billing                              show credit balance, spend, limits
+  caspian topup [DOLLARS]                      add credit via a Stripe checkout link
 """
 
 import argparse
@@ -42,7 +42,7 @@ def _config() -> tuple[str, str]:
     api_key = env.get("CASPIAN_API_KEY") or env.get("COMM_API_KEY")
     base_url = env.get("CASPIAN_BASE_URL") or env.get("COMM_BASE_URL", DEFAULT_GATEWAY)
     if not api_key:
-        sys.exit("No CASPIAN_API_KEY found. Run: comm init --gateway <url>")
+        sys.exit("No CASPIAN_API_KEY found. Run: caspian init --gateway <url>")
     return api_key, base_url
 
 
@@ -71,7 +71,7 @@ def _request(method: str, path: str, *, json_body: dict | None = None, params: d
         if isinstance(detail, dict) and detail.get("reason") == "account_required":
             print(f"\n{detail.get('message', 'Sign-in required for paid channels.')}",
                   file=sys.stderr)
-            print("  Sign in once:  comm login\n", file=sys.stderr)
+            print("  Sign in once:  caspian login\n", file=sys.stderr)
             sys.exit(3)
         sys.exit(f"Error {response.status_code}: {detail}")
     return response.json()
@@ -115,7 +115,7 @@ def cmd_init(args) -> None:
     _write_env({"CASPIAN_API_KEY": data["api_key"], "CASPIAN_BASE_URL": gateway})
     print(f"Project {data['project_id']} created.")
     print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
-    print("Next: comm connect email")
+    print("Next: caspian connect email")
 
 
 def cmd_domains(args) -> None:
@@ -126,8 +126,8 @@ def cmd_domains(args) -> None:
         for record in domain["dns_records"]:
             priority = f" {record['priority']}" if record.get("priority") else ""
             print(f"  {record['type']:<6} {record['name']}  ->{priority} {record['value']}")
-        print(f"Zone file: comm domains zone-file {domain['id']}")
-        print(f"Check status: comm domains status {domain['id']}")
+        print(f"Zone file: caspian domains zone-file {domain['id']}")
+        print(f"Check status: caspian domains status {domain['id']}")
     elif args.action == "list":
         for domain in _request("GET", "/v1/domains"):
             print(f"{domain['id']}  {domain['status']:<12} {domain['domain']}")
@@ -222,7 +222,7 @@ def _email_body(args) -> dict:
 def _print_authorize(channel: str, connection: dict) -> None:
     print(f"\nOpen this link to authorize {channel} (it becomes your bot):")
     print(f"  {connection.get('authorize_url')}")
-    print(f"After approving, run: comm status   (connection {connection['id']})")
+    print(f"After approving, run: caspian status   (connection {connection['id']})")
 
 
 def _await_active(connection: dict) -> None:
@@ -302,7 +302,7 @@ def cmd_connect(args) -> None:
 def cmd_status(args) -> None:
     connections = _request("GET", "/v1/connections")
     if not connections:
-        print("No connections. Run: comm connect email")
+        print("No connections. Run: caspian connect email")
         return
     for c in connections:
         print(f"{c['id']}  {c['channel']:<6} {c['status']:<12} {c['address'] or '-'}")
@@ -366,9 +366,9 @@ def cmd_login(args) -> None:
             print(f"Next: add credit in the dashboard:  {DASHBOARD_URL}")
             return
         if status in ("expired", "not_found"):
-            sys.exit(f"Login {status}. Run comm login again.")
+            sys.exit(f"Login {status}. Run caspian login again.")
         time.sleep(interval)
-    sys.exit("Login timed out. Run comm login again.")
+    sys.exit("Login timed out. Run caspian login again.")
 
 
 def _fmt_cents(cents) -> str:
@@ -410,7 +410,7 @@ def cmd_topup(args) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="comm", description="Communication gateway CLI")
+    parser = argparse.ArgumentParser(prog="caspian", description="Caspian communication CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="Mint a sandbox project and write .env")
