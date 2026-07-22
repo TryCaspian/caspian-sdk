@@ -309,8 +309,8 @@ class CommClient:
         the browser (the session token stands in for it).
 
         Omit customer_id/agent_id to onboard onto this project's default scope, or
-        pass both to target a specific customer+agent. Poll list_connections() /
-        get_connection() (or watch for a connection.active event) until it's active.
+        pass both to target a specific customer+agent. Poll get_connection()
+        (or watch for a connection.active event) until it's active.
         """
         body: dict = {}
         if customer_id is not None:
