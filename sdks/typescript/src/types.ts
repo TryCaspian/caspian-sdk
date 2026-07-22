@@ -51,9 +51,9 @@ export interface WhatsappOnboarding {
 }
 
 export interface ClientOptions {
-  /** Falls back to COMM_API_KEY (env or ./.env). */
+  /** Falls back to CASPIAN_API_KEY (or legacy COMM_API_KEY) (env or ./.env). */
   apiKey?: string;
-  /** Falls back to COMM_BASE_URL (env or ./.env), then https://api.trycaspianai.com. */
+  /** Falls back to CASPIAN_BASE_URL (or legacy COMM_BASE_URL) (env or ./.env), then https://api.trycaspianai.com. */
   baseUrl?: string;
   /** Per-request timeout in seconds (default 30). */
   timeout?: number;

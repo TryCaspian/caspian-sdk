@@ -1,11 +1,11 @@
 # Caspian
 
-> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`comm`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
+> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
 
 ## Integrate an agent (the common task)
 
 1. Install: Python `pip install caspian-sdk` — or TypeScript/Node 18+ `npm install caspian-sdk` (same API, camelCase: `connectEmail`, `onMessage`, `listen({ ack })`; zero runtime deps).
-2. Config: the client reads `COMM_API_KEY` and `COMM_BASE_URL` from env or `./.env`. Against a running Caspian gateway, mint a key with `POST {base}/v1/projects/sandbox` (no signup) — or fetch `{base}/SKILL.md`, which is the gateway's own agent-readable integration guide with exact, current instructions. Prefer SKILL.md when a gateway URL is available.
+2. Config: the client reads `CASPIAN_API_KEY` and `CASPIAN_BASE_URL` from env or `./.env`. Against a running Caspian gateway, mint a key with `POST {base}/v1/projects/sandbox` (no signup) — or fetch `{base}/SKILL.md`, which is the gateway's own agent-readable integration guide with exact, current instructions. Prefer SKILL.md when a gateway URL is available.
 3. Write ONE handler; it fires for every connected channel:
 
 ```python
@@ -60,6 +60,6 @@ Each provider implements: `provision(request)`, `send(inbox_id, message, credent
 - sdks/python/src/caspian_sdk/client.py — the full Python client surface
 - sdks/typescript/src/client.ts — the full TypeScript client surface (same API, camelCase)
 - packages/openclaw/ — OpenClaw channel plugin (openclaw-caspian)
-- apps/cli/ — `comm init | connect | status | listen | test-email`
+- apps/cli/ — `caspian init | connect | status | listen | test-email`
 - .env.example — every adapter configuration knob, documented
 - CONTRIBUTING.md — adapter authoring rules (official APIs only, fakes + tests required)

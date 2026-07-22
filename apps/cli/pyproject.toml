@@ -1,6 +1,6 @@
 [project]
 name = "comm-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "CLI for the communication gateway: init, connect, listen, test"
 requires-python = ">=3.12"
 dependencies = [
@@ -8,7 +8,8 @@ dependencies = [
 ]
 
 [project.scripts]
-comm = "comm_cli.main:main"
+caspian = "comm_cli.main:main"
+comm = "comm_cli.main:main"  # legacy alias; use `caspian`
 
 [build-system]
 requires = ["hatchling"]

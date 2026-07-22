@@ -29,7 +29,7 @@ client.onMessage(async (message) => {
 await client.listen(); // one loop, every channel
 ```
 
-`apiKey` and `baseUrl` fall back to `COMM_API_KEY` / `COMM_BASE_URL` from the environment or a local `.env`, so `new CommClient()` with no arguments works too.
+`apiKey` and `baseUrl` fall back to `CASPIAN_API_KEY` / `CASPIAN_BASE_URL` from the environment or a local `.env`, so `new CommClient()` with no arguments works too.
 
 ## Channels
 

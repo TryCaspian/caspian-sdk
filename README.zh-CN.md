@@ -52,7 +52,7 @@ npm install caspian-sdk      # TypeScript / Node 18+
 ```python
 from caspian_sdk import CommClient
 
-client = CommClient()  # 从 .env 读取 COMM_API_KEY / COMM_BASE_URL
+client = CommClient()  # 从 .env 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
 email = client.connect_email(display_name="My Agent")
 print("Agent email:", email["address"])
 
@@ -68,7 +68,7 @@ client.listen()  # 一个循环，覆盖所有渠道
 ```ts
 import { CommClient } from "caspian-sdk";
 
-const client = new CommClient();  // 读取 COMM_API_KEY / COMM_BASE_URL
+const client = new CommClient();  // 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
 const inbox = await client.connectEmail({ displayName: "My Agent" });
 
 client.onMessage(async (message) => {
@@ -312,7 +312,7 @@ providers = build_providers(Settings(
 | [`packages/adapters`](./packages/adapters) | `caspian-adapters`——渠道适配器。每个平台一个小巧接口（`provision` / `send` / `reply` / `parse_webhook`），真实的签名校验，每个渠道配一个离线 fake。 |
 | [`sdks/python`](./sdks/python) | `caspian-sdk`（PyPI）——Python 客户端：`on_message`、`connect_*()`、`message.reply()`、行为指南。 |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk`（npm）——TypeScript 客户端：同一契约，camelCase API，零运行时依赖，Node 18+。 |
-| [`apps/cli`](./apps/cli) | `comm`——在终端里初始化项目、连接渠道、追踪事件。 |
+| [`apps/cli`](./apps/cli) | `caspian`——在终端里初始化项目、连接渠道、追踪事件。 |
 | [`examples`](./examples) | 最小可运行示例。 |
 
 ## 路线图
