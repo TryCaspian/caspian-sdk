@@ -124,9 +124,151 @@ def test_reply_and_send_message_forward_blocks():
         client.close()
 
     assert bodies[0][0] == "/v1/messages/msg_1/reply"
-    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload}
+    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload,
+                            "media": None}
     assert bodies[1][0] == "/v1/conversations/conv_1/messages"
-    assert bodies[1][1] == {"text": None, "html": None, "blocks": payload}
+    assert bodies[1][1] == {"text": None, "html": None, "blocks": payload, "media": None}
+
+
+def test_reply_and_send_forward_media():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    media = [{"url": "https://x/i.png", "mime_type": "image/png", "name": "i.png"}]
+    client = _client(handler)
+    try:
+        client.reply("msg_1", text="here", media=media)
+        client.send_message("conv_1", media=media)
+    finally:
+        client.close()
+    assert bodies[0][1] == {"text": "here", "html": None, "blocks": None, "media": media}
+    assert bodies[1][1] == {"text": None, "html": None, "blocks": None, "media": media}
+
+
+def test_react_hits_endpoint():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(202, json={"ok": True, "reacted": True})
+
+    client = _client(handler)
+    try:
+        client.react("msg_1", "👍")
+    finally:
+        client.close()
+    assert seen["path"] == "/v1/messages/msg_1/react"
+    assert seen["body"] == {"emoji": "👍"}
+
+
+def test_on_interaction_dispatches_and_replies():
+    from caspian_sdk import Interaction
+
+    events = [
+        {
+            "seq": 1,
+            "type": "interaction.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "value": "reorder_123",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Interaction] = []
+
+    @client.on_interaction
+    def handle(inter: Interaction) -> None:
+        seen.append(inter)
+        inter.reply(f"got {inter.value}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].value == "reorder_123"
+    assert seen[0].source_message["id"] == "msg_9"
+    # reply routed to the source message
+    assert replies[0][0] == "/v1/messages/msg_9/reply"
+    assert replies[0][1]["text"] == "got reorder_123"
+
+
+def test_on_reaction_dispatches():
+    from caspian_sdk import Reaction
+
+    events = [
+        {
+            "seq": 1,
+            "type": "reaction.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "emoji": "thumbsup", "action": "added",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = int(dict(request.url.params).get("after_seq", 0))
+        return httpx.Response(200, json=[] if after >= 1 else events)
+
+    client = _client(handler)
+    seen: list[Reaction] = []
+    client.on_reaction(seen.append)
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].emoji == "thumbsup"
+    assert seen[0].action == "added"
+
+
+def test_message_carries_media_to_handler():
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
+                    "channel": "email", "text": "see attached",
+                    "media": [{"name": "r.pdf", "mime_type": "application/pdf"}],
+                },
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
 
 
 def test_behavior_prompt_returns_text():

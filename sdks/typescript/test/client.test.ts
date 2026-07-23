@@ -4,7 +4,9 @@ import {
   CommClient,
   CommError,
   InsufficientCreditError,
+  Interaction,
   Message,
+  Reaction,
 } from "../src/index.js";
 
 /** Build a client whose fetch is driven by a route table. */
@@ -179,7 +181,7 @@ describe("CommClient", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].channel).toBe("slack");
     expect(seen[0].conversationId).toBe("conv_1");
-    expect(replies[0]).toEqual({ text: "echo: hi", html: null, blocks: null });
+    expect(replies[0]).toEqual({ text: "echo: hi", html: null, blocks: null, media: null });
   });
 
   it("reply and sendMessage forward blocks in the request body", async () => {
@@ -202,8 +204,8 @@ describe("CommClient", () => {
     ];
     await client.reply("m1", "Order shipped", null, blocks as any);
     await client.sendMessage("c1", null, null, blocks as any);
-    expect(bodies[0]).toEqual({ text: "Order shipped", html: null, blocks });
-    expect(bodies[1]).toEqual({ text: null, html: null, blocks });
+    expect(bodies[0]).toEqual({ text: "Order shipped", html: null, blocks, media: null });
+    expect(bodies[1]).toEqual({ text: null, html: null, blocks, media: null });
   });
 
   it("listen({ ack }) sends an instant ack reply before the handler runs", async () => {
@@ -343,6 +345,124 @@ describe("CommClient", () => {
     const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("OUT OF CREDIT");
     errSpy.mockRestore();
+  });
+
+  it("reply, sendMessage and react forward media / emoji", async () => {
+    const bodies: any[] = [];
+    const { client, calls } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ ok: true }))),
+      "POST /v1/conversations/c1/messages": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ ok: true }))),
+      "POST /v1/messages/m1/react": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ ok: true, reacted: true }))),
+    });
+    const media = [{ url: "https://x/i.png", mime_type: "image/png", name: "i.png" }];
+    await client.reply("m1", "here", null, null, media as any);
+    await client.sendMessage("c1", null, null, null, media as any);
+    await client.react("m1", "👍");
+    expect(bodies[0]).toEqual({ text: "here", html: null, blocks: null, media });
+    expect(bodies[1]).toEqual({ text: null, html: null, blocks: null, media });
+    expect(bodies[2]).toEqual({ emoji: "👍" });
+    expect(calls.map((c) => c.path)).toContain("/v1/messages/m1/react");
+  });
+
+  it("onInteraction dispatches a button tap and reply routes to the source message", async () => {
+    const replies: any[] = [];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "interaction.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              conversation_id: "conv_1",
+              value: "reorder_123",
+              source_message: { id: "msg_9" },
+              sender: { address: "u" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/messages/msg_9/reply": (req) =>
+        req.json().then((b) => (replies.push(b), json({ delivered: true }))),
+    });
+    const seen: Interaction[] = [];
+    client.onInteraction(async (i) => {
+      seen.push(i);
+      await i.reply(`got ${i.value}`);
+    });
+    const last = await client.dispatchPending(0);
+    expect(last).toBe(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].value).toBe("reorder_123");
+    expect(seen[0].sourceMessage?.id).toBe("msg_9");
+    expect(replies[0].text).toBe("got reorder_123");
+  });
+
+  it("onReaction dispatches an emoji reaction", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "reaction.received",
+            data: {
+              connection_id: "conn_1",
+              emoji: "thumbsup",
+              action: "added",
+              source_message: { id: "msg_9" },
+            },
+          },
+        ]);
+      },
+    });
+    const seen: Reaction[] = [];
+    client.onReaction((r) => {
+      seen.push(r);
+    });
+    await client.dispatchPending(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].emoji).toBe("thumbsup");
+    expect(seen[0].action).toBe("added");
+  });
+
+  it("a message carries received media to the handler", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "message.received",
+            data: {
+              message: {
+                id: "m1",
+                conversation_id: "c",
+                connection_id: "cn",
+                text: "see attached",
+                media: [{ name: "r.pdf", mime_type: "application/pdf" }],
+              },
+            },
+          },
+        ]);
+      },
+      "POST /v1/messages/m1/typing": () => json({}),
+    });
+    const seen: Message[] = [];
+    client.onMessage((m) => {
+      seen.push(m);
+    });
+    await client.dispatchPending(0);
+    expect(seen[0].media).toEqual([{ name: "r.pdf", mime_type: "application/pdf" }]);
   });
 
   it("a throwing handler does not stop the drain", async () => {
