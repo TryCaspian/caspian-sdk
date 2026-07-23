@@ -179,7 +179,31 @@ describe("CommClient", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].channel).toBe("slack");
     expect(seen[0].conversationId).toBe("conv_1");
-    expect(replies[0]).toEqual({ text: "echo: hi", html: null });
+    expect(replies[0]).toEqual({ text: "echo: hi", html: null, blocks: null });
+  });
+
+  it("reply and sendMessage forward blocks in the request body", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => {
+          bodies.push(b);
+          return json({ delivered: true });
+        }),
+      "POST /v1/conversations/c1/messages": (req) =>
+        req.json().then((b) => {
+          bodies.push(b);
+          return json({ delivered: true });
+        }),
+    });
+    const blocks = [
+      { type: "heading", text: "Order shipped" },
+      { type: "buttons", buttons: [{ label: "Track", url: "https://x/track" }] },
+    ];
+    await client.reply("m1", "Order shipped", null, blocks as any);
+    await client.sendMessage("c1", null, null, blocks as any);
+    expect(bodies[0]).toEqual({ text: "Order shipped", html: null, blocks });
+    expect(bodies[1]).toEqual({ text: null, html: null, blocks });
   });
 
   it("listen({ ack }) sends an instant ack reply before the handler runs", async () => {

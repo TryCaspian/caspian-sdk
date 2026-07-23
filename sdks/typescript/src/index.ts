@@ -4,6 +4,9 @@ export { CommError, AccountRequiredError, InsufficientCreditError } from "./erro
 export type {
   Agent,
   AutopayOptions,
+  Block,
+  BlockButton,
+  BlockField,
   ClientOptions,
   Connection,
   ConnectOptions,

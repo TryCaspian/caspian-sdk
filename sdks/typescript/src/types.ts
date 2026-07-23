@@ -100,6 +100,48 @@ export interface AutopayOptions {
   monthlyCapCents?: number;
 }
 
+/**
+ * A single rich-message block. Send a `Block[]` via `reply` / `sendMessage` and
+ * channels that support rich layout (Slack, Discord, Telegram, email) render it
+ * natively, while every other channel degrades to clean text automatically.
+ *
+ * Each block is `{ type, ... }`. A button with a `url` is a link; a button with
+ * a `value` is a callback (rendered as a tappable action where supported, shown
+ * as a "reply …" hint on text-only channels).
+ */
+export interface BlockButton {
+  label: string;
+  /** Link button. */
+  url?: string;
+  /** Callback button (posts the value back to the agent). */
+  value?: string;
+}
+
+export interface BlockField {
+  label: string;
+  value: string;
+}
+
+export interface Block {
+  type: "heading" | "text" | "divider" | "image" | "fields" | "list" | "buttons" | "card";
+  /** heading / text. */
+  text?: string;
+  /** image. */
+  url?: string;
+  alt?: string;
+  /** fields. */
+  fields?: BlockField[];
+  /** list. */
+  items?: string[];
+  ordered?: boolean;
+  /** buttons / card. */
+  buttons?: BlockButton[];
+  /** card. */
+  title?: string;
+  subtitle?: string;
+  image?: string;
+}
+
 export interface ListenOptions {
   /** Start from this event seq instead of "newest at startup". */
   fromSeq?: number;

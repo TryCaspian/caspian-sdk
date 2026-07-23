@@ -128,8 +128,13 @@ class Message:
     html: str | None
     _client: "CommClient" = field(repr=False)
 
-    def reply(self, text: str | None = None, html: str | None = None) -> dict:
-        return self._client.reply(self.id, text=text, html=html)
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+    ) -> dict:
+        return self._client.reply(self.id, text=text, html=html, blocks=blocks)
 
     def typing(self) -> None:
         """Show a 'thinking…' typing indicator on the channel (Discord/Telegram;
@@ -464,9 +469,25 @@ class CommClient:
     def list_messages(self, conversation_id: str) -> list[dict]:
         return self._request("GET", f"/v1/conversations/{conversation_id}/messages")
 
-    def reply(self, message_id: str, text: str | None = None, html: str | None = None) -> dict:
+    def reply(
+        self,
+        message_id: str,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+    ) -> dict:
+        """Reply on the channel the message arrived from.
+
+        Pass ``blocks`` — a list of provider-neutral block dicts (heading, text,
+        divider, image, fields, list, buttons, card) — to send a rich message.
+        Channels that support rich layout (Slack, Discord, Telegram, email)
+        render it natively; every other channel degrades to clean text
+        automatically. See ``caspian_sdk.blocks`` for helper builders.
+        """
         return self._request(
-            "POST", f"/v1/messages/{message_id}/reply", json={"text": text, "html": html}
+            "POST",
+            f"/v1/messages/{message_id}/reply",
+            json={"text": text, "html": html, "blocks": blocks},
         )
 
     def typing(self, message_id: str) -> dict:
@@ -574,13 +595,22 @@ class CommClient:
         })
 
     def send_message(
-        self, conversation_id: str, text: str | None = None, html: str | None = None
+        self,
+        conversation_id: str,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
     ) -> dict:
-        """Proactively send into an existing conversation (needs Capability.SEND)."""
+        """Proactively send into an existing conversation (needs Capability.SEND).
+
+        Pass ``blocks`` — a list of provider-neutral block dicts — for a rich
+        message that renders natively on Slack/Discord/Telegram/email and
+        degrades to clean text elsewhere. See ``caspian_sdk.blocks``.
+        """
         return self._request(
             "POST",
             f"/v1/conversations/{conversation_id}/messages",
-            json={"text": text, "html": html},
+            json={"text": text, "html": html, "blocks": blocks},
         )
 
     def initiate(self, connection_id: str, recipient: str, text: str) -> dict:

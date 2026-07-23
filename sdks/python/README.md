@@ -40,6 +40,30 @@ client.listen()  # one loop, every channel
 | **Telegram** | `connect_telegram(bot_token=...)` |
 | **iMessage** | `connect_imessage()` (Caspian hosted) |
 
+## Rich messages
+
+Send one provider-neutral `blocks` payload and each channel gets its best
+rendering — Slack, Discord and Telegram render natively, email gets rich HTML,
+and text-only channels degrade to clean text automatically.
+
+```python
+from caspian_sdk import blocks as b
+
+message.reply(blocks=[
+    b.card(
+        title="Order #1024 shipped",
+        subtitle="Arriving Thursday",
+        buttons=[
+            {"label": "Track", "url": "https://example.com/track/1024"},
+            {"label": "Get help", "value": "help:1024"},  # callback
+        ],
+    ),
+])
+```
+
+Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
+`card`. A button with a `url` is a link; a button with a `value` is a callback.
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect_*()` call — never new handler code.

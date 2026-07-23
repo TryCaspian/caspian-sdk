@@ -102,6 +102,33 @@ def test_provisioning_failure_raises():
     assert "domain not verified" in str(excinfo.value)
 
 
+def test_reply_and_send_message_forward_blocks():
+    from caspian_sdk import blocks as b
+
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    payload = [
+        b.heading("Order shipped"),
+        b.buttons([{"label": "Track", "url": "https://x/track"}]),
+    ]
+
+    client = _client(handler)
+    try:
+        client.reply("msg_1", text="Order shipped", blocks=payload)
+        client.send_message("conv_1", blocks=payload)
+    finally:
+        client.close()
+
+    assert bodies[0][0] == "/v1/messages/msg_1/reply"
+    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload}
+    assert bodies[1][0] == "/v1/conversations/conv_1/messages"
+    assert bodies[1][1] == {"text": None, "html": None, "blocks": payload}
+
+
 def test_behavior_prompt_returns_text():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/behavior-prompt"

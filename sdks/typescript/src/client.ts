@@ -3,6 +3,7 @@ import { AccountRequiredError, CommError, InsufficientCreditError } from "./erro
 import type {
   Agent,
   AutopayOptions,
+  Block,
   ClientOptions,
   Connection,
   ConnectOptions,
@@ -56,9 +57,18 @@ export class Message {
     private readonly client: CommClient,
   ) {}
 
-  /** Reply on whichever channel this message arrived from (auto-threaded). */
-  reply(text?: string | null, html?: string | null): Promise<Record<string, unknown>> {
-    return this.client.reply(this.id, text, html);
+  /**
+   * Reply on whichever channel this message arrived from (auto-threaded).
+   *
+   * Pass `blocks` — provider-neutral rich blocks — to render natively on
+   * Slack/Discord/Telegram/email and degrade to clean text elsewhere.
+   */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+  ): Promise<Record<string, unknown>> {
+    return this.client.reply(this.id, text, html, blocks);
   }
 
   /**
@@ -459,13 +469,20 @@ export class CommClient {
     return this.request("GET", `/v1/conversations/${conversationId}/messages`);
   }
 
+  /**
+   * Reply to a message. Pass `blocks` — a list of provider-neutral rich blocks
+   * (heading, text, divider, image, fields, list, buttons, card) — to send a
+   * rich message. Slack, Discord, Telegram and email render it natively; every
+   * other channel degrades to clean text automatically.
+   */
   reply(
     messageId: string,
     text?: string | null,
     html?: string | null,
+    blocks?: Block[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/reply`, {
-      json: { text: text ?? null, html: html ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null },
     });
   }
 
@@ -581,14 +598,20 @@ export class CommClient {
     });
   }
 
-  /** Proactively send into an existing conversation (needs Capability.SEND). */
+  /**
+   * Proactively send into an existing conversation (needs Capability.SEND).
+   *
+   * Pass `blocks` — provider-neutral rich blocks — to render natively on
+   * Slack/Discord/Telegram/email and degrade to clean text elsewhere.
+   */
   sendMessage(
     conversationId: string,
     text?: string | null,
     html?: string | null,
+    blocks?: Block[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/conversations/${conversationId}/messages`, {
-      json: { text: text ?? null, html: html ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null },
     });
   }
 
