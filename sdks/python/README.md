@@ -13,7 +13,7 @@ pip install caspian-sdk
 ```python
 from caspian_sdk import CommClient
 
-client = CommClient(api_key="YOUR_KEY")
+client = CommClient(api_key="...", base_url="https://gateway.example.com")
 
 # Connect any channel — email needs nothing; others take a token or one-click OAuth.
 inbox = client.connect_email()
@@ -27,18 +27,36 @@ def handle(message):
 client.listen()  # one loop, every channel
 ```
 
+`api_key` and `base_url` fall back to `CASPIAN_API_KEY` / `CASPIAN_BASE_URL` from the environment or a local `.env`, so `CommClient()` with no arguments works too.
+
 ## Channels
 
-| | Connect |
-|---|---|
-| **Email** | `connect_email()` — default domain or your own |
-| **Slack** | `install_slack()` (one-click) or `connect_slack(...)` |
-| **Discord** | `install_discord()` (one-click) or `connect_discord(...)` |
-| **X / Twitter** | `install_x()` (one-click) or `connect_x(...)` |
-| **WhatsApp** | `connect_whatsapp(...)` (Caspian hosted) |
-| **SMS / phone** | `connect_phone(...)` — own GSM modem, or Caspian hosted |
-| **Telegram** | `connect_telegram(bot_token=...)` |
-| **iMessage** | `connect_imessage()` (Caspian hosted) |
+|                 | Connect                                                   |
+| --------------- | --------------------------------------------------------- |
+| **Email**       | `connect_email()` — default domain or your own            |
+| **Slack**       | `install_slack()` (one-click) or `connect_slack(...)`     |
+| **Discord**     | `install_discord()` (one-click) or `connect_discord(...)` |
+| **X / Twitter** | `install_x()` (one-click) or `connect_x(...)`             |
+| **WhatsApp**    | `connect_whatsapp(...)` (Caspian hosted)                  |
+| **SMS / phone** | `connect_phone(...)` — own GSM modem, or Caspian hosted   |
+| **Telegram**    | `connect_telegram(bot_token=...)`                         |
+| **iMessage**    | `connect_imessage()` (Caspian hosted)                     |
+
+## Make your agent platform-aware
+
+Each channel behaves differently - Slack has threads, WhatsApp has a 24-hour
+messaging window, SMS has length limits. Pull per channel etiquette for the
+channels you've connected and drop it into your system prompt:
+
+```python
+
+system_prompt += "\n\n" + client.behavior_prompt()
+
+# for one channel
+
+guide = client.channel_guide("slack")
+
+```
 
 ## Rich messages
 
@@ -70,6 +88,35 @@ Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 - **`message.reply()`** answers in the right thread on the right channel automatically.
 - **`message.typing()`** shows a "typing…" indicator while your agent thinks (where the platform supports it).
 - **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop.
+  Pass `ack="On it…"` to send an instant reply the moment a message arrives, before your handler
+  runs useful for channels with no typing indicator.
+
+## Errors
+
+Non-2xx responses raise `CommError` with `.status_code` and `.detail`.
+Two typed subclasses carry extra fields for paid channels:
+
+```python
+from caspian_sdk import CommError, AccountRequiredError, InsufficientCreditError
+def main():
+    try:
+        client=CommClient()
+        client.connect_whatsapp(...)
+    except AccountRequiredError as e:
+        # paid channel needs a one time developer sign-in first.
+        e.login()
+    except InsufficientCreditError as e:
+        # HTTP 402/429 — out of credit or spend cap reached.
+        print(f"Balance: {e.balance_cents} cents")
+        url = e.top_up()["checkout_url"]  # Stripe link to add credit
+        print("Add credit at:", url)
+
+    except CommError as e:
+        # fallback for all other errors
+        print(e.status_code,e.detail)
+
+
+```
 
 ## Docs
 
