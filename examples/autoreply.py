@@ -14,7 +14,7 @@ client = CommClient()
 
 customer = client.create_customer("Acme")
 agent = client.create_agent("Support Agent")
-connection = client.connect_email(customer["id"], agent["id"], display_name="Acme Support")
+connection = client.connect_email(customer["id"], agent["id"], username="support")
 print(f"Email connection active: {connection['address']}")
 
 
