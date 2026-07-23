@@ -58,6 +58,34 @@ systemPrompt += "\n\n" + guide;
 
 Use it, tweak it, or ignore it and write your own.
 
+## Rich messages
+
+Send one provider-neutral `blocks` payload and each channel gets its best
+rendering — Slack, Discord and Telegram render natively, email gets rich HTML,
+and text-only channels degrade to clean text automatically.
+
+```ts
+import type { Block } from "caspian-sdk";
+
+const blocks: Block[] = [
+  {
+    type: "card",
+    title: "Order #1024 shipped",
+    subtitle: "Arriving Thursday",
+    buttons: [
+      { label: "Track", url: "https://example.com/track/1024" },
+      { label: "Get help", value: "help:1024" }, // callback
+    ],
+  },
+];
+
+await message.reply(undefined, undefined, blocks);
+// or proactively: await client.sendMessage(conversationId, null, null, blocks);
+```
+
+Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
+`card`. A button with a `url` is a link; a button with a `value` is a callback.
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect*()` call — never new handler code.

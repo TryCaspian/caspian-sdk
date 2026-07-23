@@ -330,6 +330,63 @@ providers = build_providers(Settings(
 
 </details>
 
+## Rich messages
+
+Send **one** provider-neutral `blocks` payload and every channel gets its best
+possible rendering: Slack (Block Kit), Discord (embeds + buttons) and Telegram
+(inline keyboards) render it natively, email gets rich HTML, and every text-only
+channel (SMS, voice, and the rest) degrades to clean, readable text — automatically.
+No per-channel branching in your handler.
+
+A block is a plain dict/object (`{ "type": ... }`): `heading`, `text`, `divider`,
+`image`, `fields`, `list`, `buttons`, `card`. A button with a `url` is a link; a
+button with a `value` is a callback that renders as a tappable action where the
+channel supports it, and as a "reply …" hint where it doesn't.
+
+**Python:**
+
+```python
+from caspian_sdk import blocks as b
+
+message.reply(blocks=[
+    b.card(
+        title="Order #1024 shipped",
+        subtitle="Arriving Thursday",
+        text="Your package is on the way.",
+        buttons=[
+            {"label": "Track package", "url": "https://example.com/track/1024"},
+            {"label": "Get help", "value": "help:1024"},   # callback
+        ],
+    ),
+])
+```
+
+**TypeScript:**
+
+```typescript
+import type { Block } from "caspian-sdk";
+
+const blocks: Block[] = [
+  {
+    type: "card",
+    title: "Order #1024 shipped",
+    subtitle: "Arriving Thursday",
+    text: "Your package is on the way.",
+    buttons: [
+      { label: "Track package", url: "https://example.com/track/1024" },
+      { label: "Get help", value: "help:1024" }, // callback
+    ],
+  },
+];
+
+await message.reply(undefined, undefined, blocks);
+// or proactively: await client.sendMessage(conversationId, null, null, blocks);
+```
+
+Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
+`sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
+that can't render blocks; omit it and a clean text fallback is generated for you.
+
 ## What's in this repo
 
 | Package | |

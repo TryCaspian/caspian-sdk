@@ -103,7 +103,7 @@ requires-dist = [{ name = "httpx", specifier = ">=0.28,<1" }]
 
 [[package]]
 name = "caspian-sdk"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },

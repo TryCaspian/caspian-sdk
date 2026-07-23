@@ -1,3 +1,4 @@
+from . import blocks
 from .client import (
     AccountRequiredError,
     CommClient,
@@ -12,4 +13,5 @@ __all__ = [
     "CommError",
     "InsufficientCreditError",
     "Message",
+    "blocks",
 ]
