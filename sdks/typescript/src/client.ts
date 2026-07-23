@@ -13,6 +13,7 @@ import type {
   EventRecord,
   ListenOptions,
   LoginOptions,
+  Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";
@@ -55,20 +56,32 @@ export class Message {
     readonly text: string | null,
     readonly html: string | null,
     private readonly client: CommClient,
+    /** File attachments received with the message (empty when none). */
+    readonly media: Media[] = [],
   ) {}
 
   /**
    * Reply on whichever channel this message arrived from (auto-threaded).
    *
    * Pass `blocks` — provider-neutral rich blocks — to render natively on
-   * Slack/Discord/Telegram/email and degrade to clean text elsewhere.
+   * Slack/Discord/Telegram/email and degrade to clean text elsewhere. Pass
+   * `media` to attach files (images/documents).
    */
   reply(
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
+    media?: Media[] | null,
   ): Promise<Record<string, unknown>> {
-    return this.client.reply(this.id, text, html, blocks);
+    return this.client.reply(this.id, text, html, blocks, media);
+  }
+
+  /**
+   * Add an emoji reaction (tapback) to this message. Best-effort; no-op on
+   * channels without a reaction API (needs Capability.REACTIONS).
+   */
+  react(emoji: string): Promise<Record<string, unknown>> {
+    return this.client.react(this.id, emoji);
   }
 
   /**
@@ -81,7 +94,56 @@ export class Message {
   }
 }
 
+/**
+ * A button tap delivered to an onInteraction handler. `value` is the callback
+ * value on the tapped block button; `sourceMessage` is the message it was on.
+ */
+export class Interaction {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly conversationId: string | null,
+    readonly value: string | null,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /** Reply in the thread the button lived in (replies to the source message). */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.sourceMessage) {
+      throw new CommError(400, "interaction has no source message to reply to");
+    }
+    return this.client.reply(this.sourceMessage.id, text, html, blocks, media);
+  }
+}
+
+/**
+ * An emoji reaction delivered to an onReaction handler. `action` is "added" or
+ * "removed"; `sourceMessage` is the message that was reacted to.
+ */
+export class Reaction {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly emoji: string | null,
+    readonly action: string,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
+export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
+export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 
 /**
  * One identity for your AI agent across every channel — behind a single
@@ -94,6 +156,8 @@ export class CommClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly handlers: MessageHandler[] = [];
+  private readonly interactionHandlers: InteractionHandler[] = [];
+  private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -480,10 +544,20 @@ export class CommClient {
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
+    media?: Media[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/reply`, {
-      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
     });
+  }
+
+  /**
+   * Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS —
+   * Slack/Telegram/Discord). Best-effort; a channel with no reaction API returns
+   * `reacted: false` rather than erroring.
+   */
+  react(messageId: string, emoji: string): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/messages/${messageId}/react`, { json: { emoji } });
   }
 
   /**
@@ -609,9 +683,10 @@ export class CommClient {
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
+    media?: Media[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/conversations/${conversationId}/messages`, {
-      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
     });
   }
 
@@ -655,6 +730,22 @@ export class CommClient {
     return handler;
   }
 
+  /**
+   * Register a handler for button taps (interaction.received). The same handler
+   * answers taps from every channel with interactive buttons (Slack, Discord,
+   * Telegram).
+   */
+  onInteraction(handler: InteractionHandler): InteractionHandler {
+    this.interactionHandlers.push(handler);
+    return handler;
+  }
+
+  /** Register a handler for emoji reactions (reaction.received). */
+  onReaction(handler: ReactionHandler): ReactionHandler {
+    this.reactionHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -669,10 +760,61 @@ export class CommClient {
       m.text ?? null,
       m.html ?? null,
       this,
+      m.media ?? [],
     );
   }
 
+  private async dispatchInteraction(data: any): Promise<void> {
+    const interaction = new Interaction(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.conversation_id ?? null,
+      data.value ?? null,
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.interactionHandlers) {
+      try {
+        await handler(interaction);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error("onInteraction handler failed; continuing", err);
+      }
+    }
+  }
+
+  private async dispatchReaction(data: any): Promise<void> {
+    const reaction = new Reaction(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.emoji ?? null,
+      data.action ?? "added",
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.reactionHandlers) {
+      try {
+        await handler(reaction);
+      } catch (err) {
+        logger.error("onReaction handler failed; continuing", err);
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
+    if (event.type === "interaction.received") {
+      await this.dispatchInteraction(event.data);
+      return;
+    }
+    if (event.type === "reaction.received") {
+      await this.dispatchReaction(event.data);
+      return;
+    }
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
     if (this.handlers.length) {

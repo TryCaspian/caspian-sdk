@@ -127,20 +127,73 @@ class Message:
     text: str | None
     html: str | None
     _client: "CommClient" = field(repr=False)
+    # File attachments received with the message: each {"url"|"data", "mime_type",
+    # "name", "size"}. Empty on channels/messages with no attachments.
+    media: list[dict] = field(default_factory=list)
 
     def reply(
         self,
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
     ) -> dict:
-        return self._client.reply(self.id, text=text, html=html, blocks=blocks)
+        return self._client.reply(self.id, text=text, html=html, blocks=blocks, media=media)
+
+    def react(self, emoji: str) -> dict:
+        """Add an emoji reaction (tapback) to this message. Best-effort; no-op on
+        channels without a reaction API (needs Capability.REACTIONS)."""
+        return self._client.react(self.id, emoji)
 
     def typing(self) -> None:
         """Show a 'thinking…' typing indicator on the channel (Discord/Telegram;
         no-op where the platform has none). Fired automatically before your
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
+
+
+@dataclass
+class Interaction:
+    """A button tap delivered to an on_interaction handler. `value` is the callback
+    value set on the block button; `source_message` is the message it was on."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    conversation_id: str | None
+    value: str | None
+    source_message: dict | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply in the thread the button lived in (replies to the source message)."""
+        if not self.source_message:
+            raise CommError(400, "interaction has no source message to reply to")
+        return self._client.reply(
+            self.source_message["id"], text=text, html=html, blocks=blocks, media=media
+        )
+
+
+@dataclass
+class Reaction:
+    """An emoji reaction delivered to an on_reaction handler. `action` is "added"
+    or "removed"; `source_message` is the message that was reacted to."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    emoji: str | None
+    action: str
+    source_message: dict | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
 
 
 class CommClient:
@@ -158,6 +211,8 @@ class CommClient:
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         self._handlers: list[Callable[[Message], None]] = []
+        self._interaction_handlers: list[Callable[[Interaction], None]] = []
+        self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -475,6 +530,7 @@ class CommClient:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
     ) -> dict:
         """Reply on the channel the message arrived from.
 
@@ -483,11 +539,23 @@ class CommClient:
         Channels that support rich layout (Slack, Discord, Telegram, email)
         render it natively; every other channel degrades to clean text
         automatically. See ``caspian_sdk.blocks`` for helper builders.
+
+        Pass ``media`` — a list of ``{"url"|"data", "mime_type", "name"}`` dicts —
+        to attach files (images/documents); channels that carry files send them
+        natively and others fall back to the URL.
         """
         return self._request(
             "POST",
             f"/v1/messages/{message_id}/reply",
-            json={"text": text, "html": html, "blocks": blocks},
+            json={"text": text, "html": html, "blocks": blocks, "media": media},
+        )
+
+    def react(self, message_id: str, emoji: str) -> dict:
+        """Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS
+        — Slack/Telegram/Discord). Best-effort; a channel with no reaction API
+        returns ``reacted=false`` rather than erroring."""
+        return self._request(
+            "POST", f"/v1/messages/{message_id}/react", json={"emoji": emoji}
         )
 
     def typing(self, message_id: str) -> dict:
@@ -600,17 +668,19 @@ class CommClient:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
     ) -> dict:
         """Proactively send into an existing conversation (needs Capability.SEND).
 
         Pass ``blocks`` — a list of provider-neutral block dicts — for a rich
         message that renders natively on Slack/Discord/Telegram/email and
-        degrades to clean text elsewhere. See ``caspian_sdk.blocks``.
+        degrades to clean text elsewhere. Pass ``media`` to attach files. See
+        ``caspian_sdk.blocks``.
         """
         return self._request(
             "POST",
             f"/v1/conversations/{conversation_id}/messages",
-            json={"text": text, "html": html, "blocks": blocks},
+            json={"text": text, "html": html, "blocks": blocks, "media": media},
         )
 
     def initiate(self, connection_id: str, recipient: str, text: str) -> dict:
@@ -650,10 +720,33 @@ class CommClient:
         self._handlers.append(handler)
         return handler
 
+    def on_interaction(
+        self, handler: Callable[["Interaction"], None]
+    ) -> Callable[["Interaction"], None]:
+        """Register a handler for button taps (interaction.received). The same
+        handler answers taps from every channel that supports interactive
+        buttons (Slack, Discord, Telegram)."""
+        self._interaction_handlers.append(handler)
+        return handler
+
+    def on_reaction(
+        self, handler: Callable[["Reaction"], None]
+    ) -> Callable[["Reaction"], None]:
+        """Register a handler for emoji reactions (reaction.received)."""
+        self._reaction_handlers.append(handler)
+        return handler
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
-        if event.get("type") != "message.received":
+        event_type = event.get("type")
+        if event_type == "interaction.received":
+            self._dispatch_interaction(event["data"])
+            return
+        if event_type == "reaction.received":
+            self._dispatch_reaction(event["data"])
+            return
+        if event_type != "message.received":
             return
         message = self._build_message(event["data"])
         if self._handlers:
@@ -803,6 +896,44 @@ class CommClient:
                 logger.warning("could not read starting cursor; retrying in 2s", exc_info=True)
                 time.sleep(2.0)
 
+    def _dispatch_interaction(self, data: dict) -> None:
+        interaction = Interaction(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            conversation_id=data.get("conversation_id"),
+            value=data.get("value"),
+            source_message=data.get("source_message"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._interaction_handlers:
+            try:
+                handler(interaction)
+            except InsufficientCreditError as exc:
+                self._warn_out_of_credit(exc)
+            except AccountRequiredError as exc:
+                self._warn_account_required(exc)
+            except Exception:
+                logger.exception("on_interaction handler failed; continuing")
+
+    def _dispatch_reaction(self, data: dict) -> None:
+        reaction = Reaction(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            emoji=data.get("emoji"),
+            action=data.get("action", "added"),
+            source_message=data.get("source_message"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._reaction_handlers:
+            try:
+                handler(reaction)
+            except Exception:
+                logger.exception("on_reaction handler failed; continuing")
+
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
         return Message(
@@ -816,5 +947,6 @@ class CommClient:
             subject=message.get("subject"),
             text=message.get("text"),
             html=message.get("html"),
+            media=message.get("media") or [],
             _client=self,
         )

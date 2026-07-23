@@ -4,7 +4,9 @@ from .client import (
     CommClient,
     CommError,
     InsufficientCreditError,
+    Interaction,
     Message,
+    Reaction,
 )
 
 __all__ = [
@@ -12,6 +14,8 @@ __all__ = [
     "CommClient",
     "CommError",
     "InsufficientCreditError",
+    "Interaction",
     "Message",
+    "Reaction",
     "blocks",
 ]
