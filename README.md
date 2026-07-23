@@ -441,3 +441,11 @@ Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 ## License
 
 Apache-2.0 for this repository. The `caspian-sdk` package on PyPI is MIT.
+
+## Setup
+
+Copy the example environment file and adjust values:
+
+```bash
+cp .env.example .env
+```
