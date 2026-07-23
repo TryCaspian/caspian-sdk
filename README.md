@@ -193,7 +193,7 @@ flowchart LR
 <td width="50%" valign="top">
 
 **🔐 Webhook verification, always**<br/>
-Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES/SNS. Mismatches rejected.
+Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, and signed email webhooks. Mismatches rejected.
 
 </td>
 </tr>
@@ -245,7 +245,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 | Channel | This repo (your credentials) | Caspian hosted |
 |---|:---:|:---:|
-| <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email (AWS SES) | ✅ | ✅ instant inbox |
+| <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email | ✅ | ✅ instant inbox |
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
