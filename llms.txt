@@ -1,6 +1,6 @@
 # Caspian
 
-> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
+> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
 
 ## Integrate an agent (the common task)
 
@@ -12,7 +12,7 @@
 from caspian_sdk import CommClient
 
 client = CommClient()
-email = client.connect_email(display_name="My Agent")  # instant, no setup
+email = client.connect_email(username="my-agent")  # instant, no setup
 
 @client.on_message
 def handle(message):
