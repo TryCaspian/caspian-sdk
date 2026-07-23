@@ -57,16 +57,7 @@ def _config() -> tuple[str, str]:
     return api_key, base_url
 
 
-def _request(method: str, path: str, *, json_body: dict | None = None, params: dict | None = None):
-    api_key, base_url = _config()
-    response = httpx.request(
-        method,
-        f"{base_url}{path}",
-        json=json_body,
-        params=params,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30,
-    )
+def _raise_for_error(response: httpx.Response) -> None:
     if response.status_code >= 400:
         try:
             detail = response.json().get("detail", response.text)
@@ -85,7 +76,34 @@ def _request(method: str, path: str, *, json_body: dict | None = None, params: d
             print("  Sign in once:  caspian login\n", file=sys.stderr)
             sys.exit(3)
         sys.exit(f"Error {response.status_code}: {detail}")
+
+
+def _request(
+    method: str, path: str, *, json_body: dict | None = None, params: dict | None = None
+):
+    api_key, base_url = _config()
+    response = httpx.request(
+        method,
+        f"{base_url}{path}",
+        json=json_body,
+        params=params,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    _raise_for_error(response)
     return response.json()
+
+
+def _request_text(method: str, path: str) -> str:
+    api_key, base_url = _config()
+    response = httpx.request(
+        method,
+        f"{base_url}{path}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    _raise_for_error(response)
+    return response.text
 
 
 def _exit_out_of_credit(detail: dict) -> None:
@@ -145,13 +163,7 @@ def cmd_domains(args) -> None:
         domain = _request("GET", f"/v1/domains/{args.domain}")
         print(f"{domain['domain']}: {domain['status']}")
     elif args.action == "zone-file":
-        api_key, base_url = _config()
-        response = httpx.get(
-            f"{base_url}/v1/domains/{args.domain}/zone-file",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
-        )
-        print(response.text)
+        print(_request_text("GET", f"/v1/domains/{args.domain}/zone-file"))
 
 
 # Pure-OAuth connect (returns an authorize_url straight from /connections/{ch}).

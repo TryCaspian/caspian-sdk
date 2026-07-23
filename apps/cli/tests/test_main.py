@@ -68,6 +68,35 @@ def test_request_exits_with_api_error_detail(env_path, monkeypatch):
         main._request("GET", "/v1/private")
 
 
+def test_request_text_returns_zone_file_body(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\nCASPIAN_BASE_URL=https://gateway.test\n")
+    request = httpx.Request("GET", "https://gateway.test/v1/domains/domain_1/zone-file")
+    def fake_request(*args, **kwargs):
+        return httpx.Response(
+            200,
+            text="@ IN SOA ns.example.test. hostmaster.example.test.",
+            request=request,
+        )
+
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+
+    assert main._request_text("GET", "/v1/domains/domain_1/zone-file") == (
+        "@ IN SOA ns.example.test. hostmaster.example.test."
+    )
+
+
+def test_request_text_maps_zone_file_errors(env_path, monkeypatch):
+    env_path.write_text("CASPIAN_API_KEY=test-key\nCASPIAN_BASE_URL=https://gateway.test\n")
+    request = httpx.Request("GET", "https://gateway.test/v1/domains/domain_1/zone-file")
+    def fake_request(*args, **kwargs):
+        return httpx.Response(404, json={"detail": "domain not found"}, request=request)
+
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+
+    with pytest.raises(SystemExit, match="Error 404: domain not found"):
+        main._request_text("GET", "/v1/domains/domain_1/zone-file")
+
+
 @pytest.mark.parametrize(
     ("cents", "expected"),
     [(None, "-"), (0, "$0.00"), (123, "$1.23")],
