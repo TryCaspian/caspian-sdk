@@ -287,6 +287,30 @@ describe("CommClient", () => {
     expect(err.paymentOptions[0].url).toBe("https://pay/1");
   });
 
+  it("uses the suggested payment option amount when topping up without an amount", async () => {
+    const { client, calls } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json(
+          {
+            detail: {
+              reason: "insufficient_credit",
+              message: "Out of credit.",
+              payment_options: [{ create: { body: { amount_cents: 5000 } } }],
+            },
+          },
+          402,
+        ),
+      "POST /v1/billing/topup": () => json({ checkout_url: "https://pay/1" }),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+
+    await err.topUp();
+
+    const topup = calls.find((c) => c.path === "/v1/billing/topup");
+    expect(topup?.body).toEqual({ amount_cents: 5000 });
+  });
+
   it("raises InsufficientCreditError on a 429 monthly_cap_reached body", async () => {
     const { client } = makeClient({
       "POST /v1/messages/m1/reply": () =>
@@ -295,6 +319,17 @@ describe("CommClient", () => {
     const err = await client.reply("m1", "hi").catch((e) => e);
     expect(err).toBeInstanceOf(InsufficientCreditError);
     expect(err.statusCode).toBe(429);
+  });
+
+  it("raises InsufficientCreditError on a 429 channel_cap_reached body", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json({ detail: { reason: "channel_cap_reached", message: "Channel capped." } }, 429),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+    expect(err.statusCode).toBe(429);
+    expect(err.reason).toBe("channel_cap_reached");
   });
 
   it("billing methods hit the right endpoints with snake_case bodies", async () => {
@@ -344,6 +379,49 @@ describe("CommClient", () => {
     expect(last).toBe(1);
     const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("OUT OF CREDIT");
+    errSpy.mockRestore();
+  });
+
+  it("account-required in a handler warns but does not stop the drain", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 2) return json([]);
+        const message = (seq: number) => ({
+          seq,
+          type: "message.received",
+          data: {
+            message: {
+              id: `m${seq}`,
+              conversation_id: "c",
+              connection_id: "cn",
+              text: "hi",
+            },
+          },
+        });
+        return json([message(1), message(2)]);
+      },
+      "POST /v1/messages/m1/typing": () => json({}),
+      "POST /v1/messages/m2/typing": () => json({}),
+    });
+    let handled = 0;
+    client.onMessage(() => {
+      handled += 1;
+      throw new AccountRequiredError(
+        401,
+        { reason: "account_required", message: "Sign in to use paid channels." },
+        client,
+      );
+    });
+
+    const last = await client.dispatchPending(0);
+
+    expect(last).toBe(2);
+    expect(handled).toBe(2);
+    const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("SIGN-IN REQUIRED");
+    expect(printed).toContain("Sign in to use paid channels.");
     errSpy.mockRestore();
   });
 
