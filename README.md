@@ -342,6 +342,18 @@ providers = build_providers(Settings(
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
 
+## Starter templates
+
+Ready-to-run repos — click "Use this template", add a token, and your agent is live on the channel:
+
+| Template | Channel | Language |
+|---|---|---|
+| [`telegram-ai-agent-template`](https://github.com/TryCaspian/telegram-ai-agent-template) | Telegram | Python |
+| [`discord-ai-agent-template`](https://github.com/TryCaspian/discord-ai-agent-template) | Discord | Python |
+| [`slack-ai-agent-template`](https://github.com/TryCaspian/slack-ai-agent-template) | Slack | Python |
+| [`email-ai-agent-template`](https://github.com/TryCaspian/email-ai-agent-template) | Email (instant inbox) | Node.js |
+| [`openclaw-telegram-agent`](https://github.com/TryCaspian/openclaw-telegram-agent) | OpenClaw + Telegram | guide |
+
 ## Roadmap
 
 - **MCP server** — connect and message channels straight from any MCP-capable agent
