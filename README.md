@@ -69,7 +69,7 @@ Then in your code:
 from caspian_sdk import CommClient
 
 client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
-email = client.connect_email(display_name="Example CLI Agent")
+email = client.connect_email(username="example-agent")
 print(f"Agent email: {email['address']}")
 print("Listening (Ctrl+C to stop).")
 
@@ -96,7 +96,7 @@ The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by def
 import { CommClient } from "caspian-sdk";
 
 const client = new CommClient();  // reads CASPIAN_API_KEY / CASPIAN_BASE_URL
-const inbox = await client.connectEmail({ displayName: "My Agent" });
+const inbox = await client.connectEmail({ username: "my-agent" });
 
 client.onMessage(async (message) => {
   await message.reply(`You said: ${message.text}`);
@@ -252,7 +252,6 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
-| <img src="https://cdn.simpleicons.org/googlemeet" width="14"/> &nbsp;Google Meet | ✅ | ✅ |
 | 📶 SMS (GSM modem) | ✅ * | ✅ no hardware |
 | <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram (user account) | ⚠️ opt-in * | — |
 | <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | — | ✅ one-click |
@@ -290,7 +289,7 @@ Each of these is the same three lines: `connect_*()` the channels, write one `on
 **Same agent, three channels:**
 
 ```python
-client.connect_email(display_name="Acme Support")
+client.connect_email(username="acme-support")
 client.connect_telegram(bot_token=BOT_TOKEN)
 slack = client.install_slack(display_name="Acme Support")
 print("Add to Slack:", slack["authorize_url"])   # one click, then it's live
