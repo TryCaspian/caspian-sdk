@@ -169,7 +169,7 @@ def cmd_domains(args) -> None:
 OAUTH_CHANNELS = {"instagram", "facebook"}
 # Channels with a one-click /connections/{ch}/install endpoint AND a bring-your-own
 # path — the CLI asks which the developer wants.
-INSTALL_CHANNELS = {"slack", "discord", "x"}
+INSTALL_CHANNELS = {"slack", "discord", "github", "x"}
 TOKEN_CHANNELS = {"telegram": "@BotFather"}
 
 
@@ -208,6 +208,7 @@ def _pick_channel(requested: str | None) -> str:
             "telegram": "needs a bot token from @BotFather",
             "discord": "one-click install, or bring your own bot",
             "slack": "one-click install, or bring your own app",
+            "github": "one-click install, or bring your own GitHub App",
             "x": "one-click 'Sign in with X', or bring your own tokens",
             "whatsapp": "Caspian hosted",
             "imessage": "Caspian hosted",
@@ -260,7 +261,7 @@ def _await_active(connection: dict) -> None:
 
 
 def _connect_install_channel(channel: str, args) -> None:
-    """slack/discord/x: ask one-click install vs bring-your-own, then do it."""
+    """Ask one-click install vs bring-your-own, then connect the channel."""
     quick = True
     if sys.stdin.isatty():
         kind = _ask(f"{channel}: (a) quick one-click install, or (b) bring your own?", "a")
@@ -295,6 +296,22 @@ def _connect_install_channel(channel: str, args) -> None:
             },
         )
         _print_authorize("slack", conn)
+    elif channel == "github":
+        private_key_path = _ask("Path to GitHub App private key PEM")
+        if not private_key_path:
+            sys.exit("GitHub BYO needs a private key PEM.")
+        try:
+            private_key = Path(private_key_path).expanduser().read_text()
+        except OSError as exc:
+            sys.exit(f"Could not read GitHub private key: {exc}")
+        conn = _request("POST", "/v1/connections/github", json_body={
+            "display_name": args.name,
+            "github_app_id": _ask("GitHub App id"),
+            "github_app_slug": _ask("GitHub App slug"),
+            "github_private_key": private_key,
+            "github_webhook_secret": _ask("GitHub webhook secret"),
+            "receive_mode": "mentions"})
+        _print_authorize("github", conn)
     elif channel == "x":
         _await_active(
             _request(
@@ -481,6 +498,7 @@ def main() -> None:
             "rcs",
             "discord",
             "slack",
+            "github",
             "x",
             "instagram",
             "facebook",

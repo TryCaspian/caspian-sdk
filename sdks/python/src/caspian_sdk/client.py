@@ -825,6 +825,54 @@ class CommClient:
         }
         return self._request("POST", "/v1/connections/slack/install", json=body)
 
+    def connect_github(
+        self,
+        github_app_id: str,
+        github_app_slug: str,
+        github_private_key: str,
+        github_webhook_secret: str,
+        customer_id=None,
+        agent_id=None,
+        receive_mode: str = "mentions",
+        **kwargs,
+    ) -> dict:
+        """Start installation of a bring-your-own GitHub App.
+
+        The App must use the gateway's GitHub setup and webhook URLs, subscribe
+        to ``issue_comment``, and have Issues read/write permission. Returns a
+        connection with an ``authorize_url`` to install on selected repositories.
+        """
+        return self._connect(
+            "github",
+            customer_id,
+            agent_id,
+            wait=False,
+            github_app_id=github_app_id,
+            github_app_slug=github_app_slug,
+            github_private_key=github_private_key,
+            github_webhook_secret=github_webhook_secret,
+            receive_mode=receive_mode,
+            **kwargs,
+        )
+
+    def install_github(
+        self,
+        customer_id=None,
+        agent_id=None,
+        display_name=None,
+        receive_mode: str = "mentions",
+        **kwargs,
+    ) -> dict:
+        """One-click installation of the gateway's shared GitHub App."""
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "receive_mode": receive_mode,
+            **kwargs,
+        }
+        return self._request("POST", "/v1/connections/github/install", json=body)
+
     def update_branding(self, connection_id: str, display_name=None, icon_url=None) -> dict:
         """Change the name/icon the agent posts under, after connecting - no
         re-install. Slack: takes effect on the next message; Discord shared bot:
