@@ -87,11 +87,11 @@ def test_parse_webhook_rejects_stale_timestamp():
         provider.parse_webhook(payload, _signed_headers(payload, ts=stale_ts))
 
 
-def test_parse_webhook_rejects_missing_or_invalid_timestamp():
+@pytest.mark.parametrize("ts", ["", "not-a-timestamp"])
+def test_parse_webhook_rejects_missing_or_invalid_timestamp(ts):
     provider = _provider()
     payload = json.dumps(_event()).encode()
-    headers = _signed_headers(payload)
-    del headers["X-Slack-Request-Timestamp"]
+    headers = _signed_headers(payload, ts=ts)
     with pytest.raises(WebhookVerificationError, match="missing or invalid"):
         provider.parse_webhook(payload, headers)
 

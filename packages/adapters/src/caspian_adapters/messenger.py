@@ -109,8 +109,13 @@ class _MetaMessagingProvider:
         return self._send(recipient, message.text or "")
 
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
-        if params.get("hub.mode") == "subscribe" and hmac.compare_digest(
-            params.get("hub.verify_token") or "", self.verify_token or ""
+        received = params.get("hub.verify_token") or ""
+        # An unset verify_token must never validate — otherwise an unconfigured
+        # provider would echo the challenge for any (even empty) token.
+        if (
+            params.get("hub.mode") == "subscribe"
+            and self.verify_token
+            and hmac.compare_digest(received, self.verify_token)
         ):
             return params.get("hub.challenge")
         return None
