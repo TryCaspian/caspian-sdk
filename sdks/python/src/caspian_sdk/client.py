@@ -15,6 +15,9 @@ Usage:
     client.listen()
 """
 
+import hashlib
+import hmac
+import json as _json
 import logging
 import os
 import sys
@@ -67,6 +70,19 @@ class CommError(Exception):
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class WebhookVerificationError(Exception):
+    """Raised when an inbound webhook delivery fails signature verification."""
+
+
+@dataclass(frozen=True)
+class WebhookResult:
+    """Outcome of processing a single gateway webhook delivery."""
+
+    status: str  # "ok", "ignored", "error"
+    event_id: str | None = None
+    event_type: str | None = None
 
 
 class AccountRequiredError(CommError):
@@ -1129,3 +1145,72 @@ class CommClient:
             media=message.get("media") or [],
             _client=self,
         )
+
+    # Serverless webhook handler
+
+    def handle_webhook(
+        self,
+        body: bytes | str,
+        headers: dict[str, str],
+        secret: str,
+    ) -> WebhookResult:
+        """Process a single gateway webhook delivery (serverless mode).
+
+        Use this instead of ``listen()`` when running on Lambda, Cloudflare
+        Workers, Vercel, or any request-scoped serverless runtime. The gateway
+        pushes events to your webhook URL (configured via ``set_webhook``); this
+        method verifies the signature, dispatches to your registered handlers,
+        and returns — no loop, no long-lived connection.
+
+        Args:
+            body: The raw request body (bytes or string).
+            headers: The HTTP headers from the incoming request.
+            secret: The shared secret configured via ``set_webhook(url, secret)``.
+
+        Returns:
+            A ``WebhookResult`` with the dispatch outcome.
+
+        Raises:
+            WebhookVerificationError: If the signature is missing or invalid.
+        """
+        raw = body if isinstance(body, bytes) else body.encode("utf-8")
+
+        # -- Verify signature ---------------------------------------------------
+        lower = {k.lower(): v for k, v in headers.items()}
+        received = lower.get("x-caspian-signature", "")
+        if not received:
+            raise WebhookVerificationError("missing x-caspian-signature header")
+
+        expected = "sha256=" + hmac.new(
+            secret.encode("utf-8"), raw, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(received, expected):
+            raise WebhookVerificationError("webhook signature mismatch")
+
+        # -- Parse event --------------------------------------------------------
+        payload = _json.loads(raw)
+
+        # The gateway may push a single event object or a list of events.
+        events: list[dict] = payload if isinstance(payload, list) else [payload]
+
+        seen_ids: set[str] = set()
+        result = WebhookResult(status="ignored")
+
+        for event in events:
+            event_id = str(event.get("id") or event.get("seq") or "")
+            event_type = event.get("type")
+
+            # Intra-invocation idempotency: skip duplicate event ids.
+            if event_id and event_id in seen_ids:
+                continue
+            if event_id:
+                seen_ids.add(event_id)
+
+            self._dispatch_event(event)
+            result = WebhookResult(
+                status="ok",
+                event_id=event_id or None,
+                event_type=event_type,
+            )
+
+        return result

@@ -16,6 +16,16 @@ export class CommError extends Error {
   }
 }
 
+/** Raised when an inbound webhook delivery fails signature verification. */
+export class WebhookVerificationError extends CommError {
+  constructor(detail: string) {
+    super(401, detail);
+    this.name = "WebhookVerificationError";
+    Object.setPrototypeOf(this, WebhookVerificationError.prototype);
+  }
+}
+
+
 /**
  * Raised when a paid channel needs a one-time developer sign-in first (HTTP
  * 401). Paid channels are tied to a real Caspian account (identity) before any
