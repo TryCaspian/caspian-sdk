@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { InMemoryStateAdapter, type LockHandle, type StateAdapter } from "./state.js";
 import type {
   Agent,
   AutopayOptions,
@@ -295,6 +296,7 @@ export class CommClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly stateAdapter: StateAdapter;
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
@@ -314,7 +316,9 @@ export class CommClient {
     if (!this.fetchImpl) {
       throw new CommError(0, "global fetch is unavailable — use Node >= 18 or pass options.fetch");
     }
+    this.stateAdapter = options.stateAdapter ?? new InMemoryStateAdapter();
   }
+
 
   // ---- HTTP ----------------------------------------------------------------
 
@@ -947,16 +951,54 @@ export class CommClient {
   }
 
   private async dispatchEvent(event: EventRecord): Promise<void> {
+    const eventId =
+      event.id ??
+      (isRecord(event.data)
+        ? (event.data.id ?? (isRecord(event.data.message) ? event.data.message.id : undefined))
+        : undefined);
+
+    if (eventId !== undefined && eventId !== null) {
+      if (await this.stateAdapter.seen(String(eventId))) {
+        return;
+      }
+    }
+
+    let conversationId: string | undefined;
+    if (isRecord(event.data) && typeof event.data.conversation_id === "string") {
+      conversationId = event.data.conversation_id;
+    }
+
     if (event.type === "interaction.received") {
-      await this.dispatchInteraction(event.data);
+      await this.dispatchWithLock(conversationId, () => this.dispatchInteraction(event.data));
       return;
     }
     if (event.type === "reaction.received") {
-      await this.dispatchReaction(event.data);
+      await this.dispatchWithLock(conversationId, () => this.dispatchReaction(event.data));
       return;
     }
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
+    await this.dispatchWithLock(message.conversationId, () => this.dispatchMessage(message));
+  }
+
+  private async dispatchWithLock(
+    conversationId: string | undefined,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    let lockHandle: LockHandle | undefined;
+    if (conversationId) {
+      lockHandle = await this.stateAdapter.lock(conversationId);
+    }
+    try {
+      await fn();
+    } finally {
+      if (lockHandle) {
+        await lockHandle.release();
+      }
+    }
+  }
+
+  private async dispatchMessage(message: Message): Promise<void> {
     if (this.handlers.length) {
       // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
       try {
@@ -997,6 +1039,7 @@ export class CommClient {
       }
     }
   }
+
 
   /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
   private warnAccountRequired(err: AccountRequiredError): void {
