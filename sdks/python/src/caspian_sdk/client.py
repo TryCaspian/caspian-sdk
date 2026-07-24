@@ -67,7 +67,10 @@ def _config(explicit: str | None, env_key: str, default: str | None = None) -> s
 
 
 class CommError(Exception):
+    """CommError implementation."""
+
     def __init__(self, status_code: int, detail: str) -> None:
+        """Execute __init__."""
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
@@ -77,6 +80,7 @@ class WebhookVerificationError(CommError):
     """Raised when an inbound webhook fails signature verification."""
 
     def __init__(self, detail: str = "Webhook signature mismatch") -> None:
+        """Execute __init__."""
         super().__init__(401, detail)
 
 
@@ -87,6 +91,7 @@ class AccountRequiredError(CommError):
     or read ``login_options`` for the raw device-flow endpoints."""
 
     def __init__(self, status_code: int, payload: dict, client: "CommClient") -> None:
+        """Execute __init__."""
         self.reason = payload.get("reason", "account_required")
         self.message = payload.get("message", "Sign in to Caspian to use paid channels.")
         self.login_options = payload.get("login_options", [])
@@ -109,6 +114,7 @@ class InsufficientCreditError(CommError):
     """
 
     def __init__(self, status_code: int, payload: dict, client: "CommClient") -> None:
+        """Execute __init__."""
         self.reason = payload.get("reason", "insufficient_credit")
         self.message = payload.get("message", "Out of Caspian credit.")
         self.balance_cents = payload.get("balance_cents")
@@ -155,6 +161,7 @@ class Message:
         blocks: list[dict] | None = None,
         media: list[dict] | None = None,
     ) -> dict:
+        """Execute reply."""
         return self._client.reply(self.id, text=text, html=html, blocks=blocks, media=media)
 
     def react(self, emoji: str) -> dict:
@@ -262,6 +269,7 @@ class StreamSession:
         strategy: StreamStrategy = "final_only",
         edit_interval: float = 0.5,
     ) -> None:
+        """Execute __init__."""
         self._message_id = message_id
         self._client = client
         self._strategy: StreamStrategy = strategy
@@ -348,6 +356,7 @@ class _MessageScheduler:
         strategy: ConcurrencyStrategy,
         debounce_ms: int,
     ) -> None:
+        """Execute __init__."""
         if strategy not in {"queue", "debounce", "drop", "parallel"}:
             raise ValueError("concurrency must be one of: queue, debounce, drop, parallel")
         if debounce_ms < 0:
@@ -376,6 +385,7 @@ class _MessageScheduler:
         )
 
     def submit(self, event: dict) -> None:
+        """Execute submit."""
         if event.get("type") != "message.received":
             self._dispatch(event)
             return
@@ -480,6 +490,7 @@ class _MessageScheduler:
             logger.exception("event dispatch failed; continuing")
 
     def close(self) -> None:
+        """Execute close."""
         with self._lock:
             if self._closed:
                 return
@@ -499,6 +510,8 @@ class _MessageScheduler:
 
 
 class CommClient:
+    """CommClient implementation."""
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -507,6 +520,7 @@ class CommClient:
         timeout: float = 30.0,
         state: StateAdapter | None = None,
     ) -> None:
+        """Execute __init__."""
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
             raise CommError(401, "No API key: pass api_key or set CASPIAN_API_KEY (env or ./.env)")
@@ -521,6 +535,7 @@ class CommClient:
         self.state = state or InMemoryStateAdapter()
 
     def close(self) -> None:
+        """Execute close."""
         self._http.close()
 
     def _request(
@@ -581,9 +596,11 @@ class CommClient:
     # Resources
 
     def create_customer(self, name: str) -> dict:
+        """Execute create_customer."""
         return self._request("POST", "/v1/customers", json={"name": name})
 
     def create_agent(self, name: str) -> dict:
+        """Execute create_agent."""
         return self._request("POST", "/v1/agents", json={"name": name})
 
     def _connect(
@@ -656,9 +673,11 @@ class CommClient:
         return self._request("POST", "/v1/domains", json={"domain": domain})
 
     def list_domains(self) -> list[dict]:
+        """Execute list_domains."""
         return self._request("GET", "/v1/domains")
 
     def get_domain(self, domain_id: str) -> dict:
+        """Execute get_domain."""
         return self._request("GET", f"/v1/domains/{domain_id}")
 
     def connect_phone(
@@ -863,13 +882,16 @@ class CommClient:
         return self._connect("facebook", customer_id, agent_id, wait=False, **kwargs)
 
     def get_connection(self, connection_id: str) -> dict:
+        """Execute get_connection."""
         return self._request("GET", f"/v1/connections/{connection_id}")
 
     def list_conversations(self, connection_id: str | None = None) -> list[dict]:
+        """Execute list_conversations."""
         params = {"connection_id": connection_id} if connection_id else None
         return self._request("GET", "/v1/conversations", params=params)
 
     def list_messages(self, conversation_id: str) -> list[dict]:
+        """Execute list_messages."""
         return self._request("GET", f"/v1/conversations/{conversation_id}/messages")
 
     def reply(
@@ -946,6 +968,7 @@ class CommClient:
         return self._request("PUT", "/v1/webhook", json={"url": url, "secret": secret})
 
     def get_webhook(self) -> dict:
+        """Execute get_webhook."""
         return self._request("GET", "/v1/webhook")
 
     def channels(self) -> list[dict]:
@@ -1089,12 +1112,14 @@ class CommClient:
         subject: str = "Test email",
         connection_id: str | None = None,
     ) -> dict:
+        """Execute test_email."""
         body: dict = {"text": text, "subject": subject}
         if connection_id:
             body["connection_id"] = connection_id
         return self._request("POST", "/v1/test-emails", json=body)
 
     def events(self, after_seq: int = 0, limit: int = 100, type: str | None = None) -> list[dict]:
+        """Execute events."""
         params: dict = {"after_seq": after_seq, "limit": limit}
         if type:
             params["type"] = type
@@ -1103,6 +1128,7 @@ class CommClient:
     # Event handling
 
     def on_message(self, handler: Callable[[Message], None]) -> Callable[[Message], None]:
+        """Execute on_message."""
         self._handlers.append(handler)
         return handler
 

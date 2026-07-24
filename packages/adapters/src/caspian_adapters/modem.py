@@ -29,6 +29,8 @@ from .base import (
 
 
 class GsmModemProvider:
+    """GsmModemProvider implementation."""
+
     name = "gsm-modem"
     channel = "phone"
     # A real carrier SIM: cold-starts (INITIATE) and — the reason it exists —
@@ -44,6 +46,7 @@ class GsmModemProvider:
     )
 
     def __init__(self, serial_port: str, msisdn: str, baud: int = 115200) -> None:
+        """Execute __init__."""
         if not serial_port or not msisdn:
             raise ValueError(
                 "COMM_MODEM_SERIAL_PORT and COMM_MODEM_MSISDN are required "
@@ -71,11 +74,13 @@ class GsmModemProvider:
         return SendResult(provider_message_id=f"{to_number}:out", provider_thread_id=to_number)
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
+        """Execute provision."""
         return ProvisionResult(address=self._msisdn, provider_resource_id=self._msisdn)
 
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        """Execute send."""
         return self._send_sms(message.to[0], message.text or "")
 
     def reply(
@@ -85,6 +90,7 @@ class GsmModemProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        """Execute reply."""
         remote_number, _ = split_composite_id(provider_message_id)
         return self._send_sms(remote_number, message.text or "")
 
@@ -95,6 +101,7 @@ class GsmModemProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        """Execute initiate."""
         return self._send_sms(recipient, message.text or "")
 
     def parse_webhook(
@@ -104,4 +111,6 @@ class GsmModemProvider:
         credentials=None,
     ) -> list[InboundMessage]:
         # A modem has no webhook; inbound comes from the AT poll listener.
+
+        """Execute parse_webhook."""
         raise NotImplementedError("gsm-modem inbound arrives via the AT poll loop, not webhooks")

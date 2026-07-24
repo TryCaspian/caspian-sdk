@@ -25,18 +25,22 @@ from __future__ import annotations
 
 
 def heading(text: str) -> dict:
+    """Execute heading."""
     return {"type": "heading", "text": text}
 
 
 def text(value: str) -> dict:
+    """Execute text."""
     return {"type": "text", "text": value}
 
 
 def divider() -> dict:
+    """Execute divider."""
     return {"type": "divider"}
 
 
 def image(url: str, alt: str | None = None) -> dict:
+    """Execute image."""
     block: dict = {"type": "image", "url": url}
     if alt is not None:
         block["alt"] = alt
@@ -49,6 +53,7 @@ def fields(items: list[dict]) -> dict:
 
 
 def bullet_list(items: list[str], ordered: bool = False) -> dict:
+    """Execute bullet_list."""
     return {"type": "list", "items": items, "ordered": ordered}
 
 
@@ -65,6 +70,7 @@ def card(
     text: str | None = None,
     buttons: list[dict] | None = None,
 ) -> dict:
+    """Execute card."""
     block: dict = {"type": "card"}
     if title is not None:
         block["title"] = title

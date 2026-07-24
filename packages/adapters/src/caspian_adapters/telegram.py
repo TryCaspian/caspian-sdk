@@ -37,6 +37,7 @@ SECRET_HEADER = "x-telegram-bot-api-secret-token"
 
 
 def bot_id_from_token(token: str) -> str:
+    """Execute bot_id_from_token."""
     return token.split(":", 1)[0]
 
 
@@ -120,6 +121,8 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
 
 
 class TelegramProvider:
+    """TelegramProvider implementation."""
+
     name = "telegram"
     channel = "telegram"
     connect_credentials = ("bot_token",)
@@ -142,6 +145,7 @@ class TelegramProvider:
         webhook_base: str = "",
         base_url: str = "https://api.telegram.org",
     ) -> None:
+        """Execute __init__."""
         self._webhook_base = webhook_base.rstrip("/")
         self._client = httpx.Client(base_url=base_url, timeout=30.0)
 
@@ -190,6 +194,7 @@ class TelegramProvider:
         return self._call(token, method, body)
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
+        """Execute provision."""
         token = self._token(request.credentials)
         me = self._call(token, "getMe")
         if self._webhook_base:
@@ -217,6 +222,7 @@ class TelegramProvider:
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
+        """Execute send."""
         token = self._token(credentials)
         chat_id = message.to[0]
         if message.attachments:
@@ -237,6 +243,7 @@ class TelegramProvider:
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
+        """Execute reply."""
         token = self._token(credentials)
         chat_id, target_message_id = split_composite_id(provider_message_id)
         if message.attachments:
@@ -263,6 +270,7 @@ class TelegramProvider:
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
     ) -> list[InboundMessage]:
+        """Execute parse_webhook."""
         if credentials is None:
             # Telegram webhooks are always per-connection; the scoped route
             # supplies the connection's credentials.

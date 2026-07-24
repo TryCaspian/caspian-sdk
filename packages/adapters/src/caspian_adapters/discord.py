@@ -123,6 +123,8 @@ def webhook_id_from_url(url: str) -> str:
 
 
 class DiscordProvider:
+    """DiscordProvider implementation."""
+
     name = "discord"
     channel = "discord"
     # Identity is a bot_token OR a channel webhook_url (custom name/avatar per
@@ -142,6 +144,7 @@ class DiscordProvider:
     )
 
     def __init__(self, base_url: str = API, shared_bot_token: str = "") -> None:
+        """Execute __init__."""
         self._base = base_url
         self._shared_bot_token = shared_bot_token
         self._client = httpx.Client(base_url=base_url, timeout=30.0)
@@ -191,6 +194,7 @@ class DiscordProvider:
         return str(data.get("channel_id", "")), str(data.get("id", ""))
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
+        """Execute provision."""
         creds = request.credentials or {}
         if creds.get("webhook_url"):
             r = self._client.get(creds["webhook_url"])
@@ -210,6 +214,7 @@ class DiscordProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        """Execute send."""
         creds = credentials or {}
         if creds.get("webhook_url"):
             channel_id, msg_id = self._post_webhook(creds, message.text or "")
@@ -228,6 +233,8 @@ class DiscordProvider:
         self, provider_inbox_id: str, recipient: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
         # recipient is a channel id the bot can post to
+
+        """Execute initiate."""
         return self.send(
             provider_inbox_id,
             OutboundMessage(text=message.text, to=(recipient,)),
@@ -241,6 +248,7 @@ class DiscordProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        """Execute reply."""
         creds = credentials or {}
         if creds.get("webhook_url"):
             # webhooks can't reply-reference; post the message with the identity
@@ -262,6 +270,8 @@ class DiscordProvider:
         # Normal Discord messages arrive over the Gateway listener, which bridges
         # each MESSAGE_CREATE to this connection's scoped webhook. The scoped route
         # supplies the connection's resource id (the application id) in credentials.
+
+        """Execute parse_webhook."""
         if credentials is None:
             raise WebhookVerificationError("discord webhooks require a connection scope")
         try:

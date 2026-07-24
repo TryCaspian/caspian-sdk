@@ -199,6 +199,8 @@ def parse_dm_events(data: dict, for_user_id: str) -> list[InboundMessage]:
 
 
 class XProvider:
+    """XProvider implementation."""
+
     name = "x"
     channel = "x"
     # SEND covers both posting a tweet and a reactive DM reply. Deliberately no
@@ -225,6 +227,8 @@ class XProvider:
         base_url: str = "https://api.x.com",
     ) -> None:
         # App-level OAuth 1.0a consumer credentials (used to sign requests).
+
+        """Execute __init__."""
         self._consumer_key = consumer_key
         self._consumer_secret = consumer_secret
         # Deployment fallback (a single account); per-connection creds win.
@@ -407,6 +411,7 @@ class XProvider:
         return fresh, newest or cursor
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
+        """Execute provision."""
         creds = request.credentials or {}
         user_id = creds.get("user_id") or self._default_user_id
         if not user_id:
@@ -419,6 +424,7 @@ class XProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        """Execute send."""
         target = message.to[0] if message.to else ""
         if target.startswith("dm:"):
             return self._send_dm(credentials, target[len("dm:") :], message.text or "")
@@ -431,6 +437,7 @@ class XProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        """Execute reply."""
         if provider_message_id.startswith("dm:"):
             # dm:<user_id>:<event_id> -- reply into the same DM conversation.
             _, user_id, _ = provider_message_id.split(":", 2)
@@ -456,6 +463,7 @@ class XProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
+        """Execute parse_webhook."""
         if self._webhook_secret:
             received = {k.lower(): v for k, v in headers.items()}.get(
                 "x-twitter-webhooks-signature", ""
