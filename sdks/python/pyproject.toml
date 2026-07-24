@@ -25,6 +25,11 @@ dependencies = [
 Homepage = "https://trycaspianai.com"
 Documentation = "https://api.trycaspianai.com/SKILL.md"
 
+[project.optional-dependencies]
+redis = [
+    "redis>=5.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

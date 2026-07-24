@@ -32,6 +32,8 @@ from typing import Literal
 
 import httpx
 
+from .state import InMemoryStateAdapter, StateAdapter
+
 logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
@@ -503,6 +505,7 @@ class CommClient:
         base_url: str | None = None,
         http: httpx.Client | None = None,
         timeout: float = 30.0,
+        state: StateAdapter | None = None,
     ) -> None:
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
@@ -515,8 +518,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
-        self._processed_events: dict[str, None] = {}
-        self._webhook_lock = Lock()
+        self.state = state or InMemoryStateAdapter()
 
     def close(self) -> None:
         self._http.close()
@@ -1303,17 +1305,11 @@ class CommClient:
             raise CommError(400, "invalid JSON payload")
 
         event_id = event.get("id")
-        with self._webhook_lock:
-            if event_id:
-                if event_id in self._processed_events:
-                    return  # already handled in this invocation
-                self._processed_events[event_id] = None
+        if event_id and self.state.seen(event_id):
+            return  # already handled in this invocation or by another instance
 
-            # Discard oldest event to bound memory on warm serverless containers
-            if len(self._processed_events) > 1000:
-                # Python dicts are insertion-ordered. pop the first (oldest) key.
-                self._processed_events.pop(next(iter(self._processed_events)))
-
+        conv_id = event.get("data", {}).get("conversation_id", "default")
+        with self.state.lock(conv_id):
             self._dispatch_event(event)
 
     def _latest_seq(self) -> int:

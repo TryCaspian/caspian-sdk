@@ -1,6 +1,7 @@
 import { config } from "./config.js";
 import crypto from "node:crypto";
 import { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
+import { InMemoryStateAdapter, type StateAdapter } from "./state.js";
 export { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError };
 import type {
   Agent,
@@ -119,7 +120,7 @@ export class StreamSession {
   constructor(
     private readonly messageId: string,
     private readonly client: CommClient,
-    private readonly strategy: StreamStrategy = "final_only",
+    private strategy: StreamStrategy = "final_only",
     private readonly editIntervalMs = 500,
   ) {}
 
@@ -384,7 +385,7 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
-  private processedEvents = new Set<string>();
+  private readonly state: StateAdapter;
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -395,10 +396,8 @@ export class CommClient {
     this.baseUrl = (config(options.baseUrl, "CASPIAN_BASE_URL", "https://api.trycaspianai.com") as string)
       .replace(/\/+$/, "");
     this.timeoutMs = (options.timeout ?? 30) * 1000;
-    this.fetchImpl = options.fetch ?? globalThis.fetch;
-    if (!this.fetchImpl) {
-      throw new CommError(0, "global fetch is unavailable — use Node >= 18 or pass options.fetch");
-    }
+    this.fetchImpl = options.fetch ?? (fetch.bind(globalThis) as typeof fetch);
+    this.state = options.state ?? new InMemoryStateAdapter();
   }
 
   // ---- HTTP ----------------------------------------------------------------
@@ -1027,18 +1026,19 @@ export class CommClient {
       throw new CommError(400, "invalid JSON payload");
     }
 
-    const eventId = event.id;
-    if (eventId) {
-      if (this.processedEvents.has(eventId)) return;
-      this.processedEvents.add(eventId);
+    const eventId = event.id as string | undefined;
+    if (eventId && (await this.state.seen(eventId))) {
+      return;
     }
 
-    // Discard oldest event to bound memory on warm serverless containers
-    if (this.processedEvents.size > 1000) {
-      this.processedEvents.delete(this.processedEvents.values().next().value);
-    }
+    const convId = (event.data?.conversation_id as string) || "default";
+    const lock = await this.state.lock(convId);
 
-    await this.dispatchEvent(event as EventRecord);
+    try {
+      await this.dispatchEvent(event as EventRecord);
+    } finally {
+      void lock.release();
+    }
   }
 
   async dispatchPending(afterSeq = 0): Promise<number> {
