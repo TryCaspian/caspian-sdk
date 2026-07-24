@@ -119,10 +119,12 @@ describe("CommClient", () => {
       },
     });
     
-    await expect(client.connectEmail({ pollInterval: 0.001 })).rejects.toMatchObject({
-      statusCode: 502,
-      detail: "provisioning failed: DNS verification failed",
-    });
+    const err = await client
+      .connectEmail({ pollInterval: 0.001 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(CommError);
+    expect(err.statusCode).toBe(502);
+    expect(err.detail).toBe("provisioning failed: DNS verification failed");
   });
 
   it("maps camelCase channel fields to snake_case on the wire", async () => {
