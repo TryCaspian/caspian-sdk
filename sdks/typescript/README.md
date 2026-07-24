@@ -99,6 +99,30 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
+## Overlapping Messages & Concurrency
+
+If a user sends multiple messages in a row before your agent finishes responding to the first one, you can control how Caspian handles the overlap:
+
+```ts
+await client.listen({ onOverlap: "queue" }); // defaults to queue
+```
+
+### The Four Strategies
+
+- **`queue` (Default)**: Queue overlapping messages and process them sequentially in FIFO order. *Use this as your safe default to guarantee your agent never double-replies or processes history out of order.*
+- **`drop`**: Ignore new messages while a handler is already running for that conversation. *Use this when your agent's current task is expensive or side-effecting and shouldn't be interrupted — but be aware that any message arriving during that window is silently lost with no retry, whether it was important or not.*
+- **`debounce`**: Wait `debounceMs` after a message, discarding any earlier messages if a new one arrives in that window. *Use this when users tend to send multiple short messages in a row ("hi", "wait", "actually nevermind"), trading a small latency penalty for full context.*
+  - **Tradeoff**: Your agent will *not* respond until the user goes quiet for the full `debounceMs`. Earlier messages in the burst are discarded, not merged (e.g. if a user sends "my order number is 12345" then "it's broken" two seconds later, only "it's broken" reaches your handler — the order number is gone unless they repeat it).
+- **`parallel`**: Run all handlers concurrently. *Use this only if your agent is entirely stateless and idempotent, accepting the severe risk that out-of-order replies may severely confuse the user.*
+
+LLM agents are inherently stateful (they build on previous conversation history). Processing overlapping messages sequentially (`queue`) prevents race conditions and ensures the agent always sees the correct chronological context.
+
+### Graceful Shutdown (`client.close()`)
+
+*(New in this release)* When stopping your application, call `client.close()` to perform a best-effort shutdown. This method explicitly cancels any pending `debounce` timers to prevent delayed handlers from firing after you intend to stop.
+
+> **Note on HTTP connections:** In TypeScript, `client.close()` focuses purely on timer cancellation. It does not close underlying HTTP connections because the SDK defaults to the native global `fetch` API, which manages its own connection pool implicitly within the runtime. If you instantiated `CommClient` with a custom `fetch` implementation (via `ClientOptions`), `client.close()` does not attempt to close it.
+
 ## Errors
 
 Non-2xx responses throw a `CommError` with `statusCode` and `detail`:

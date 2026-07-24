@@ -145,6 +145,13 @@ export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 
+interface ConversationState {
+  inFlightCount: number;
+  pending: Message[];
+  debounceTimer?: ReturnType<typeof setTimeout>;
+  debounceMessage?: Message;
+}
+
 /**
  * One identity for your AI agent across every channel — behind a single
  * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
@@ -160,6 +167,8 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+
+  private convStates = new Map<string, ConversationState>();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -806,7 +815,112 @@ export class CommClient {
     }
   }
 
-  private async dispatchEvent(event: EventRecord): Promise<void> {
+
+  private async runMessageHandlers(message: Message): Promise<void> {
+    if (this.handlers.length) {
+      try { await message.typing(); } catch {}
+      if (this.ackMessage) {
+        try {
+          await message.reply(this.ackMessage);
+        } catch (err) {
+          if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+          else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+          else logger.error(`ack reply failed for message ${message.id}`, err);
+        }
+      }
+    }
+    for (const handler of this.handlers) {
+      try {
+        await handler(message);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+      }
+    }
+  }
+
+  private async queueWorker(convId: string, state: ConversationState, firstMsg: Message) {
+    let msg: Message | undefined = firstMsg;
+    while (msg) {
+      await this.runMessageHandlers(msg);
+      msg = state.pending.shift();
+    }
+    state.inFlightCount--;
+    if (state.inFlightCount === 0 && !state.pending.length && !state.debounceTimer) {
+      if (this.convStates.get(convId) === state) {
+        this.convStates.delete(convId);
+      }
+    }
+  }
+
+  private async parallelWorker(convId: string, state: ConversationState, message: Message) {
+    await this.runMessageHandlers(message);
+    state.inFlightCount--;
+    if (state.inFlightCount === 0 && !state.pending.length && !state.debounceTimer) {
+      if (this.convStates.get(convId) === state) {
+        this.convStates.delete(convId);
+      }
+    }
+  }
+
+  private dispatchMessage(message: Message, opts: ListenOptions) {
+    const strategy = opts.onOverlap ?? "queue";
+    const convId = message.conversationId;
+    let state = this.convStates.get(convId);
+    if (!state) {
+      state = { inFlightCount: 0, pending: [] };
+      this.convStates.set(convId, state);
+    }
+
+    if (strategy === "parallel") {
+      state.inFlightCount++;
+      void this.parallelWorker(convId, state, message);
+      return;
+    }
+
+    if (strategy === "debounce") {
+      if (state.debounceTimer) {
+        clearTimeout(state.debounceTimer);
+        state.debounceTimer = undefined;
+      }
+      state.debounceMessage = message;
+      const debounceMs = opts.debounceMs ?? 500;
+      
+      const timer = setTimeout(() => {
+        if (state!.debounceTimer !== timer) return;
+        state!.debounceTimer = undefined;
+        const msg = state!.debounceMessage!;
+        state!.debounceMessage = undefined;
+        
+        if (state!.inFlightCount > 0) {
+          state!.pending.push(msg);
+          return;
+        }
+        state!.inFlightCount = 1;
+        void this.queueWorker(convId, state!, msg);
+      }, debounceMs);
+      state.debounceTimer = timer;
+      return;
+    }
+
+    if (strategy === "drop") {
+      if (state.inFlightCount > 0) return;
+      state.inFlightCount = 1;
+      void this.queueWorker(convId, state, message);
+      return;
+    }
+
+    // queue (default)
+    if (state.inFlightCount > 0) {
+      state.pending.push(message);
+      return;
+    }
+    state.inFlightCount = 1;
+    void this.queueWorker(convId, state, message);
+  }
+
+  private async dispatchEvent(event: EventRecord, opts: ListenOptions = {}): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
       return;
@@ -817,45 +931,7 @@ export class CommClient {
     }
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
-    if (this.handlers.length) {
-      // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
-      try {
-        await message.typing();
-      } catch {
-        /* ignore */
-      }
-      // Optional instant acknowledgement (listen({ ack })) for channels with no
-      // typing indicator; the real answer follows from the handler.
-      if (this.ackMessage) {
-        try {
-          await message.reply(this.ackMessage);
-        } catch (err) {
-          if (err instanceof AccountRequiredError) {
-            this.warnAccountRequired(err);
-          } else if (err instanceof InsufficientCreditError) {
-            this.warnOutOfCredit(err);
-          } else {
-            logger.error(`ack reply failed for message ${message.id}`, err);
-          }
-        }
-      }
-    }
-    for (const handler of this.handlers) {
-      try {
-        await handler(message);
-      } catch (err) {
-        // Paid channel used before the developer signed in, or the project is
-        // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
-        // keep the loop alive so one blocked reply can't stop the listener.
-        if (err instanceof AccountRequiredError) {
-          this.warnAccountRequired(err);
-        } else if (err instanceof InsufficientCreditError) {
-          this.warnOutOfCredit(err);
-        } else {
-          logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
-        }
-      }
-    }
+    this.dispatchMessage(message, opts);
   }
 
   /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
@@ -907,14 +983,50 @@ export class CommClient {
    * Process all currently available events once. Returns the last seen seq.
    * Handler exceptions are caught per message, so this always drains the queue.
    */
-  async dispatchPending(afterSeq = 0): Promise<number> {
-    let lastSeq = afterSeq;
+  async dispatchPending(opts: ListenOptions | number = {}): Promise<number> {
+    const options = typeof opts === "number" ? { fromSeq: opts } : opts;
+    let lastSeq = options.fromSeq ?? 0;
+    const touchedConvs = new Set<string>();
+    if (options.ack !== undefined) this.ackMessage = options.ack;
+    
     for (;;) {
       const batch = await this.events({ afterSeq: lastSeq });
-      if (!batch.length) return lastSeq;
+      if (!batch.length) break;
       for (const event of batch) {
         lastSeq = event.seq;
-        await this.dispatchEvent(event);
+        const msgData = event.data?.message as any;
+        if (event.type === "message.received" && msgData?.conversation_id) {
+          touchedConvs.add(msgData.conversation_id as string);
+        }
+        // We await dispatchEvent to ensure interactions/reactions process fully, 
+        // but for messages it resolves immediately because dispatchMessage is fire-and-forget.
+        await this.dispatchEvent(event, options);
+      }
+    }
+    
+    // Wait for all touched conversations to drain their in-flight handlers and timers
+    for (const convId of touchedConvs) {
+      while (this.convStates.has(convId)) {
+        await sleep(10);
+      }
+    }
+    return lastSeq;
+  }
+
+  /**
+   * Best-effort shutdown. Cancels any pending debounce timers to prevent
+   * delayed handlers from firing after the application intends to stop.
+   */
+  close(): void {
+    for (const [convId, state] of this.convStates.entries()) {
+      if (state.debounceTimer) {
+        clearTimeout(state.debounceTimer);
+        state.debounceTimer = undefined;
+        state.debounceMessage = undefined;
+        
+        if (state.inFlightCount === 0 && !state.pending.length) {
+          this.convStates.delete(convId);
+        }
       }
     }
   }
@@ -947,8 +1059,8 @@ export class CommClient {
         continue;
       }
       for (const event of batch) {
-        await this.dispatchEvent(event);
-        seq = event.seq; // advance only after the dispatch attempt
+        await this.dispatchEvent(event, opts);
+        seq = event.seq; 
       }
     }
   }

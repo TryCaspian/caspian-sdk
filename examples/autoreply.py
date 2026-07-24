@@ -1,5 +1,9 @@
 """Minimal auto-reply agent.
 
+This minimal agent demonstrates using `client.listen(on_overlap="queue")` to safely process messages.
+The queue strategy ensures that if a user sends a burst of messages, the agent processes them 
+strictly one-by-one, preventing race conditions on the conversation state.
+
 Point CASPIAN_BASE_URL and CASPIAN_API_KEY at a Caspian gateway (hosted, or any
 deployment of the Caspian gateway), then:
 
@@ -25,4 +29,4 @@ def handle(message):
 
 
 print("Listening for inbound messages (Ctrl+C to stop)")
-client.listen()
+client.listen(on_overlap="queue")

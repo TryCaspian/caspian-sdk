@@ -71,6 +71,25 @@ Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 - **`message.typing()`** shows a "typing…" indicator while your agent thinks (where the platform supports it).
 - **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop.
 
+## Concurrency and Overlapping Messages
+
+When a user sends multiple messages in a row before your agent has finished replying, Caspian manages the overlap using a per-conversation concurrency strategy. You can set this via the `on_overlap` parameter in `listen()`.
+
+```python
+client.listen(on_overlap="queue")  # Default
+```
+
+### The Four Strategies
+
+- **`queue` (Default)**: Queue overlapping messages and process them sequentially in FIFO order. *Use this as your safe default to guarantee your agent never double-replies or processes history out of order.*
+- **`drop`**: Ignore new messages while a handler is already running for that conversation. *Use this when your agent's current task is expensive or side-effecting and shouldn't be interrupted — but be aware that any message arriving during that window is silently lost with no retry, whether it was important or not.*
+- **`debounce`**: Wait `debounce_ms` after a message, discarding any earlier messages if a new one arrives in that window. *Use this when users tend to send multiple short messages in a row ("hi", "wait", "actually nevermind"), trading a small latency penalty for full context.*
+  - **Tradeoff**: Your agent will *not* respond until the user goes quiet for the full `debounce_ms`. Earlier messages in the burst are discarded, not merged (e.g. if a user sends "my order number is 12345" then "it's broken" two seconds later, only "it's broken" reaches your handler — the order number is gone unless they repeat it).
+  - *Note: When stopping the listener, `client.close()` makes a best-effort attempt to cancel pending debounce timers, but a timer that fires at the exact moment of shutdown may still execute.*
+- **`parallel`**: Run all handlers concurrently. *Use this only if your agent is entirely stateless and idempotent, accepting the severe risk that out-of-order replies may severely confuse the user.*
+
+LLM agents are inherently stateful (they build on previous conversation history). Processing overlapping messages sequentially (`queue`) prevents race conditions and ensures the agent always sees the correct chronological context.
+
 ## Docs
 
 Point your coding agent at the setup guide and it does the whole integration for you. Full docs and your API key: **[trycaspianai.com](https://trycaspianai.com)**.

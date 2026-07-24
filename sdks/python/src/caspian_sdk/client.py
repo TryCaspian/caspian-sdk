@@ -18,7 +18,9 @@ Usage:
 import logging
 import os
 import sys
+import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +28,9 @@ from pathlib import Path
 import httpx
 
 logger = logging.getLogger("caspian_sdk")
+
+# Strategies implemented so far; expanded in Phase 3 to add debounce and parallel.
+_OVERLAP_IMPLEMENTED = frozenset({"queue", "drop", "debounce", "parallel"})
 
 
 def _dotenv() -> dict[str, str]:
@@ -196,6 +201,33 @@ class Reaction:
     _client: "CommClient" = field(repr=False)
 
 
+@dataclass
+class _ConversationState:
+    """Per-conversation mutable state for on_overlap strategies.
+
+    One instance per active conversation_id, created lazily on the first
+    message and deleted once the conversation goes idle (no handler running,
+    no queued messages, no active debounce timer).  Keeps memory bounded for
+    long-running agents that see many short-lived conversations.
+    """
+
+    # Guards all mutable fields below.  Never held across a handler call,
+    # and never held at the same time as _conv_states_lock on CommClient.
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    # Count of handler threads currently executing for this conversation.
+    # queue/drop: never exceeds 1. parallel: can exceed 1.
+    in_flight_count: int = 0
+    # Waiting messages for the queue strategy, processed FIFO after the
+    # current handler finishes.  Unused by drop/debounce/parallel.
+    pending: deque = field(default_factory=deque)
+    # Active debounce countdown; cancelled and replaced on each new message
+    # so only the most recent arrival within the window triggers the handler.
+    debounce_timer: threading.Timer | None = None
+    # Latest message buffered for debounce.  Earlier messages within the
+    # window are discarded (latest-only, not merged).
+    debounce_message: "Message | None" = None
+
+
 class CommClient:
     def __init__(
         self,
@@ -215,8 +247,32 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        # Per-conversation overlap state, keyed by conversation_id.  Created
+        # lazily on first message; deleted once a conversation goes idle.
+        self._conv_states: dict[str, _ConversationState] = {}
+        # Guards dict key-level operations only (get-or-create an entry,
+        # delete-if-idle).  Never held across a handler call, and never held
+        # at the same time as a per-conversation _ConversationState.lock.
+        # Without this, two threads arriving simultaneously for the same new
+        # conversation_id could each create their own state object, and a
+        # delete-on-idle could race a concurrent new-message arrival.
+        self._conv_states_lock = threading.Lock()
+        # Strategy in effect for the current listen()/dispatch_pending() call.
+        self._on_overlap: str = "queue"
+        self._debounce_ms: float = 500
 
     def close(self) -> None:
+        # Cancel any pending debounce timers so they don't fire after the
+        # transport is closed. Note: threading.Timer.cancel() doesn't stop a
+        # timer that has already fired. If close() races with a timer firing,
+        # the handler can still run and hit a RuntimeError against the closed
+        # transport. This is a known limitation treated the same as listen()'s
+        # shutdown gap.
+        with self._conv_states_lock:
+            for state in self._conv_states.values():
+                with state.lock:
+                    if state.debounce_timer:
+                        state.debounce_timer.cancel()
         self._http.close()
 
     def _request(
@@ -465,8 +521,13 @@ class CommClient:
         - no Slack app to build. Pass ``display_name`` and ``icon_url`` to post
         under YOUR own name + icon (the plumbing stays invisible). Use
         connect_slack(slack_client_id=...) instead to bring your own Slack app."""
-        body = {"customer_id": customer_id, "agent_id": agent_id,
-                "display_name": display_name, "icon_url": icon_url, **kwargs}
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "icon_url": icon_url,
+            **kwargs,
+        }
         return self._request("POST", "/v1/connections/slack/install", json=body)
 
     def update_branding(self, connection_id: str, display_name=None, icon_url=None) -> dict:
@@ -736,9 +797,42 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
-    def _dispatch_event(self, event: dict) -> None:
-        """Run handlers for one event. A handler that raises is logged and
-        swallowed so one bad message can never stop the listener."""
+    # -- Overlap-strategy design -----------------------------------------------
+    # self._on_overlap selects what happens when a new message arrives for a
+    # conversation_id that already has a handler running:
+    #
+    #   "queue"    (default) — enqueue the new message and process all messages
+    #              for this conversation in FIFO order, one at a time.  Every
+    #              message is handled; none are dropped.
+    #
+    #   "drop"     — skip the new arrival.  The in-flight handler runs to
+    #              completion uninterrupted.  The dropped message is logged so
+    #              it is never silently lost.
+    #
+    #   "debounce" — cancel the pending timer and buffer only the latest
+    #              message; invoke the handler once the window (debounce_ms)
+    #              elapses with no new message.  Earlier messages within the
+    #              window are discarded (latest-only, not merged): correct for
+    #              agents where the user is still composing their thought.
+    #
+    #   "parallel" — spawn the handler in a new daemon thread immediately,
+    #              without waiting for any in-flight handler to finish.  Risk:
+    #              handlers for the same conversation can reply out of order.
+    #              Use only when handler order genuinely does not matter.
+    #
+    # Per-conversation state lives in self._conv_states (keyed by
+    # conversation_id).  An entry is deleted once its conversation goes idle
+    # so memory stays bounded over long-running processes.
+    # --------------------------------------------------------------------------
+
+    def _dispatch_event(self, event: dict, _spawned: list[threading.Thread] | None = None) -> None:
+        """Route one event to the right handler set.
+
+        For message.received, the on_overlap strategy controls whether the
+        handler is queued, dropped, or run immediately.  _spawned is populated
+        by dispatch_pending() so it can join() all threads before returning;
+        listen() passes None and lets threads run as background daemon threads.
+        """
         event_type = event.get("type")
         if event_type == "interaction.received":
             self._dispatch_interaction(event["data"])
@@ -748,17 +842,138 @@ class CommClient:
             return
         if event_type != "message.received":
             return
+        if not self._handlers:
+            return
         message = self._build_message(event["data"])
+        self._dispatch_message(message, _spawned)
+
+    def _dispatch_message(
+        self,
+        message: Message,
+        _spawned: list[threading.Thread] | None,
+    ) -> None:
+        """Apply the active on_overlap strategy for one inbound message.
+
+        Both queue and drop use the same nested-lock protocol: _conv_states_lock
+        outer, state.lock inner, held together for the full get-or-create +
+        in_flight check.  This closes the race where a cleanup thread could
+        delete a state entry at the same moment the dispatch side is about to
+        write into it, which would cause a second concurrent worker to be
+        spawned for the same conversation.
+        """
+        conv_id = message.conversation_id
+        with self._conv_states_lock:
+            state = self._conv_states.get(conv_id)
+            if state is None:
+                state = _ConversationState()
+                self._conv_states[conv_id] = state
+            with state.lock:
+                if self._on_overlap == "parallel":
+                    state.in_flight_count += 1
+                elif self._on_overlap == "debounce":
+                    if state.debounce_timer:
+                        state.debounce_timer.cancel()
+                    state.debounce_message = message
+
+                    def fire():
+                        self._debounce_timer_fired(conv_id, state, current_timer)
+
+                    current_timer = threading.Timer(self._debounce_ms / 1000.0, fire)
+                    current_timer.daemon = True
+                    state.debounce_timer = current_timer
+                else:
+                    if state.in_flight_count > 0:
+                        if self._on_overlap == "queue":
+                            state.pending.append(message)
+                        else:  # drop
+                            # Logged (not silently discarded) so the operator can
+                            # see it when debugging unexpected message loss.
+                            logger.debug(
+                                "dropping message %s for conversation %s;"
+                                " handler already in flight",
+                                message.id,
+                                conv_id,
+                            )
+                        return  # either way, no new thread
+                    # Claim the slot before releasing the locks so a concurrent
+                    # arrival sees in_flight_count > 0.
+                    state.in_flight_count = 1
+
+        # Thread is created outside both locks so we never hold a lock across
+        # a blocking OS call (thread creation).
+        if self._on_overlap == "debounce":
+            t = current_timer
+        elif self._on_overlap == "parallel":
+            t = threading.Thread(
+                target=self._parallel_worker, args=(conv_id, state, message), daemon=True
+            )
+        else:
+            worker = self._queue_worker if self._on_overlap == "queue" else self._drop_worker
+            t = threading.Thread(target=worker, args=(conv_id, state, message), daemon=True)
+        if _spawned is not None:
+            # dispatch_pending path: append but do NOT start yet.  dispatch_pending
+            # starts all batch threads after the full batch is dispatched so that
+            # no worker can finish and clear in_flight before a subsequent event
+            # in the same batch has been routed.
+            _spawned.append(t)
+        else:
+            # listen() path: start the daemon thread immediately while the poll
+            # loop keeps pulling the next batch.
+            t.start()
+
+    def _debounce_timer_fired(
+        self, conv_id: str, state: _ConversationState, timer: threading.Timer
+    ) -> None:
+        with self._conv_states_lock:
+            with state.lock:
+                if state.debounce_timer is not timer:
+                    return
+                state.debounce_timer = None
+                message = state.debounce_message
+                state.debounce_message = None
+
+                if not message:
+                    return
+
+                if state.in_flight_count > 0:
+                    state.pending.append(message)
+                    return
+                state.in_flight_count = 1
+
+        # Outside the locks
+        t = threading.Thread(
+            target=self._queue_worker, args=(conv_id, state, message), daemon=True
+        )
+        t.start()
+        t.join()
+
+    def _parallel_worker(
+        self, conv_id: str, state: _ConversationState, message: Message
+    ) -> None:
+        self._run_message_handlers(message)
+        with self._conv_states_lock:
+            with state.lock:
+                state.in_flight_count -= 1
+                if state.in_flight_count == 0 and not state.pending and not state.debounce_timer:
+                    if self._conv_states.get(conv_id) is state:
+                        del self._conv_states[conv_id]
+
+    def _run_message_handlers(self, message: Message) -> None:
+        """Run typing indicator, optional ack, and all registered on_message handlers.
+
+        Every handler is individually wrapped so one bad handler cannot prevent
+        subsequent handlers from running or kill the worker thread.  This is the
+        sole place where handler exceptions are swallowed — preserving the
+        guarantee that a failing handler never stops the listener.
+        """
         if self._handlers:
-            # Show a 'thinking…' indicator up front so the human sees the agent is
-            # working while the handler runs. Best-effort; never blocks dispatch.
+            # Show a 'thinking…' indicator up front; best-effort, never blocks.
             try:
                 message.typing()
             except Exception:
                 pass
-            # Optional instant acknowledgement (listen(ack=...)) so the human gets
-            # an immediate reply on channels with no typing indicator (X, SMS,
-            # email). Best-effort; the real answer follows from the handler.
+            # Optional instant acknowledgement for channels with no typing
+            # indicator (X, SMS, email); the real answer follows from the handler.
             if self._ack:
                 try:
                     message.reply(self._ack)
@@ -770,18 +985,61 @@ class CommClient:
             try:
                 handler(message)
             except AccountRequiredError as exc:
-                # Paid channel used before the developer signed in. Surface the
-                # one-time sign-in prompt loudly (e.g. in Claude Code).
+                # Paid channel used before the developer signed in.
                 self._warn_account_required(exc)
             except InsufficientCreditError as exc:
-                # The agent tried to reply on a paid channel but the project is
-                # out of credit / capped. Make it loud on the CLI so the operator
-                # (e.g. running this in Claude Code) sees it and can top up.
+                # Out of credit / capped — surface it so the operator can top up.
                 self._warn_out_of_credit(exc)
             except Exception:
                 logger.exception(
                     "on_message handler failed for message %s; continuing", message.id
                 )
+
+    def _queue_worker(
+        self, conv_id: str, state: _ConversationState, first_message: Message
+    ) -> None:
+        """Drain this conversation's message queue, one handler call at a time.
+
+        The worker itself loops until state.pending is empty — no additional
+        threads are spawned for queued messages.  After each handler call, both
+        locks are acquired (outer first) to atomically decide whether to pop
+        the next message or mark the conversation idle and delete its state.
+        """
+        message = first_message
+        while True:
+            self._run_message_handlers(message)
+            with self._conv_states_lock:
+                with state.lock:
+                    if state.pending:
+                        # More messages waiting.  Keep in_flight_count > 0 so
+                        # concurrent arrivals continue to enqueue rather than
+                        # spawn a second worker.
+                        message = state.pending.popleft()
+                    else:
+                        # Queue drained — release the slot and remove the state
+                        # entry so memory is reclaimed for quiet conversations.
+                        state.in_flight_count -= 1
+                        if state.in_flight_count == 0 and not state.debounce_timer:
+                            if self._conv_states.get(conv_id) is state:
+                                del self._conv_states[conv_id]
+                        return
+
+    def _drop_worker(
+        self, conv_id: str, state: _ConversationState, message: Message
+    ) -> None:
+        """Run handlers for message, then release the conversation slot.
+
+        drop strategy: once this handler finishes, the next arrival for this
+        conversation will be processed rather than dropped.
+        """
+        self._run_message_handlers(message)
+        with self._conv_states_lock:
+            with state.lock:
+                state.in_flight_count -= 1
+                if state.in_flight_count == 0 and not state.debounce_timer:
+                    if self._conv_states.get(conv_id) is state:
+                        del self._conv_states[conv_id]
+
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
@@ -822,20 +1080,50 @@ class CommClient:
         ]
         print("\n".join(lines), file=sys.stderr, flush=True)
 
-    def dispatch_pending(self, after_seq: int = 0) -> int:
+    def dispatch_pending(
+        self,
+        after_seq: int = 0,
+        on_overlap: str = "queue",
+        debounce_ms: float = 500,
+    ) -> int:
         """Process all currently available events once. Returns the last seen seq.
 
         Handler exceptions are caught per message, so this always drains the
         queue and advances the cursor even if some handlers fail.
+
+        Joins every thread spawned by the active strategy before returning, so
+        callers (e.g. tests) get a synchronous completion guarantee without
+        polling or sleeping.
         """
+        if on_overlap not in _OVERLAP_IMPLEMENTED:
+            raise ValueError(
+                f"on_overlap={on_overlap!r} is not yet implemented; "
+                f"choose from: {sorted(_OVERLAP_IMPLEMENTED)}"
+            )
+        self._on_overlap = on_overlap
+        self._debounce_ms = debounce_ms
+        # Threads spawned by the strategy are collected here and joined before
+        # returning, so callers (e.g. tests) get a synchronous completion
+        # guarantee without polling or sleeping.
+        spawned_threads: list[threading.Thread] = []
         last_seq = after_seq
         while True:
             batch = self.events(after_seq=last_seq)
             if not batch:
-                return last_seq
+                break
+            batch_start = len(spawned_threads)
             for event in batch:
                 last_seq = event["seq"]
-                self._dispatch_event(event)
+                self._dispatch_event(event, spawned_threads)
+            # Start only the threads added by this batch — after all events in
+            # the batch have been routed.  This guarantees in_flight=True is
+            # visible to every same-conversation event in the batch before any
+            # worker can complete and clear it.
+            for t in spawned_threads[batch_start:]:
+                t.start()
+        for t in spawned_threads:
+            t.join()
+        return last_seq
 
     def listen(
         self,
@@ -843,6 +1131,8 @@ class CommClient:
         poll_interval: float = 1.0,
         max_backoff: float = 30.0,
         ack: str | None = None,
+        on_overlap: str = "queue",
+        debounce_ms: float = 500,
     ) -> None:
         """Poll the event stream forever, dispatching inbound messages to handlers.
 
@@ -855,9 +1145,22 @@ class CommClient:
         moment…") the moment a message arrives, before your handler runs. Useful
         on channels with no typing indicator (X, SMS, email) so the human knows
         the agent is working while it thinks; the real answer follows.
+
+        Pass ``on_overlap`` to control what happens when a new message arrives
+        for a conversation that already has a handler running (default ``"queue"``
+        — serialize per conversation).  Handler threads run in the background
+        while the poll loop keeps pulling events; unlike ``dispatch_pending``,
+        this loop never joins spawned threads.
         """
+        if on_overlap not in _OVERLAP_IMPLEMENTED:
+            raise ValueError(
+                f"on_overlap={on_overlap!r} is not yet implemented; "
+                f"choose from: {sorted(_OVERLAP_IMPLEMENTED)}"
+            )
         if ack is not None:
             self._ack = ack
+        self._on_overlap = on_overlap
+        self._debounce_ms = debounce_ms
         seq = self._latest_seq() if from_seq is None else from_seq
         backoff = poll_interval
         while True:
@@ -876,9 +1179,19 @@ class CommClient:
             if not batch:
                 time.sleep(poll_interval)
                 continue
+            # Collect threads for this batch but do not start them yet.
+            # This mirrors the dispatch_pending fix: all events in the batch
+            # must be routed (in_flight set) before any worker can finish and
+            # clear in_flight, otherwise a fast-completing handler would allow
+            # same-conversation events later in the batch to create fresh state
+            # and spawn a second concurrent worker.
+            batch_threads: list[threading.Thread] = []
             for event in batch:
-                self._dispatch_event(event)
+                self._dispatch_event(event, batch_threads)
                 seq = event["seq"]  # advance only after the dispatch attempt
+            for t in batch_threads:
+                t.start()
+            # No join — listen() keeps polling while handlers run in the background.
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

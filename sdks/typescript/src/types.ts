@@ -173,4 +173,8 @@ export interface ListenOptions {
    * typing indicator (X, SMS, email); the real answer follows from the handler.
    */
   ack?: string;
+  /** Concurrency strategy for overlapping messages in the same conversation (default "queue"). */
+  onOverlap?: "queue" | "drop" | "debounce" | "parallel";
+  /** Wait time in milliseconds for debounce strategy (default 500). */
+  debounceMs?: number;
 }
