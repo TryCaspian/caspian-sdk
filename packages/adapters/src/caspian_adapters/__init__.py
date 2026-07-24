@@ -21,23 +21,35 @@ from .base import (
     WebhookVerificationError,
 )
 from .config import Settings
+from .events import (
+    COMMAND_RECEIVED,
+    MESSAGE_RECEIVED,
+    REACTION_RECEIVED,
+    event_payload,
+    event_type,
+)
 from .registry import PLUGIN_GROUP, build_providers
 
 __all__ = [
     "ALL_CAPABILITIES",
     "BASELINE_CAPABILITIES",
+    "COMMAND_RECEIVED",
     "Capability",
     "ChannelProvider",
     "InboundCommand",
     "InboundEvent",
     "InboundMessage",
     "InboundReaction",
+    "MESSAGE_RECEIVED",
     "OutboundMessage",
     "PLUGIN_GROUP",
     "ProvisionRequest",
     "ProvisionResult",
+    "REACTION_RECEIVED",
     "SendResult",
     "Settings",
     "WebhookVerificationError",
     "build_providers",
+    "event_payload",
+    "event_type",
 ]
