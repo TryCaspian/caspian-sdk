@@ -319,3 +319,47 @@ def test_route_key_reads_a_urlencoded_body():
     # Routing runs before the content type is known, so the form body has to
     # resolve to the same (app, workspace) key as a JSON event.
     assert SlackProvider.route_key(_command_body(team="T9", app="A7")) == "A7:T9"
+
+
+def test_slash_command_is_verified_with_the_pool_apps_secret():
+    # The form body names api_app_id, so verification has to use that app's
+    # signing secret, not the first pool entry's.
+    pool = [
+        {"app_id": "A1", "client_id": "c1", "client_secret": "s1", "signing_secret": "first"},
+        {"app_id": "A7", "client_id": "c7", "client_secret": "s7", "signing_secret": "seventh"},
+    ]
+    provider = SlackProvider(apps=pool)
+    payload = _command_body(app="A7")
+    inbound = provider.parse_webhook(
+        payload, {**_signed_headers(payload, secret="seventh"), **FORM_HEADERS}
+    )
+    assert inbound[0].command == "/status"
+    with pytest.raises(WebhookVerificationError, match="signature mismatch"):
+        provider.parse_webhook(
+            payload, {**_signed_headers(payload, secret="first"), **FORM_HEADERS}
+        )
+
+
+def test_slash_command_without_a_trigger_id_falls_back_to_a_composite_id():
+    # trigger_id drives dedup; without it the id is composed from the invocation,
+    # so a bare form (Slack occasionally omits trigger_id on replays) still dedups.
+    form = {"team_id": "T1", "api_app_id": "A1", "channel_id": "C123",
+            "command": "/status", "user_id": "U456"}
+    assert parse_slash_command(form)[0].external_event_id == "C123:/status:U456"
+
+
+def test_slash_command_marks_a_group_dm_as_private():
+    # Slack names a multi-person DM "mpdm-…"; it is private, not a public channel.
+    provider = _provider()
+    payload = _command_body(channel_name="mpdm-alice--bob--carol-1")
+    inbound = provider.parse_webhook(payload, {**_signed_headers(payload), **FORM_HEADERS})
+    assert inbound[0].chat_type == "private"
+
+
+def test_parse_webhook_rejects_when_no_signing_secret_is_available():
+    # Fail closed: a provider with no pool app and no stored secret cannot
+    # authenticate anything, so it must reject rather than trust the payload.
+    provider = SlackProvider()
+    payload = json.dumps(_event()).encode()
+    with pytest.raises(WebhookVerificationError, match="not configured"):
+        provider.parse_webhook(payload, _signed_headers(payload))

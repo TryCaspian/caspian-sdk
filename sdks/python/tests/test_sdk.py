@@ -7,6 +7,7 @@ import httpx
 import pytest
 from caspian_sdk import (
     AccountRequiredError,
+    Command,
     CommClient,
     CommError,
     InsufficientCreditError,
@@ -658,8 +659,6 @@ def test_behavior_prompt_returns_text():
 
 
 def test_on_command_dispatches_and_replies_into_the_conversation():
-    from caspian_sdk import Command
-
     events = [
         {
             "seq": 1,
@@ -701,8 +700,6 @@ def test_on_command_dispatches_and_replies_into_the_conversation():
 
 
 def test_command_without_arguments_has_no_args():
-    from caspian_sdk import Command
-
     cmd = Command(
         connection_id="conn_1", customer_id="cus_1", agent_id="agt_1",
         conversation_id="conv_1", name="/status", text="", sender=None, _client=None,
@@ -711,8 +708,6 @@ def test_command_without_arguments_has_no_args():
 
 
 def test_command_without_a_conversation_cannot_reply():
-    from caspian_sdk import Command, CommError
-
     cmd = Command(
         connection_id="conn_1", customer_id="cus_1", agent_id="agt_1",
         conversation_id=None, name="/status", text="", sender=None, _client=None,
@@ -722,8 +717,6 @@ def test_command_without_a_conversation_cannot_reply():
 
 
 def test_a_failing_command_handler_does_not_stop_the_listener():
-    from caspian_sdk import Command
-
     events = [
         {"seq": 1, "type": "command.received",
          "data": {"conversation_id": "conv_1", "command": "/boom", "text": ""}},

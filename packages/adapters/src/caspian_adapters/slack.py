@@ -79,6 +79,18 @@ def _normalize_emoji(reaction: str) -> str:
     return reaction.split("::", 1)[0]
 
 
+def _chat_type(channel_name: str) -> str:
+    """Classify a slash-command channel as private or not.
+
+    Slack names the channel instead of typing it: a 1:1 DM is "directmessage" and
+    a multi-person DM is "mpdm-…". Both are private, so an agent that dials back
+    verbosity outside 1:1s must not see a group DM as a public channel.
+    """
+    if channel_name == "directmessage" or channel_name.startswith("mpdm-"):
+        return "private"
+    return "channel"
+
+
 def parse_event(data: dict) -> list[InboundEvent]:
     """Normalize a Slack Events API callback into our schema.
 
@@ -164,8 +176,7 @@ def parse_slash_command(form: Mapping[str, str]) -> list[InboundCommand]:
             text=(form.get("text") or "").strip(),
             sender_address=form.get("user_id"),
             sender_name=form.get("user_name"),
-            # Slack signals a DM by naming the channel rather than by a type field.
-            chat_type="private" if form.get("channel_name") == "directmessage" else "channel",
+            chat_type=_chat_type(form.get("channel_name", "")),
             response_url=form.get("response_url") or None,
         )
     ]
@@ -435,10 +446,15 @@ class SlackProvider:
         return secret
 
     def _verify(self, payload: bytes, headers: Mapping[str, str], signing_secret: str) -> None:
-        """Check Slack's v0 signature over the raw body. No secret configured means
-        verification is not possible and is skipped, matching the single-app fallback."""
+        """Check Slack's v0 signature over the raw body.
+
+        Fail closed: with no signing secret available — neither a pool app matched
+        by api_app_id nor the connection's own — the request cannot be authenticated,
+        so it is rejected rather than trusted. Skipping here would let any unsigned
+        payload through the parse path on a misconfigured connection.
+        """
         if not signing_secret:
-            return
+            raise WebhookVerificationError("Slack signing secret not configured")
         h = lower_headers(headers)
         ts = h.get("x-slack-request-timestamp", "")
         sig = h.get("x-slack-signature", "")
