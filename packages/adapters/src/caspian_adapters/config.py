@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    # Linear (GraphQL API + signed webhooks). Per-connection credentials can
+    # override these defaults when developers bring their own Linear workspace.
+    linear_api_key: str = ""
+    linear_webhook_secret: str = ""
+    linear_base_url: str = "https://api.linear.app/graphql"
+
     # Instagram DM / Facebook Messenger via the developer's own Meta app + Page
     # (Graph API). Page id + access token identify the Page the agent answers as.
     instagram_page_id: str = ""
