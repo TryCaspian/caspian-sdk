@@ -5,6 +5,11 @@ install grants a per-workspace bot token, stored on the connection. Inbound is
 the Events API: Slack POSTs signed events to the scoped webhook. Outbound is
 chat.postMessage. provider_thread_id is the Slack channel id;
 provider_message_id is "{channel}:{ts}" so a reply threads on the message ts.
+
+Two inbound body formats share one signature scheme. Events (messages,
+reactions) arrive as JSON; slash commands arrive urlencoded, because Slack posts
+them as a classic form submission. Both are signed identically over the raw
+body, so verification is common and only the decode step branches.
 """
 
 import hashlib
@@ -12,12 +17,16 @@ import hmac
 import json
 import time
 from collections.abc import Mapping
+from urllib.parse import parse_qs
 
 import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -33,26 +42,131 @@ API = "https://slack.com/api"
 # request can't be replayed indefinitely (matches Slack's own guidance).
 MAX_TIMESTAMP_SKEW = 60 * 5
 
+FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
 
-def parse_event(data: dict) -> list[InboundMessage]:
-    """Normalize a Slack Events API callback into our schema (user messages only)."""
+
+def is_urlencoded(content_type: str) -> bool:
+    """True for a form body, ignoring any charset parameter Slack appends."""
+    return content_type.split(";")[0].strip().lower() == FORM_CONTENT_TYPE
+
+
+def decode_form(payload: bytes) -> dict[str, str]:
+    """Flatten a urlencoded body to single values.
+
+    Slack never repeats a key in a slash-command post, so collapsing to the first
+    value keeps callers from having to unwrap one-element lists everywhere.
+    """
+    pairs = parse_qs(payload.decode("utf-8", errors="replace"), keep_blank_values=True)
+    return {key: values[0] for key, values in pairs.items() if values}
+
+
+def _inbox_id(data: Mapping[str, str]) -> str:
+    """Route by (app, workspace) = api_app_id:team_id.
+
+    The pool means several apps can live in one workspace, so the app id
+    disambiguates which developer's connection an event belongs to.
+    """
+    return f"{data.get('api_app_id', '')}:{data.get('team_id', '')}"
+
+
+def _normalize_emoji(reaction: str) -> str:
+    """Strip Slack's skin-tone modifier so handlers can match one shortcode.
+
+    Slack reports a toned reaction as "thumbsup::skin-tone-3". Handlers care that
+    someone gave a thumbs up, not which tone they picked, and leaving the modifier
+    on would make the obvious `emoji == "thumbsup"` check silently miss.
+    """
+    return reaction.split("::", 1)[0]
+
+
+def parse_event(data: dict) -> list[InboundEvent]:
+    """Normalize a Slack Events API callback into our schema.
+
+    Unrecognized event types return empty rather than raising: Slack adds event
+    types over time and a workspace can subscribe to more than we handle, so an
+    unknown type is a no-op, never an outage.
+    """
     event = data.get("event", {})
-    if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
+    event_type = event.get("type")
+    if event_type == "message":
+        return _parse_message(data, event)
+    if event_type in ("reaction_added", "reaction_removed"):
+        return _parse_reaction(data, event)
+    return []
+
+
+def _parse_message(data: dict, event: dict) -> list[InboundEvent]:
+    if event.get("bot_id") or event.get("subtype"):
         return []
     channel = event["channel"]
     ts = event["ts"]
     return [
         InboundMessage(
             external_event_id=data.get("event_id") or f"{channel}:{ts}",
-            # Route by (app, workspace) = api_app_id:team_id. The pool means several
-            # apps can live in one workspace, so the app id disambiguates which
-            # developer's connection this event belongs to.
-            provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+            provider_inbox_id=_inbox_id(data),
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,
             sender_address=event.get("user"),
             text=event.get("text"),
             chat_type=event.get("channel_type") or "channel",
+        )
+    ]
+
+
+def _parse_reaction(data: dict, event: dict) -> list[InboundEvent]:
+    # Reactions also land on files and file comments, which have no conversation
+    # to thread against; only message reactions map onto something we can route.
+    item = event.get("item") or {}
+    if item.get("type") != "message":
+        return []
+    channel, ts = item.get("channel"), item.get("ts")
+    if not (channel and ts):
+        return []
+    action = "removed" if event["type"] == "reaction_removed" else "added"
+    emoji = _normalize_emoji(event.get("reaction", ""))
+    return [
+        InboundReaction(
+            # Add and remove of the same emoji differ only by action, so the action
+            # belongs in the fallback id to keep the pair distinct when Slack omits
+            # event_id (it does on some replayed deliveries).
+            external_event_id=data.get("event_id") or f"{channel}:{ts}:{emoji}:{action}",
+            provider_inbox_id=_inbox_id(data),
+            provider_message_id=f"{channel}:{ts}",
+            provider_thread_id=channel,
+            emoji=emoji,
+            action=action,
+            sender_address=event.get("user"),
+        )
+    ]
+
+
+def parse_slash_command(form: Mapping[str, str]) -> list[InboundCommand]:
+    """Normalize a Slack slash-command form post into our schema.
+
+    Slack omits `command` on nothing it legitimately sends here, so a missing or
+    blank command means the body is not a slash command and is dropped.
+    """
+    command = (form.get("command") or "").strip()
+    if not command:
+        return []
+    if not command.startswith("/"):
+        command = f"/{command}"
+    channel = form.get("channel_id", "")
+    # trigger_id is unique per invocation; slash commands carry no event_id, and
+    # two identical commands in the same channel are distinct events.
+    trigger = form.get("trigger_id", "")
+    return [
+        InboundCommand(
+            external_event_id=trigger or f"{channel}:{command}:{form.get('user_id', '')}",
+            provider_inbox_id=_inbox_id(form),
+            provider_thread_id=channel,
+            command=command,
+            text=(form.get("text") or "").strip(),
+            sender_address=form.get("user_id"),
+            sender_name=form.get("user_name"),
+            # Slack signals a DM by naming the channel rather than by a type field.
+            chat_type="private" if form.get("channel_name") == "directmessage" else "channel",
+            response_url=form.get("response_url") or None,
         )
     ]
 
@@ -66,7 +180,13 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {
+            Capability.RECEIVE,
+            Capability.REPLY,
+            Capability.SEND,
+            Capability.REACTIONS,
+            Capability.SLASH_COMMANDS,
+        }
     )
 
     def __init__(
@@ -74,8 +194,12 @@ class SlackProvider:
         client_id: str = "",
         client_secret: str = "",
         signing_secret: str = "",
+        # reactions:read gates delivery of reaction_added/removed and reactions:write
+        # gates react(); commands gates slash-command delivery. Without them Slack
+        # simply never sends the event, which reads as a silent adapter bug.
         scopes: str = ("chat:write,chat:write.customize,channels:history,"
-                       "im:history,app_mentions:read"),
+                       "im:history,app_mentions:read,reactions:read,"
+                       "reactions:write,commands"),
         base_url: str = API,
         apps: list[dict] | None = None,
     ) -> None:
@@ -132,13 +256,21 @@ class SlackProvider:
     def route_key(payload: bytes) -> str | None:
         """Route inbound by (app, workspace): api_app_id:team_id. The pool means many
         apps can be installed in one workspace, so the workspace alone isn't unique -
-        the app id disambiguates which developer's connection this event belongs to."""
+        the app id disambiguates which developer's connection this event belongs to.
+
+        Routing happens without access to the request headers, so the body format is
+        sniffed rather than read from Content-Type: JSON first, falling back to a
+        urlencoded read for slash commands, which carry the same two routing fields.
+        """
         try:
-            data = json.loads(payload)
+            fields = json.loads(payload)
         except ValueError:
+            fields = decode_form(payload)
+        # A bare JSON scalar parses fine but has no routing fields to read.
+        if not isinstance(fields, dict):
             return None
-        team = data.get("team_id", "")
-        app_id = data.get("api_app_id", "")
+        team = fields.get("team_id", "")
+        app_id = fields.get("api_app_id", "")
         if not (team or app_id):
             return None
         return f"{app_id}:{team}"
@@ -281,38 +413,88 @@ class SlackProvider:
             provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
         )
 
+    def _signing_secret_for(self, payload: bytes, urlencoded: bool, credentials) -> str:
+        """The signing secret to verify this request with.
+
+        Reads api_app_id out of a body that has NOT been authenticated yet, which is
+        safe only because the value picks which secret to check against and is never
+        used as event data: a forged app id makes verification fail against the wrong
+        secret, it can never make an unsigned request pass.
+        """
+        try:
+            fields = decode_form(payload) if urlencoded else json.loads(payload)
+        except ValueError:
+            fields = {}
+        api_app_id = fields.get("api_app_id", "") if isinstance(fields, dict) else ""
+        if api_app_id:
+            secret = self._app_by_id(api_app_id).get("signing_secret", "")
+            if secret:
+                return secret
+        # Fall back to the connection's own stored secret (bring-your-own app).
+        _, _, secret = self._app(credentials)
+        return secret
+
+    def _verify(self, payload: bytes, headers: Mapping[str, str], signing_secret: str) -> None:
+        """Check Slack's v0 signature over the raw body. No secret configured means
+        verification is not possible and is skipped, matching the single-app fallback."""
+        if not signing_secret:
+            return
+        h = lower_headers(headers)
+        ts = h.get("x-slack-request-timestamp", "")
+        sig = h.get("x-slack-signature", "")
+        # Reject stale (or unparseable) timestamps before checking the
+        # signature, so a captured signed request can't be replayed later.
+        try:
+            skew = abs(time.time() - int(ts))
+        except ValueError:
+            raise WebhookVerificationError("Slack timestamp missing or invalid") from None
+        if skew > MAX_TIMESTAMP_SKEW:
+            raise WebhookVerificationError("Slack timestamp too old")
+        basestring = f"v0:{ts}:".encode() + payload
+        expected = "v0=" + hmac.new(
+            signing_secret.encode(), basestring, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise WebhookVerificationError("Slack signature mismatch")
+
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
+        # Slash commands are form-encoded and events are JSON, but both are signed
+        # over the same raw bytes, so authenticate once and branch only on decoding.
+        urlencoded = is_urlencoded(lower_headers(headers).get("content-type", ""))
+        self._verify(payload, headers, self._signing_secret_for(payload, urlencoded, credentials))
+        if urlencoded:
+            return parse_slash_command(decode_form(payload))
         try:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
-        # Verify with the signing secret of the app that SENT this event (identified
-        # by api_app_id in the pool), else the connection's stored secret.
-        api_app_id = data.get("api_app_id", "")
-        signing_secret = self._app_by_id(api_app_id).get("signing_secret", "") if api_app_id else ""
-        if not signing_secret:
-            _, _, signing_secret = self._app(credentials)
-        if signing_secret:
-            h = lower_headers(headers)
-            ts = h.get("x-slack-request-timestamp", "")
-            sig = h.get("x-slack-signature", "")
-            # Reject stale (or unparseable) timestamps before checking the
-            # signature, so a captured signed request can't be replayed later.
-            try:
-                skew = abs(time.time() - int(ts))
-            except ValueError:
-                raise WebhookVerificationError("Slack timestamp missing or invalid") from None
-            if skew > MAX_TIMESTAMP_SKEW:
-                raise WebhookVerificationError("Slack timestamp too old")
-            basestring = f"v0:{ts}:".encode() + payload
-            expected = "v0=" + hmac.new(
-                signing_secret.encode(), basestring, hashlib.sha256
-            ).hexdigest()
-            if not hmac.compare_digest(expected, sig):
-                raise WebhookVerificationError("Slack signature mismatch")
         if data.get("type") == "url_verification":
             # handled in the route (returns the challenge); no messages here
             return []
         return parse_event(data)
+
+    def react(
+        self, provider_inbox_id: str, provider_message_id: str, emoji: str, credentials=None
+    ) -> None:
+        """Add an emoji reaction to a message (Capability.REACTIONS).
+
+        Slack names reactions without the surrounding colons, so ":eyes:" and "eyes"
+        are both accepted here and normalized on the way out.
+        """
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/reactions.add",
+            json={"channel": channel, "timestamp": ts, "name": emoji.strip(":")},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            # The desired end state already holds, so re-reacting is not an error
+            # worth propagating to an agent that retried.
+            if data.get("error") == "already_reacted":
+                return
+            raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")

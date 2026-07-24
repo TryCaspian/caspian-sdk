@@ -46,6 +46,8 @@ class Capability:
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
     ATTACHMENTS = "attachments"  # send/receive file attachments (image, document, voice, …)
+    REACTIONS = "reactions"  # emoji reactions, inbound and/or outbound (tapbacks)
+    SLASH_COMMANDS = "slash_commands"  # explicit /command invocations, distinct from prose
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -130,6 +132,61 @@ class InboundMessage:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class InboundReaction:
+    """An emoji reaction added to or removed from one of our messages.
+
+    Carries the same routing fields as InboundMessage so the gateway resolves the
+    connection identically; `provider_message_id` points at the message that was
+    reacted to, not at the reaction itself. Platforms model removal as its own
+    event, so `action` distinguishes the two rather than there being a separate type.
+    """
+
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    emoji: str  # platform shortcode without colons ("thumbsup"), not the rendered glyph
+    action: str = "added"  # "added" | "removed"
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundCommand:
+    """An explicit slash-command invocation ("/weather 94070").
+
+    Kept separate from InboundMessage because the intent is unambiguous: an agent
+    should route these deterministically instead of inferring intent from prose.
+    `text` is the raw argument string — splitting or parsing it is the agent's job,
+    since only the agent knows its own command grammar.
+    """
+
+    external_event_id: str
+    provider_inbox_id: str
+    provider_thread_id: str
+    command: str  # normalized with a leading slash ("/weather")
+    text: str = ""  # everything after the command; empty when invoked bare
+    sender_address: str | None = None
+    sender_name: str | None = None
+    chat_type: str | None = None
+    # Opaque, short-lived callback URL some platforms hand out for deferred replies
+    # (Slack gives ~30 minutes). None on platforms that expect an inline response.
+    response_url: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+# What a single signed webhook may yield. One platform endpoint multiplexes several
+# event kinds over the same signature envelope, so parse_webhook returns a mixed
+# list rather than the caller having to guess which parser to call.
+InboundEvent = InboundMessage | InboundReaction | InboundCommand
+
+
 class ChannelProvider(Protocol):
     """The contract every transport implements, regardless of channel.
 
@@ -142,6 +199,7 @@ class ChannelProvider(Protocol):
         backfill(provider_inbox_id, thread_id, limit)   -> list[InboundMessage]
         send_test_email(provider_inbox_id, to, subject, text) -> InboundMessage | None
         release(provider_resource_id, provider_pod_id)  -> None  # deprovision a number
+        react(provider_inbox_id, provider_message_id, emoji) -> None  # Capability.REACTIONS
     """
 
     name: str
@@ -173,4 +231,4 @@ class ChannelProvider(Protocol):
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]: ...
+    ) -> list[InboundEvent]: ...

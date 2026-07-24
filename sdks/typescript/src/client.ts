@@ -139,12 +139,55 @@ export class Reaction {
     readonly sourceMessage: Record<string, any> | null,
     readonly sender: Record<string, unknown> | null,
     private readonly client: CommClient,
+    readonly conversationId: string | null = null,
   ) {}
+}
+
+/**
+ * A slash-command invocation delivered to an onCommand handler. `name` carries
+ * its leading slash ("/status"); `text` is the raw argument string, left unparsed
+ * because only your agent knows its own command grammar — use `args` for the
+ * common whitespace split.
+ */
+export class Command {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly conversationId: string | null,
+    readonly name: string,
+    readonly text: string,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /** `text` split on whitespace; empty when the command was invoked bare. */
+  get args(): string[] {
+    return this.text.split(/\s+/).filter(Boolean);
+  }
+
+  /**
+   * Answer in the conversation the command was invoked in. A command has no
+   * inbound message to thread onto — the human typed into the composer, not at a
+   * message — so this sends into the conversation rather than replying.
+   */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.conversationId) {
+      throw new CommError(400, "command has no conversation to reply to");
+    }
+    return this.client.sendMessage(this.conversationId, text, html, blocks, media);
+  }
 }
 
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type CommandHandler = (command: Command) => void | Promise<void>;
 
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
@@ -298,6 +341,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly commandHandlers: CommandHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -935,6 +979,16 @@ export class CommClient {
     return handler;
   }
 
+  /**
+   * Register a handler for slash commands (command.received). Commands arrive as
+   * their own event rather than as message text, so an agent can route "/status"
+   * deterministically instead of pattern-matching prose.
+   */
+  onCommand(handler: CommandHandler): CommandHandler {
+    this.commandHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -985,12 +1039,35 @@ export class CommClient {
       data.source_message ?? null,
       data.sender ?? null,
       this,
+      data.conversation_id ?? null,
     );
     for (const handler of this.reactionHandlers) {
       try {
         await handler(reaction);
       } catch (err) {
         logger.error("onReaction handler failed; continuing", err);
+      }
+    }
+  }
+
+  private async dispatchCommand(data: any): Promise<void> {
+    const command = new Command(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.conversation_id ?? null,
+      data.command ?? "",
+      data.text ?? "",
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.commandHandlers) {
+      try {
+        await handler(command);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error(`onCommand handler failed for ${command.name}; continuing`, err);
       }
     }
   }
@@ -1002,6 +1079,10 @@ export class CommClient {
     }
     if (event.type === "reaction.received") {
       await this.dispatchReaction(event.data);
+      return;
+    }
+    if (event.type === "command.received") {
+      await this.dispatchCommand(event.data);
       return;
     }
     if (event.type !== "message.received") return;

@@ -31,6 +31,7 @@ npx tsx examples/autoreply.ts          # TypeScript example
 | [`one_handler_three_channels.py`](./one_handler_three_channels.py) | One `on_message` handler serving three channels at once | Discord + Telegram + Email | Discord + Telegram bot tokens |
 | [`slack_support_bot.py`](./slack_support_bot.py) | One-click install + replies with rich message blocks | Slack | Open the printed install URL |
 | [`slack_slow_agent.py`](./slack_slow_agent.py) | `listen(ack=)` so a slow handler survives Slack's timing | Slack | Bring-your-own Slack app creds |
+| [`slack_commands_and_reactions.py`](./slack_commands_and_reactions.py) | `on_command` and `on_reaction` alongside `on_message` | Slack | Bring-your-own Slack app creds |
 | [`telegram_reminders.py`](./telegram_reminders.py) | Agent-initiated reminder via `send_message` | Telegram | Telegram bot token |
 | [`reminder.py`](./reminder.py) | Proactive cold-start with `initiate()` | SMS | Bring-your-own carrier (Twilio/Telnyx) |
 

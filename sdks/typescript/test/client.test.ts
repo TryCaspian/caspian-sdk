@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AccountRequiredError,
+  Command,
   CommClient,
   CommError,
   InsufficientCreditError,
@@ -829,5 +830,49 @@ describe("CommClient", () => {
     expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
+  });
+
+  it("onCommand dispatches a slash command and replies into the conversation", async () => {
+    const { client, calls } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              conversation_id: "conv_1",
+              command: "/deploy",
+              text: "prod us-east",
+            },
+          },
+        ]);
+      },
+      "POST /v1/conversations/conv_1/messages": () => json({ delivered: true }),
+    });
+    const seen: Command[] = [];
+    client.onCommand(async (c) => {
+      seen.push(c);
+      await c.reply(`running ${c.args[0]}`);
+    });
+    await client.dispatchPending(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].name).toBe("/deploy");
+    expect(seen[0].args).toEqual(["prod", "us-east"]);
+    // A command has no source message, so the answer goes to the conversation.
+    const sent = calls.find((c) => c.path === "/v1/conversations/conv_1/messages");
+    expect(sent?.body.text).toBe("running prod");
+  });
+
+  it("a command invoked bare has no args", () => {
+    const command = new Command("cn", "cu", "ag", "conv_1", "/status", "", null, {} as any);
+    expect(command.args).toEqual([]);
+  });
+
+  it("a command without a conversation cannot reply", () => {
+    const command = new Command("cn", "cu", "ag", null, "/status", "", null, {} as any);
+    expect(() => command.reply("hi")).toThrow(CommError);
   });
 });

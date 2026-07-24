@@ -655,3 +655,97 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_on_command_dispatches_and_replies_into_the_conversation():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "command": "/deploy",
+                "text": "prod us-east", "sender": {"address": "u"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Command] = []
+
+    @client.on_command
+    def handle(cmd: Command) -> None:
+        seen.append(cmd)
+        cmd.reply(f"running {cmd.args[0]}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].name == "/deploy"
+    assert seen[0].args == ["prod", "us-east"]
+    # A command has no source message, so the answer goes to the conversation.
+    assert replies[0][0] == "/v1/conversations/conv_1/messages"
+    assert replies[0][1]["text"] == "running prod"
+
+
+def test_command_without_arguments_has_no_args():
+    from caspian_sdk import Command
+
+    cmd = Command(
+        connection_id="conn_1", customer_id="cus_1", agent_id="agt_1",
+        conversation_id="conv_1", name="/status", text="", sender=None, _client=None,
+    )
+    assert cmd.args == []
+
+
+def test_command_without_a_conversation_cannot_reply():
+    from caspian_sdk import Command, CommError
+
+    cmd = Command(
+        connection_id="conn_1", customer_id="cus_1", agent_id="agt_1",
+        conversation_id=None, name="/status", text="", sender=None, _client=None,
+    )
+    with pytest.raises(CommError):
+        cmd.reply("hi")
+
+
+def test_a_failing_command_handler_does_not_stop_the_listener():
+    from caspian_sdk import Command
+
+    events = [
+        {"seq": 1, "type": "command.received",
+         "data": {"conversation_id": "conv_1", "command": "/boom", "text": ""}},
+        {"seq": 2, "type": "command.received",
+         "data": {"conversation_id": "conv_1", "command": "/ok", "text": ""}},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = int(dict(request.url.params).get("after_seq", 0))
+        return httpx.Response(200, json=[] if after >= 2 else events)
+
+    client = _client(handler)
+    seen: list[str] = []
+
+    @client.on_command
+    def handle(cmd: Command) -> None:
+        if cmd.name == "/boom":
+            raise RuntimeError("handler blew up")
+        seen.append(cmd.name)
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert seen == ["/ok"]

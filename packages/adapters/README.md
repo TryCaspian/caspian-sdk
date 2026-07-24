@@ -12,6 +12,28 @@ email = providers["fake"]
 result = email.send("inbox-1", OutboundMessage(to=["dev@example.com"], text="hi"))
 ```
 
+## Inbound event types
+
+`parse_webhook` returns a list of `InboundEvent` — one platform endpoint multiplexes
+several kinds of event over the same signature envelope, so a single parse call
+yields a mixed list rather than the caller guessing which parser to run:
+
+| Type | Meaning | Capability |
+| --- | --- | --- |
+| `InboundMessage` | A human sent text (or media) | `receive` (baseline) |
+| `InboundReaction` | An emoji was added to or removed from one of our messages | `reactions` |
+| `InboundCommand` | An explicit `/command` invocation | `slash_commands` |
+
+Reactions and commands are separate types on purpose. An agent that greps `/deploy`
+out of message text also fires when someone *quotes* the command mid-sentence; an
+explicit event has no such ambiguity. Adapters declare `Capability.REACTIONS` /
+`Capability.SLASH_COMMANDS` only when the platform really carries them, so email
+never pretends to have Slack reactions.
+
+Note that Slack posts slash commands as `application/x-www-form-urlencoded` rather
+than JSON, on a separate Request URL, signed over the same raw body — see
+`slack.py` for how one verification path serves both encodings.
+
 Additional providers (hosted channels like WhatsApp Business numbers, phone/voice, iMessage, RCS) register through the `caspian.providers` entry-point group:
 
 ```toml

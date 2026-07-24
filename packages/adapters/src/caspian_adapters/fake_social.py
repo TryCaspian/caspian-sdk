@@ -7,18 +7,27 @@ exercised on the same normalization path as the live adapters.
 import json
 import secrets
 from collections.abc import Mapping
+from urllib.parse import urlencode
 
 from .base import (
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
     SendResult,
     WebhookVerificationError,
+    lower_headers,
 )
 from .discord import DiscordProvider, parse_gateway_message
 from .messenger import InstagramProvider, parse_messaging_webhook
-from .slack import SlackProvider, parse_event
+from .slack import (
+    SlackProvider,
+    decode_form,
+    is_urlencoded,
+    parse_event,
+    parse_slash_command,
+)
 
 
 class FakeDiscordProvider:
@@ -111,6 +120,7 @@ class FakeSlackProvider:
         self.app_id = f"A{secrets.token_hex(4).upper()}"
         self.sent: list[dict] = []
         self.replies: list[dict] = []
+        self.reactions: list[dict] = []
         self.refreshes = 0
         self._seq = 0
         self._rotating = rotating
@@ -119,16 +129,9 @@ class FakeSlackProvider:
     @staticmethod
     def route_key(payload: bytes) -> str | None:
         # Composite api_app_id:team_id, matching the real provider (the pool lets
-        # several apps live in one workspace, so team alone isn't unique).
-        try:
-            data = json.loads(payload)
-        except ValueError:
-            return None
-        team = data.get("team_id", "")
-        app_id = data.get("api_app_id", "")
-        if not (team or app_id):
-            return None
-        return f"{app_id}:{team}"
+        # several apps live in one workspace, so team alone isn't unique), including
+        # its urlencoded fallback for slash commands.
+        return SlackProvider.route_key(payload)
 
     def pool_size(self) -> int:
         return 1
@@ -193,7 +196,15 @@ class FakeSlackProvider:
         self._seq += 1
         return 1_752_000_000 + self._seq
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def react(self, provider_inbox_id, provider_message_id, emoji, credentials=None) -> None:
+        channel, _, ts = provider_message_id.partition(":")
+        self.reactions.append({"channel": channel, "ts": ts, "emoji": emoji.strip(":")})
+
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
+        # Slash commands arrive urlencoded rather than as JSON; branch the same way
+        # the real provider does so tests exercise the live decode path.
+        if is_urlencoded(lower_headers(headers or {}).get("content-type", "")):
+            return parse_slash_command(decode_form(payload))
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -202,21 +213,63 @@ class FakeSlackProvider:
             return []
         return parse_event(data)
 
-    def webhook_payload(self, *, channel="C123", text="Hi there", user="U456"):
+    def _envelope(self, event: dict) -> dict:
         self._seq += 1
         return {
             "team_id": self.team_id,
             "api_app_id": self.app_id,
             "event_id": f"Ev{self._seq}",
-            "event": {
+            "event": event,
+        }
+
+    def webhook_payload(self, *, channel="C123", text="Hi there", user="U456"):
+        return self._envelope(
+            {
                 "type": "message",
                 "channel": channel,
                 "user": user,
                 "text": text,
                 "ts": f"{self._next()}.0000",
                 "channel_type": "channel",
-            },
-        }
+            }
+        )
+
+    def reaction_payload(
+        self, *, channel="C123", ts="1752000000.0000", user="U456",
+        reaction="thumbsup", action="added", item_type="message",
+    ):
+        """A reaction_added/reaction_removed callback in Slack's real envelope shape."""
+        return self._envelope(
+            {
+                "type": f"reaction_{action}",
+                "user": user,
+                "reaction": reaction,
+                "item": {"type": item_type, "channel": channel, "ts": ts},
+                "event_ts": f"{self._next()}.0000",
+            }
+        )
+
+    def command_body(
+        self, *, command="/status", text="", channel="C123", channel_name="general",
+        user="U456", user_name="steve",
+    ) -> bytes:
+        """A slash-command post body: urlencoded bytes, not JSON, like the real thing."""
+        self._seq += 1
+        return urlencode(
+            {
+                "token": "fake-verification-token",
+                "team_id": self.team_id,
+                "api_app_id": self.app_id,
+                "channel_id": channel,
+                "channel_name": channel_name,
+                "user_id": user,
+                "user_name": user_name,
+                "command": command,
+                "text": text,
+                "response_url": f"https://hooks.slack.test/commands/{self.team_id}/{self._seq}",
+                "trigger_id": f"{self._seq}.{self.team_id}.fake",
+            }
+        ).encode()
 
 
 class _FakeMetaMessaging:

@@ -200,6 +200,50 @@ class Reaction:
     source_message: dict | None
     sender: dict | None
     _client: "CommClient" = field(repr=False)
+    conversation_id: str | None = None
+
+
+@dataclass
+class Command:
+    """A slash-command invocation delivered to an on_command handler.
+
+    `name` carries its leading slash ("/status"). `text` is the raw argument
+    string, left unparsed because only your agent knows its own command grammar —
+    use `args` for the common whitespace split.
+    """
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    conversation_id: str | None
+    name: str
+    text: str
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    @property
+    def args(self) -> list[str]:
+        """`text` split on whitespace; empty when the command was invoked bare."""
+        return self.text.split()
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Answer in the conversation the command was invoked in.
+
+        A command has no inbound message to thread onto — the human typed into the
+        composer, not at a message — so this sends into the conversation rather
+        than replying to something.
+        """
+        if not self.conversation_id:
+            raise CommError(400, "command has no conversation to reply to")
+        return self._client.send_message(
+            self.conversation_id, text=text, html=html, blocks=blocks, media=media
+        )
 
 
 class _MessageScheduler:
@@ -380,6 +424,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._command_handlers: list[Callable[[Command], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -951,6 +996,15 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def on_command(self, handler: Callable[["Command"], None]) -> Callable[["Command"], None]:
+        """Register a handler for slash commands (command.received).
+
+        Commands arrive as their own event rather than as message text, so an agent
+        can route "/status" deterministically instead of pattern-matching prose.
+        """
+        self._command_handlers.append(handler)
+        return handler
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
@@ -960,6 +1014,9 @@ class CommClient:
             return
         if event_type == "reaction.received":
             self._dispatch_reaction(event["data"])
+            return
+        if event_type == "command.received":
+            self._dispatch_command(event["data"])
             return
         if event_type != "message.received":
             return
@@ -1154,12 +1211,34 @@ class CommClient:
             source_message=data.get("source_message"),
             sender=data.get("sender"),
             _client=self,
+            conversation_id=data.get("conversation_id"),
         )
         for handler in self._reaction_handlers:
             try:
                 handler(reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+
+    def _dispatch_command(self, data: dict) -> None:
+        command = Command(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            conversation_id=data.get("conversation_id"),
+            name=data.get("command", ""),
+            text=data.get("text") or "",
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._command_handlers:
+            try:
+                handler(command)
+            except AccountRequiredError as exc:
+                self._warn_account_required(exc)
+            except InsufficientCreditError as exc:
+                self._warn_out_of_credit(exc)
+            except Exception:
+                logger.exception("on_command handler failed for %s; continuing", command.name)
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
