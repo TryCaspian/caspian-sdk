@@ -41,3 +41,38 @@ def test_telegram_typing_sends_chat_action():
     p.typing("55555", credentials={"bot_token": "123:ABC"})
     assert seen["path"] == "/bot123:ABC/sendChatAction"
     assert seen["body"] == {"chat_id": "55555", "action": "typing"}
+
+
+def test_telegram_edit_message():
+    seen = {}
+
+    def handler(request):
+        import json
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    p = TelegramProvider(webhook_base="", base_url="https://tg.test")
+    p._client = httpx.Client(base_url="https://tg.test",
+                             transport=httpx.MockTransport(handler), timeout=5.0)
+    p.edit_message("55555:42", "updated text", credentials={"bot_token": "123:ABC"})
+    assert seen["path"] == "/bot123:ABC/editMessageText"
+    assert seen["body"] == {"chat_id": "55555", "message_id": 42, "text": "updated text"}
+
+
+def test_discord_edit_message():
+    seen = {}
+
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"id": "99", "content": "updated"})
+
+    p = DiscordProvider(base_url="https://discord.test", shared_bot_token="")
+    p._client = httpx.Client(base_url="https://discord.test",
+                             transport=httpx.MockTransport(handler), timeout=5.0)
+    p.edit_message("chan123:msg456", "updated text", credentials={"bot_token": "BOT"})
+    assert seen["method"] == "PATCH"
+    assert seen["path"] == "/channels/chan123/messages/msg456"
+    assert seen["auth"] == "Bot BOT"

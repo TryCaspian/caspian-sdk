@@ -137,6 +137,7 @@ class DiscordProvider:
             Capability.GROUP_VISIBILITY,
             Capability.SEE_BOTS,
             Capability.ATTACHMENTS,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
@@ -173,6 +174,22 @@ class DiscordProvider:
         token = self._token(credentials)
         r = self._client.post(
             f"/channels/{provider_thread_id}/typing",
+            headers={"Authorization": f"Bot {token}"},
+        )
+        r.raise_for_status()
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        """Edit a message we previously sent (used by streaming post+edit)."""
+        token = self._token(credentials)
+        channel_id, message_id = split_composite_id(provider_message_id)
+        r = self._client.patch(
+            f"/channels/{channel_id}/messages/{message_id}",
+            json={"content": text},
             headers={"Authorization": f"Bot {token}"},
         )
         r.raise_for_status()

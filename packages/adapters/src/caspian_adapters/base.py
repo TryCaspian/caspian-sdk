@@ -38,6 +38,7 @@ class Capability:
     INITIATE = "initiate"  # cold-start a brand new conversation (SMS, user-account, ...)
     GROUP_VISIBILITY = "group_visibility"  # see all group messages, not just @mentions
     EDIT_INBOUND = "edit_inbound"  # receive edits to inbound messages
+    EDIT_OUTBOUND = "edit_outbound"  # edit a message we already sent (streaming post+edit)
     BACKFILL = "backfill"  # fetch history from before the connection existed
     PRESENCE = "presence"  # online/last-seen/typing of the other party
     READ_RECEIPTS = "read_receipts"  # know when our message was read

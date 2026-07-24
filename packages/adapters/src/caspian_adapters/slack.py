@@ -66,7 +66,7 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {Capability.RECEIVE, Capability.REPLY, Capability.SEND, Capability.EDIT_OUTBOUND}
     )
 
     def __init__(
@@ -280,6 +280,22 @@ class SlackProvider:
         return SendResult(
             provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
         )
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        """Edit a message we previously sent (used by streaming post+edit)."""
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/chat.update",
+            json={"channel": channel, "ts": ts, "text": text},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
