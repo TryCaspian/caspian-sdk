@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Mapping
 
 from .base import (
-    InboundMessage,
+    InboundEvent,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -88,7 +88,7 @@ class FakeTelegramProvider:
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         secret = (credentials or {}).get("webhook_secret") or self._webhook_secret
         if secret:
             received = lower_headers(headers).get(SECRET_HEADER) or ""

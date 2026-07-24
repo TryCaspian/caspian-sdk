@@ -4,7 +4,14 @@ import json
 
 import httpx
 import pytest
-from caspian_adapters.base import Attachment, OutboundMessage, WebhookVerificationError
+from caspian_adapters.base import (
+    Attachment,
+    InboundCommand,
+    InboundMessage,
+    InboundReaction,
+    OutboundMessage,
+    WebhookVerificationError,
+)
 from caspian_adapters.telegram import TelegramProvider, bot_id_from_token, parse_update
 
 BOT_TOKEN = "7123456789:AAEexample"
@@ -189,3 +196,121 @@ def test_reply_document_uses_senddocument_and_reply_ref():
     assert seen["body"]["document"] == "file123"
     assert seen["body"]["reply_to_message_id"] == 55
     assert result.provider_message_id == "900:78"
+
+
+# --- Reactions ---
+
+
+def _reaction_update(emoji="👍", added=True, update_id=200, message_id=55,
+                     user_id=42, username="alice"):
+    old = [{"type": "emoji", "emoji": "👍"}] if not added else []
+    new = [{"type": "emoji", "emoji": emoji}] if added else []
+    return {
+        "update_id": update_id,
+        "message_reaction": {
+            "message_id": message_id,
+            "chat": {"id": 900, "type": "private"},
+            "user": {"id": user_id, "username": username, "first_name": "Alice"},
+            "old_reaction": old,
+            "new_reaction": new,
+        },
+    }
+
+
+def test_parse_reaction_added():
+    inbound = parse_update(_reaction_update(emoji="👍", added=True), BOT_ID)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].emoji == "👍"
+    assert inbound[0].action == "added"
+    assert inbound[0].sender_address == "alice"
+    assert inbound[0].provider_inbox_id == BOT_ID
+
+
+def test_parse_reaction_removed():
+    inbound = parse_update(_reaction_update(emoji="👍", added=False), BOT_ID)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].action == "removed"
+
+
+def test_parse_reaction_multiple_emojis():
+    update = {
+        "update_id": 300,
+        "message_reaction": {
+            "message_id": 55,
+            "chat": {"id": 900, "type": "private"},
+            "user": {"id": 42, "username": "alice"},
+            "old_reaction": [{"type": "emoji", "emoji": "👍"}],
+            "new_reaction": [{"type": "emoji", "emoji": "❤️"}],
+        },
+    }
+    inbound = parse_update(update, BOT_ID)
+    # Should detect both the added (❤️) and removed (👍) emojis
+    added = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "added"]
+    removed = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "removed"]
+    assert len(added) == 1
+    assert added[0].emoji == "❤️"
+    assert len(removed) == 1
+    assert removed[0].emoji == "👍"
+
+
+def test_parse_reaction_custom_emoji_keeps_identity():
+    update = {
+        "update_id": 301,
+        "message_reaction": {
+            "message_id": 55,
+            "chat": {"id": 900, "type": "private"},
+            "user": {"id": 42, "username": "alice"},
+            "old_reaction": [{"type": "custom_emoji", "custom_emoji_id": "old123"}],
+            "new_reaction": [{"type": "custom_emoji", "custom_emoji_id": "new456"}],
+        },
+    }
+    inbound = parse_update(update, BOT_ID)
+    added = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "added"]
+    removed = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "removed"]
+    assert added[0].emoji == "custom_emoji:new456"
+    assert removed[0].emoji == "custom_emoji:old123"
+
+
+# --- Bot commands ---
+
+
+def _command_update(command="/start", args="", update_id=400, message_id=60):
+    text = f"{command} {args}".strip() if args else command
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": message_id,
+            "chat": {"id": 900, "type": "private"},
+            "from": {"id": 42, "username": "alice", "first_name": "Alice"},
+            "text": text,
+            "entities": [{"type": "bot_command", "offset": 0, "length": len(command)}],
+        },
+    }
+
+
+def test_parse_bot_command():
+    inbound = parse_update(_command_update("/start"), BOT_ID)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].command == "/start"
+    assert inbound[0].args is None
+    assert inbound[0].text == "/start"
+    assert inbound[0].sender_address == "alice"
+    assert inbound[0].provider_inbox_id == BOT_ID
+
+
+def test_parse_bot_command_with_args():
+    inbound = parse_update(_command_update("/deploy", "staging"), BOT_ID)
+    assert inbound[0].command == "/deploy"
+    assert inbound[0].args == "staging"
+    assert inbound[0].text == "/deploy staging"
+
+
+def test_parse_non_command_message_ignored_as_command():
+    """A regular text message without a bot_command entity at offset 0 is a message."""
+    inbound = parse_update(_update(text="hello world"), BOT_ID)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundMessage)
+    assert not isinstance(inbound[0], InboundCommand)

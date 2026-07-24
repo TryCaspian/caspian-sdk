@@ -6,7 +6,7 @@ the provider's. No provider type may leak out of this package.
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Protocol
+from typing import Protocol, Union
 
 
 class WebhookVerificationError(Exception):
@@ -46,6 +46,8 @@ class Capability:
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
     ATTACHMENTS = "attachments"  # send/receive file attachments (image, document, voice, …)
+    REACTIONS = "reactions"  # add/remove emoji reactions
+    COMMANDS = "commands"  # slash commands or bot commands
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -130,6 +132,44 @@ class InboundMessage:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class InboundReaction:
+    """A normalized emoji reaction event (add or remove) from any channel."""
+
+    external_event_id: str
+    provider_inbox_id: str
+    emoji: str
+    action: str  # "added" | "removed"
+    source_provider_message_id: str
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundCommand:
+    """A normalized slash command or bot command invocation from any channel."""
+
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    command: str  # e.g. "/start", "deploy"
+    args: str | None = None
+    text: str | None = None
+    sender_address: str | None = None
+    sender_name: str | None = None
+    chat_type: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+InboundEvent = Union["InboundMessage", "InboundReaction", "InboundCommand"]
+
+
 class ChannelProvider(Protocol):
     """The contract every transport implements, regardless of channel.
 
@@ -173,4 +213,4 @@ class ChannelProvider(Protocol):
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]: ...
+    ) -> list[InboundEvent]: ...
