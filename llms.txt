@@ -46,6 +46,7 @@ await client.listen();
    - `connect_telegram(bot_token=...)` — token from @BotFather; ask the developer for it, never invent one.
    - `connect_discord(bot_token=...)` or `install_discord(display_name=...)` → returns an `authorize_url` to open.
    - `connect_slack(slack_client_id=..., slack_client_secret=..., slack_signing_secret=...)` or `install_slack(...)` → `authorize_url`.
+   - `connect_github(github_app_id=..., github_app_slug=..., github_private_key=..., github_webhook_secret=...)` or `install_github(...)` → GitHub App installation URL; issue/PR comments mentioning the App become messages.
    - `connect_instagram(...)` / `connect_facebook(...)` — developer's own Meta app + Page.
    - `connect_x(access_token=..., access_secret=..., user_id=...)` or `install_x()` — reactive DMs only; X API paid tier required.
    - `connect_whatsapp()` / `connect_imessage()` / `connect_phone()` / `connect_rcs()` — hosted-gateway channels; 400 if not available on this deployment.

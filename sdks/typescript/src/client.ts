@@ -605,6 +605,55 @@ export class CommClient {
   }
 
   /**
+   * Start installation of a bring-your-own GitHub App. The App must use the
+   * gateway's setup/webhook URLs and subscribe to issue_comment events.
+   */
+  connectGitHub(
+    opts: ConnectOptions & {
+      githubAppId: string;
+      githubAppSlug: string;
+      githubPrivateKey: string;
+      githubWebhookSecret: string;
+      receiveMode?: "mentions" | "all";
+    },
+  ): Promise<Connection> {
+    const {
+      githubAppId,
+      githubAppSlug,
+      githubPrivateKey,
+      githubWebhookSecret,
+      receiveMode,
+      ...rest
+    } = opts;
+    return this.connect("github", { ...rest, wait: false }, {
+      github_app_id: githubAppId,
+      github_app_slug: githubAppSlug,
+      github_private_key: githubPrivateKey,
+      github_webhook_secret: githubWebhookSecret,
+      receive_mode: receiveMode ?? "mentions",
+    });
+  }
+
+  /** One-click installation of the gateway's shared GitHub App. */
+  installGitHub(
+    opts: {
+      customerId?: string;
+      agentId?: string;
+      displayName?: string;
+      receiveMode?: "mentions" | "all";
+    } = {},
+  ): Promise<Connection> {
+    return this.request("POST", "/v1/connections/github/install", {
+      json: {
+        customer_id: opts.customerId ?? null,
+        agent_id: opts.agentId ?? null,
+        display_name: opts.displayName ?? null,
+        receive_mode: opts.receiveMode ?? "mentions",
+      },
+    });
+  }
+
+  /**
    * Change the name/icon the agent posts under, after connecting — no re-install.
    * Slack: next message; Discord shared bot: re-sets the per-server nickname.
    */
