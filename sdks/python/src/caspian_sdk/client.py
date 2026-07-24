@@ -970,7 +970,7 @@ class CommClient:
             if "edit_outbound" in capabilities:
                 strategy = "post_edit"
         except Exception:
-            pass
+            logger.warning("streaming strategy lookup failed; falling back to final_only")
             
         self._strategy_cache[connection_id] = strategy
         return strategy
@@ -1346,7 +1346,8 @@ class CommClient:
         if event_id and self.state.seen(event_id):
             return  # already handled in this invocation or by another instance
 
-        conv_id = event.get("data", {}).get("conversation_id", "default")
+        data = event.get("data")
+        conv_id = data.get("conversation_id", "default") if isinstance(data, dict) else "default"
         with self.state.lock(conv_id):
             self._dispatch_event(event)
 

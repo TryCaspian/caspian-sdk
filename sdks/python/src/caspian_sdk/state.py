@@ -41,6 +41,7 @@ class InMemoryStateAdapter:
 
         self._conv_locks: dict[str, threading.Lock] = {}
         self._conv_locks_lock = threading.Lock()
+        self._conv_lock_refcount: dict[str, int] = {}
 
     def seen(self, event_id: str) -> bool:
         """Execute seen."""
@@ -60,21 +61,28 @@ class InMemoryStateAdapter:
         with self._conv_locks_lock:
             if conversation_id not in self._conv_locks:
                 self._conv_locks[conversation_id] = threading.Lock()
+            self._conv_lock_refcount[conversation_id] = self._conv_lock_refcount.get(conversation_id, 0) + 1
             lock = self._conv_locks[conversation_id]
 
         with lock:
             yield
 
+        with self._conv_locks_lock:
+            self._conv_lock_refcount[conversation_id] -= 1
+            if self._conv_lock_refcount[conversation_id] <= 0:
+                self._conv_locks.pop(conversation_id, None)
+                self._conv_lock_refcount.pop(conversation_id, None)
+
 
 class RedisStateAdapter:
     """State adapter using Redis for distributed idempotency and locking."""
 
-    def __init__(self, client: "redis.Redis", key_prefix: str = "caspian:"):
+    def __init__(self, client: "redis.Redis", key_prefix: str = "caspian:", dedup_ttl: int = 86400, lock_ttl: int = 30):
         """Execute __init__."""
         self.client = client
         self.key_prefix = key_prefix
-        self._dedup_ttl = 86400  # 24 hours
-        self._lock_ttl = 30  # 30 seconds
+        self._dedup_ttl = dedup_ttl
+        self._lock_ttl = lock_ttl
 
     def seen(self, event_id: str) -> bool:
         """Execute seen."""
