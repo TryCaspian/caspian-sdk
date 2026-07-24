@@ -17,7 +17,9 @@ import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -136,7 +138,11 @@ class SlackProvider:
         try:
             data = json.loads(payload)
         except ValueError:
-            return None
+            from urllib.parse import parse_qs
+            try:
+                data = {k: v[0] for k, v in parse_qs(payload.decode()).items()}
+            except Exception:
+                return None
         team = data.get("team_id", "")
         app_id = data.get("api_app_id", "")
         if not (team or app_id):
@@ -283,11 +289,19 @@ class SlackProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
-        try:
-            data = json.loads(payload)
-        except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON payload") from exc
+    ) -> list[InboundMessage | InboundCommand | InboundReaction]:
+        h = lower_headers(headers)
+        if "application/x-www-form-urlencoded" in h.get("content-type", ""):
+            from urllib.parse import parse_qs
+            try:
+                data = {k: v[0] for k, v in parse_qs(payload.decode()).items()}
+            except Exception as exc:
+                raise WebhookVerificationError("invalid urlencoded payload") from exc
+        else:
+            try:
+                data = json.loads(payload)
+            except ValueError as exc:
+                raise WebhookVerificationError("invalid JSON payload") from exc
         # Verify with the signing secret of the app that SENT this event (identified
         # by api_app_id in the pool), else the connection's stored secret.
         api_app_id = data.get("api_app_id", "")
@@ -295,7 +309,6 @@ class SlackProvider:
         if not signing_secret:
             _, _, signing_secret = self._app(credentials)
         if signing_secret:
-            h = lower_headers(headers)
             ts = h.get("x-slack-request-timestamp", "")
             sig = h.get("x-slack-signature", "")
             # Reject stale (or unparseable) timestamps before checking the
@@ -312,6 +325,46 @@ class SlackProvider:
             ).hexdigest()
             if not hmac.compare_digest(expected, sig):
                 raise WebhookVerificationError("Slack signature mismatch")
+        if "command" in data:
+            command_name = data["command"].lstrip("/")
+            args = data.get("text", "")
+            return [
+                InboundCommand(
+                    external_event_id=(
+    data.get("trigger_id")
+    or f"{data['channel_id']}:{time.time()}"
+),
+                    provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+                    provider_thread_id=data["channel_id"],
+                    name=command_name,
+                    args=args or None,
+                    sender_address=data.get("user_id"),
+                    sender_name=data.get("user_name"),
+                )
+            ]
+        event = data.get("event", {})
+        event_type = event.get("type", "")
+        if event_type in ("reaction_added", "reaction_removed"):
+            item = event.get("item", {})
+            if item.get("type") != "message":
+                return []
+            channel = item["channel"]
+            ts = item["ts"]
+            action = "added" if event_type == "reaction_added" else "removed"
+            return [
+                InboundReaction(
+                    external_event_id=(
+    data.get("event_id")
+    or f"{channel}:{ts}:{event.get('event_ts')}"
+),
+                    provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+                    provider_message_id=f"{channel}:{ts}",
+                    provider_thread_id=channel,
+                    emoji=event.get("reaction", ""),
+                    action=action,
+                    sender_address=event.get("user"),
+                )
+            ]
         if data.get("type") == "url_verification":
             # handled in the route (returns the challenge); no messages here
             return []

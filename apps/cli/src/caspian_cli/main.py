@@ -349,6 +349,16 @@ def cmd_listen(args) -> None:
                 m = data["message"]
                 to = ", ".join(r["address"] for r in m.get("recipients", []))
                 print(f"-> {to}: {(m.get('text') or '').strip()[:120]!r}")
+            elif event["type"] == "command.received":
+                name = data.get("name", "")
+                args_str = f" {data['args']}" if data.get("args") else ""
+                sender = (data.get("sender") or {}).get("address", "?")
+                print(f"<- [Command] {sender}: /{name}{args_str}")
+            elif event["type"] == "reaction.received":
+                action = data.get("action", "added")
+                emoji = data.get("emoji", "")
+                sender = (data.get("sender") or {}).get("address", "?")
+                print(f"<- [Reaction] {sender} {action} {emoji}")
             else:
                 print(f"** {event['type']}")
         time.sleep(1.0)

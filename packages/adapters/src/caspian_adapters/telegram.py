@@ -23,6 +23,7 @@ import httpx
 from .base import (
     Attachment,
     Capability,
+    InboundCommand,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -81,7 +82,7 @@ def parse_attachments(message: dict) -> list[Attachment]:
     return out
 
 
-def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
+def parse_update(data: dict, bot_id: str) -> list[InboundMessage | InboundCommand]:
     """Normalize a Telegram Update into our schema.
 
     Handles text, media (photo/document/voice), and any caption that comes with
@@ -103,6 +104,20 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
     sender_name = " ".join(
         part for part in (sender.get("first_name"), sender.get("last_name")) if part
     )
+    if text and text.startswith("/start"):
+        parts = text.split(None, 1)
+        args = parts[1] if len(parts) > 1 else None
+        return [
+            InboundCommand(
+                external_event_id=f"{bot_id}:{data['update_id']}",
+                provider_inbox_id=bot_id,
+                provider_thread_id=str(chat_id),
+                name="start",
+                args=args or None,
+                sender_address=sender.get("username") or str(sender.get("id", "")) or None,
+                sender_name=sender_name or None,
+            )
+        ]
     return [
         InboundMessage(
             external_event_id=f"{bot_id}:{data['update_id']}",
@@ -263,7 +278,7 @@ class TelegramProvider:
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundMessage | InboundCommand]:
         if credentials is None:
             # Telegram webhooks are always per-connection; the scoped route
             # supplies the connection's credentials.

@@ -202,6 +202,34 @@ class Reaction:
     _client: "CommClient" = field(repr=False)
 
 
+@dataclass
+class Command:
+    """A command event delivered to an on_command handler."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    name: str
+    args: str | None
+    conversation_id: str | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply in the thread the command was sent from (or direct message)."""
+        if not self.conversation_id:
+            raise CommError(400, "command has no conversation ID to reply to")
+        return self._client.send_message(
+            self.conversation_id, text=text, html=html, blocks=blocks, media=media
+        )
+
+
 class _MessageScheduler:
     """Process message events according to a per-conversation overlap policy."""
 
@@ -380,6 +408,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._command_handlers: list[tuple[str | None, Callable[[Command], None]]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -903,6 +932,24 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def on_command(
+        self, name: str | Callable[[Command], None] | None = None
+    ) -> Callable:
+        """Register a handler for a user command (command.received).
+
+        If ``name`` is specified, the handler only receives commands with that matching
+        name (case-insensitive). If ``name`` is None, it receives all commands.
+        """
+        if callable(name):
+            handler = name
+            self._command_handlers.append((None, handler))
+            return handler
+
+        def decorator(handler: Callable[[Command], None]) -> Callable[[Command], None]:
+            self._command_handlers.append((name.lower() if name else None, handler))
+            return handler
+        return decorator
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
@@ -912,6 +959,9 @@ class CommClient:
             return
         if event_type == "reaction.received":
             self._dispatch_reaction(event["data"])
+            return
+        if event_type == "command.received":
+            self._dispatch_command(event["data"])
             return
         if event_type != "message.received":
             return
@@ -1112,6 +1162,29 @@ class CommClient:
                 handler(reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+
+    def _dispatch_command(self, data: dict) -> None:
+        name = data.get("name", "")
+        command = Command(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            name=name,
+            args=data.get("args"),
+            conversation_id=data.get("conversation_id"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for expected_name, handler in self._command_handlers:
+            if expected_name is None or expected_name == name.lower():
+                try:
+                    handler(command)
+                except InsufficientCreditError as exc:
+                    self._warn_out_of_credit(exc)
+                except AccountRequiredError as exc:
+                    self._warn_account_required(exc)
+                except Exception:
+                    logger.exception("on_command handler failed; continuing")
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]

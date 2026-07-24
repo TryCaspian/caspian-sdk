@@ -189,3 +189,15 @@ def test_reply_document_uses_senddocument_and_reply_ref():
     assert seen["body"]["document"] == "file123"
     assert seen["body"]["reply_to_message_id"] == 55
     assert result.provider_message_id == "900:78"
+
+
+def test_parse_update_extracts_start_command():
+    from caspian_adapters.base import InboundCommand
+    inbound = parse_update(_update(text="/start ref_999"), BOT_ID)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].name == "start"
+    assert inbound[0].args == "ref_999"
+    assert inbound[0].provider_inbox_id == BOT_ID
+    assert inbound[0].provider_thread_id == "900"
+    assert inbound[0].sender_address == "alice"

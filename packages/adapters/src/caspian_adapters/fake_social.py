@@ -9,7 +9,9 @@ import secrets
 from collections.abc import Mapping
 
 from .base import (
+    InboundCommand,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -18,7 +20,7 @@ from .base import (
 )
 from .discord import DiscordProvider, parse_gateway_message
 from .messenger import InstagramProvider, parse_messaging_webhook
-from .slack import SlackProvider, parse_event
+from .slack import SlackProvider
 
 
 class FakeDiscordProvider:
@@ -193,18 +195,29 @@ class FakeSlackProvider:
         self._seq += 1
         return 1_752_000_000 + self._seq
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
-        try:
-            data = json.loads(payload)
-        except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON") from exc
-        if data.get("type") == "url_verification":
-            return []
-        return parse_event(data)
+    def parse_webhook(
+    self,
+    payload,
+    headers,
+    credentials=None,
+    ) -> list[
+        InboundMessage | InboundCommand | InboundReaction
+    ]:
+        provider = SlackProvider(
+            apps=[
+                {
+                    "app_id": self.app_id,
+                    "client_id": self.client_id,
+                    "client_secret": "fake-secret",
+                    "signing_secret": "",
+                }
+            ]
+        )
+        return provider.parse_webhook(payload, headers, credentials)
 
     def webhook_payload(self, *, channel="C123", text="Hi there", user="U456"):
         self._seq += 1
-        return {
+        return json.dumps({
             "team_id": self.team_id,
             "api_app_id": self.app_id,
             "event_id": f"Ev{self._seq}",
@@ -216,7 +229,47 @@ class FakeSlackProvider:
                 "ts": f"{self._next()}.0000",
                 "channel_type": "channel",
             },
-        }
+        }).encode()
+
+    def command_payload(self, *, command="/reorder", text="123", user="U456", channel="C123"):
+        from urllib.parse import urlencode
+        return urlencode({
+            "command": command,
+            "text": text,
+            "user_id": user,
+            "user_name": "alice",
+            "channel_id": channel,
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "trigger_id": f"trig_{secrets.randbelow(99999)}",
+        }).encode()
+
+    def reaction_payload(
+        self,
+        *,
+        emoji="thumbsup",
+        action="added",
+        user="U456",
+        channel="C123",
+        target_ts="123456789.0001",
+    ):
+        self._seq += 1
+        return json.dumps({
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "event_id": f"Ev{self._seq}",
+            "event": {
+                "type": f"reaction_{action}",
+                "user": user,
+                "reaction": emoji,
+                "item": {
+                    "type": "message",
+                    "channel": channel,
+                    "ts": target_ts
+                },
+                "event_ts": f"{self._next()}.0000"
+            }
+        }).encode()
 
 
 class _FakeMetaMessaging:

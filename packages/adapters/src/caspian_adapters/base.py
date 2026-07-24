@@ -130,6 +130,35 @@ class InboundMessage:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class InboundCommand:
+    external_event_id: str
+    provider_inbox_id: str
+    provider_thread_id: str
+    name: str
+    args: str | None = None
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundReaction:
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    emoji: str
+    action: str  # "added" | "removed"
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
 class ChannelProvider(Protocol):
     """The contract every transport implements, regardless of channel.
 
@@ -173,4 +202,4 @@ class ChannelProvider(Protocol):
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]: ...
+    ) -> list[InboundMessage | InboundCommand | InboundReaction]: ...

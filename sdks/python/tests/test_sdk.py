@@ -579,3 +579,89 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_on_command_dispatch_and_filtering():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_command
+    def generic_handler(cmd):
+        seen.append(f"generic:{cmd.name}:{cmd.args}")
+
+    @client.on_command("start")
+    def start_handler(cmd):
+        seen.append(f"start:{cmd.args}")
+
+    @client.on_command("REORDER")
+    def reorder_handler(cmd):
+        seen.append(f"reorder:{cmd.args}")
+
+    event_start = {
+        "seq": 1,
+        "type": "command.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cust_1",
+            "agent_id": "agent_1",
+            "name": "start",
+            "args": "ref_123",
+            "conversation_id": "conv_1",
+            "sender": {"address": "user_1"},
+        }
+    }
+    event_reorder = {
+        "seq": 2,
+        "type": "command.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cust_1",
+            "agent_id": "agent_1",
+            "name": "Reorder",
+            "args": "item_456",
+            "conversation_id": "conv_1",
+            "sender": {"address": "user_1"},
+        }
+    }
+    client._dispatch_event(event_start)
+    client._dispatch_event(event_reorder)
+    client.close()
+
+    assert "generic:start:ref_123" in seen
+    assert "start:ref_123" in seen
+    assert "generic:Reorder:item_456" in seen
+    assert "reorder:item_456" in seen
+
+
+def test_command_reply():
+    sent_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_requests.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json={"id": "msg_sent"})
+
+    client = _client(handler)
+
+    @client.on_command("ping")
+    def ping_handler(cmd):
+        cmd.reply(text="pong", html="<b>pong</b>")
+
+    event = {
+        "seq": 1,
+        "type": "command.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cust_1",
+            "agent_id": "agent_1",
+            "name": "ping",
+            "args": None,
+            "conversation_id": "conv_1",
+            "sender": {"address": "user_1"},
+        }
+    }
+    client._dispatch_event(event)
+    client.close()
+
+    assert len(sent_requests) == 1
+    assert sent_requests[0]["text"] == "pong"
+    assert sent_requests[0]["html"] == "<b>pong</b>"

@@ -1,6 +1,7 @@
 from . import blocks
 from .client import (
     AccountRequiredError,
+    Command,
     CommClient,
     CommError,
     ConcurrencyStrategy,
@@ -12,6 +13,7 @@ from .client import (
 
 __all__ = [
     "AccountRequiredError",
+    "Command",
     "CommClient",
     "CommError",
     "ConcurrencyStrategy",

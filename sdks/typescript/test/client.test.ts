@@ -797,4 +797,93 @@ describe("CommClient", () => {
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
   });
+
+  it("onCommand dispatches and filters commands", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cust_1",
+              agent_id: "agent_1",
+              name: "start",
+              args: "ref_123",
+              conversation_id: "conv_1",
+              sender: { address: "user_1" },
+            },
+          },
+          {
+            seq: 2,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cust_1",
+              agent_id: "agent_1",
+              name: "Reorder",
+              args: "item_456",
+              conversation_id: "conv_1",
+              sender: { address: "user_1" },
+            },
+          },
+        ]);
+      },
+    });
+
+    const seen: string[] = [];
+    client.onCommand((c) => {
+      seen.push(`generic:${c.name}:${c.args}`);
+    });
+    client.onCommand("start", (c) => {
+      seen.push(`start:${c.args}`);
+    });
+    client.onCommand("reorder", (c) => {
+      seen.push(`reorder:${c.args}`);
+    });
+
+    await client.dispatchPending(0);
+    expect(seen).toContain("generic:start:ref_123");
+    expect(seen).toContain("start:ref_123");
+    expect(seen).toContain("generic:Reorder:item_456");
+    expect(seen).toContain("reorder:item_456");
+  });
+
+  it("command reply forwards parameters correctly", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cust_1",
+              agent_id: "agent_1",
+              name: "ping",
+              args: null,
+              conversation_id: "conv_1",
+              sender: { address: "user_1" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/conversations/conv_1/messages": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ ok: true }))),
+    });
+
+    client.onCommand("ping", async (c) => {
+      await c.reply("pong", "<b>pong</b>");
+    });
+
+    await client.dispatchPending(0);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({ text: "pong", html: "<b>pong</b>", blocks: null, media: null });
+  });
 });

@@ -130,3 +130,60 @@ def test_pool_verifies_with_sending_apps_secret():
     payload = json.dumps(_event(app="A2")).encode()
     inbound = provider.parse_webhook(payload, _signed_headers(payload, secret="g2"))
     assert inbound[0].provider_inbox_id == "A2:T1"
+
+
+def test_parse_slash_command():
+    from caspian_adapters.base import InboundCommand
+    provider = _provider()
+    from urllib.parse import urlencode
+    payload = urlencode({
+        "command": "/reorder",
+        "text": "123",
+        "user_id": "U456",
+        "user_name": "alice",
+        "channel_id": "C123",
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "trigger_id": "trig_1",
+    }).encode()
+    headers = _signed_headers(payload)
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    inbound = provider.parse_webhook(payload, headers)
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].name == "reorder"
+    assert inbound[0].args == "123"
+    assert inbound[0].sender_address == "U456"
+    assert inbound[0].sender_name == "alice"
+    assert inbound[0].provider_thread_id == "C123"
+    assert inbound[0].provider_inbox_id == "A1:T1"
+
+
+def test_parse_reaction():
+    from caspian_adapters.base import InboundReaction
+    provider = _provider()
+    event_data = {
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "event_id": "EvReaction",
+        "event": {
+            "type": "reaction_added",
+            "user": "U456",
+            "reaction": "thumbsup",
+            "item": {
+                "type": "message",
+                "channel": "C123",
+                "ts": "1752000000.0001"
+            },
+            "event_ts": "1752000000.0002"
+        }
+    }
+    payload = json.dumps(event_data).encode()
+    inbound = provider.parse_webhook(payload, _signed_headers(payload))
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].emoji == "thumbsup"
+    assert inbound[0].action == "added"
+    assert inbound[0].provider_message_id == "C123:1752000000.0001"
+    assert inbound[0].provider_thread_id == "C123"
+    assert inbound[0].sender_address == "U456"

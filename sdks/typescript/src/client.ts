@@ -142,9 +142,35 @@ export class Reaction {
   ) {}
 }
 
+export class Command {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly name: string,
+    readonly args: string | null,
+    readonly conversationId: string | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.conversationId) {
+      throw new CommError(400, "command has no conversation ID to reply to");
+    }
+    return this.client.sendMessage(this.conversationId, text, html, blocks, media);
+  }
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type CommandHandler = (command: Command) => void | Promise<void>;
 
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
@@ -298,6 +324,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly commandHandlers: Array<{ name: string | null; handler: CommandHandler }> = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -886,6 +913,24 @@ export class CommClient {
     return handler;
   }
 
+  /** Register a handler for user commands (command.received). */
+  onCommand(handler: CommandHandler): CommandHandler;
+  onCommand(name: string | null, handler: CommandHandler): CommandHandler;
+  onCommand(nameOrHandler: string | null | CommandHandler, handler?: CommandHandler): CommandHandler {
+    if (typeof nameOrHandler === "function") {
+      this.commandHandlers.push({ name: null, handler: nameOrHandler });
+      return nameOrHandler;
+    }
+    if (!handler) {
+      throw new Error("handler is required when name is specified");
+    }
+    this.commandHandlers.push({
+      name: nameOrHandler ? nameOrHandler.toLowerCase() : null,
+      handler,
+    });
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -946,6 +991,32 @@ export class CommClient {
     }
   }
 
+  private async dispatchCommand(data: any): Promise<void> {
+    const name = data.name ?? "";
+    const command = new Command(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      name,
+      data.args ?? null,
+      data.conversation_id ?? null,
+      data.sender ?? null,
+      this,
+    );
+    const lowerName = name.toLowerCase();
+    for (const item of this.commandHandlers) {
+      if (item.name === null || item.name === lowerName) {
+        try {
+          await item.handler(command);
+        } catch (err) {
+          if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+          else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+          else logger.error("onCommand handler failed; continuing", err);
+        }
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
@@ -953,6 +1024,10 @@ export class CommClient {
     }
     if (event.type === "reaction.received") {
       await this.dispatchReaction(event.data);
+      return;
+    }
+    if (event.type === "command.received") {
+      await this.dispatchCommand(event.data);
       return;
     }
     if (event.type !== "message.received") return;
