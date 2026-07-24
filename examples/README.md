@@ -4,9 +4,10 @@ Minimal, runnable agents built on `caspian-sdk`. Each file is self-contained and
 documented at the top - read the docstring, set your API key, and run it.
 
 **New here?** Start with [`email_triage.py`](./email_triage.py) or
-[`autoreply.py`](./autoreply.py) - they run with just an API key (email works on
-the hosted gateway out of the box). The others need channel credentials (a bot
-token, a Slack app, or a carrier account), noted in the Setup column below.
+[`autoreply.py`](./autoreply.py) (or its TypeScript equivalent,
+[`autoreply.ts`](./autoreply.ts)) - they run with just an API key (email works
+on the hosted gateway out of the box). The others need channel credentials (a
+bot token, a Slack app, or a carrier account), noted in the Setup column below.
 
 ## Prerequisites
 
@@ -16,7 +17,8 @@ token, a Slack app, or a carrier account), noted in the Setup column below.
 
 ```bash
 export CASPIAN_API_KEY=...
-uv run python examples/<file>.py
+uv run python examples/<file>.py       # Python examples
+npx tsx examples/autoreply.ts          # TypeScript example
 ```
 
 ## Index
@@ -24,6 +26,7 @@ uv run python examples/<file>.py
 | File | What it shows | Channel | Setup |
 | --- | --- | --- | --- |
 | [`autoreply.py`](./autoreply.py) | The core loop: connect, `on_message`, `listen` | Email | API key only |
+| [`autoreply.ts`](./autoreply.ts) | TypeScript version of `autoreply.py` - same flow, no build/publish step required | Email | API key only |
 | [`email_triage.py`](./email_triage.py) | Keyword-classify inbound mail and reply per category | Email | API key only |
 | [`one_handler_three_channels.py`](./one_handler_three_channels.py) | One `on_message` handler serving three channels at once | Discord + Telegram + Email | Discord + Telegram bot tokens |
 | [`slack_support_bot.py`](./slack_support_bot.py) | One-click install + replies with rich message blocks | Slack | Open the printed install URL |
