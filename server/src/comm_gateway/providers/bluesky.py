@@ -639,6 +639,7 @@ class BlueskyProvider:
 
         notifications = self._fetch_notifications(
             access_token=access_token,
+            boundary=cursor,
         )
 
         newest_cursor = self._newest_notification_cursor(
