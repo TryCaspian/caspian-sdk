@@ -46,10 +46,16 @@ describe("Streaming", () => {
     await stream.append("chunk1");
     await sleep(20);
     await stream.append(" chunk2");
+    await sleep(20);
+    await stream.append(" chunk3");
+    
+    // Assert a PATCH has happened before finalize()
+    expect(calls.some(c => c.method === "PATCH")).toBe(true);
+    
     await stream.finalize();
 
     // GET connection, POST reply, PATCH reply (x1 or x2 depending on timing), final PATCH
-    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(calls.length).toBeGreaterThanOrEqual(4);
     expect(calls[0].method).toBe("GET");
     expect(calls[0].path).toBe("/v1/connections/conn_1");
     
@@ -60,7 +66,7 @@ describe("Streaming", () => {
     const lastCall = calls[calls.length - 1];
     expect(lastCall.method).toBe("PATCH");
     expect(lastCall.path).toBe("/v1/messages/reply_1");
-    expect(lastCall.body.text).toBe("chunk1 chunk2");
+    expect(lastCall.body.text).toBe("chunk1 chunk2 chunk3");
   });
 
   it("uses final_only when edit_outbound is unsupported", async () => {
@@ -76,6 +82,8 @@ describe("Streaming", () => {
     await stream.append("chunk1");
     await sleep(20);
     await stream.append(" chunk2");
+    await sleep(20);
+    await stream.append(" chunk3");
     await stream.finalize();
 
     expect(calls.length).toBe(2);
@@ -84,6 +92,6 @@ describe("Streaming", () => {
     
     expect(calls[1].method).toBe("POST");
     expect(calls[1].path).toBe("/v1/messages/msg_1/reply");
-    expect(calls[1].body.text).toBe("chunk1 chunk2");
+    expect(calls[1].body.text).toBe("chunk1 chunk2 chunk3");
   });
 });

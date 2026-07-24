@@ -65,9 +65,7 @@ class SlackProvider:
     # pending until the workspace owner approves the install.
     connect_credentials = ()
     oauth = True
-    capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND, Capability.EDIT_OUTBOUND}
-    )
+    capabilities = frozenset({Capability.RECEIVE, Capability.REPLY, Capability.SEND})
 
     def __init__(
         self,

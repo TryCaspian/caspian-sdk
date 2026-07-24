@@ -291,8 +291,14 @@ class StreamSession:
         now = time.monotonic()
         if self._posted_id is None:
             # First chunk: post the initial reply
-            result = self._client.reply(self._message_id, text=self.text)
-            self._posted_id = result.get("id") or result.get("message_id")
+            try:
+                result = self._client.reply(self._message_id, text=self.text)
+                self._posted_id = result.get("id") or result.get("message_id")
+                if not self._posted_id:
+                    # The provider doesn't support predictable IDs; fallback to final_only
+                    self._strategy = "final_only"
+            except Exception:
+                logger.warning("stream initial post failed; will retry on next chunk")
             self._last_edit = now
         elif now - self._last_edit >= self._edit_interval:
             # Throttled edit
@@ -510,6 +516,7 @@ class CommClient:
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
         self._processed_events: dict[str, None] = {}
+        self._webhook_lock = Lock()
 
     def close(self) -> None:
         self._http.close()
@@ -1292,18 +1299,22 @@ class CommClient:
         except ValueError as exc:
             raise CommError(400, "invalid JSON payload") from exc
 
+        if not isinstance(event, dict):
+            raise CommError(400, "invalid JSON payload")
+
         event_id = event.get("id")
-        if event_id:
-            if event_id in self._processed_events:
-                return  # already handled in this invocation
-            self._processed_events[event_id] = None
+        with self._webhook_lock:
+            if event_id:
+                if event_id in self._processed_events:
+                    return  # already handled in this invocation
+                self._processed_events[event_id] = None
 
-        # Discard oldest event to bound memory on warm serverless containers
-        if len(self._processed_events) > 1000:
-            # Python dicts are insertion-ordered. pop the first (oldest) key.
-            self._processed_events.pop(next(iter(self._processed_events)))
+            # Discard oldest event to bound memory on warm serverless containers
+            if len(self._processed_events) > 1000:
+                # Python dicts are insertion-ordered. pop the first (oldest) key.
+                self._processed_events.pop(next(iter(self._processed_events)))
 
-        self._dispatch_event(event)
+            self._dispatch_event(event)
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

@@ -118,30 +118,21 @@ class BlueskyProvider:
 
             # For simplicity in this challenge, if we just have a URI, we need its CID.
             # Let's extract CID by fetching the record if it isn't composite.
-            uri, _, cid = provider_message_id.partition("||")
-            if not cid:
-                # Need to fetch the post to get its CID to construct the reply reference
-                # app.bsky.feed.getPosts?uris=...
-                p_resp = client.get(
-                    f"{self.base_url}/xrpc/app.bsky.feed.getPosts",
-                    headers={"Authorization": f"Bearer {token}"},
-                    params={"uris": [uri]},
-                )
-                p_resp.raise_for_status()
-                posts = p_resp.json().get("posts", [])
-                if not posts:
-                    raise ValueError("Parent post not found")
-                cid = posts[0]["cid"]
-                # Also we need the root.
-                # If parent has a reply.root, we use it, else parent is root
-                parent_record = posts[0].get("record", {})
-                reply_ref = parent_record.get("reply")
-                root_uri = reply_ref["root"]["uri"] if reply_ref else uri
-                root_cid = reply_ref["root"]["cid"] if reply_ref else cid
-            else:
-                # If we pack root_uri||root_cid||parent_uri||parent_cid in provider_thread_id
-                pass  # A production implementation would handle this robustly.
-                # Since we don't have all data, let's just do a basic fetch above.
+            uri, _, _ = provider_message_id.partition("||")
+            p_resp = client.get(
+                f"{self.base_url}/xrpc/app.bsky.feed.getPosts",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"uris": [uri]},
+            )
+            p_resp.raise_for_status()
+            posts = p_resp.json().get("posts", [])
+            if not posts:
+                raise ValueError("Parent post not found")
+            parent = posts[0]
+            cid = parent["cid"]
+            root = parent.get("record", {}).get("reply", {}).get("root")
+            root_uri = root["uri"] if root else uri
+            root_cid = root["cid"] if root else cid
 
             now = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
             record = {
@@ -186,8 +177,6 @@ class BlueskyProvider:
             token = self._auth(client, credentials)
 
             params: dict[str, Any] = {"limit": 50}
-            if cursor:
-                params["cursor"] = cursor
 
             resp = client.get(
                 f"{self.base_url}/xrpc/app.bsky.notification.listNotifications",
@@ -196,11 +185,19 @@ class BlueskyProvider:
             )
             resp.raise_for_status()
             data = resp.json()
-            new_cursor = data.get("cursor") or cursor
+
+            notifications = data.get("notifications", [])
+            new_cursor = notifications[0]["uri"] if notifications else cursor
+
+            new_notifs = []
+            for notif in notifications:
+                if notif["uri"] == cursor:
+                    break
+                new_notifs.append(notif)
 
             messages = []
             # We must process oldest-first for causality
-            for notif in reversed(data.get("notifications", [])):
+            for notif in reversed(new_notifs):
                 reason = notif.get("reason")
                 if reason not in ("mention", "reply"):
                     continue

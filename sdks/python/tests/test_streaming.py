@@ -48,10 +48,15 @@ def test_streaming_post_edit():
 
             time.sleep(0.02)
             s.append(" chunk2")
+
+            time.sleep(0.02)
+            s.append(" chunk3")
+            # After chunk3, chunk2 should have triggered a PATCH
+            assert any(m == "PATCH" for m, path, body in seen)
     finally:
         client.close()
 
-    assert len(seen) >= 3
+    assert len(seen) >= 4
     assert seen[0][0] == "GET"
     assert seen[0][1] == "/v1/connections/conn_1"
     assert seen[1][0] == "POST"
@@ -60,7 +65,7 @@ def test_streaming_post_edit():
     # The final edit
     assert seen[-1][0] == "PATCH"
     assert seen[-1][1] == "/v1/messages/msg_reply_1"
-    assert "chunk1 chunk2" in seen[-1][2]
+    assert "chunk1 chunk2 chunk3" in seen[-1][2]
 
 
 def test_streaming_final_only():

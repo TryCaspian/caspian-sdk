@@ -2,8 +2,9 @@
 
 import os
 
-from caspian_sdk import CommClient, WebhookVerificationError
+from caspian_sdk import CommClient, CommError, WebhookVerificationError
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 app = FastAPI()
 
@@ -22,6 +23,9 @@ def handle_message(msg):
 # 3. Route inbound HTTP requests into the SDK's webhook handler
 @app.post("/api/caspian-webhook")
 async def caspian_webhook(request: Request):
+    if not WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Missing WEBHOOK_SECRET configuration")
+
     signature = request.headers.get("x-caspian-signature")
     if not signature:
         raise HTTPException(status_code=401, detail="Missing signature")
@@ -29,8 +33,10 @@ async def caspian_webhook(request: Request):
     body = await request.body()
     try:
         # Verifies the signature, deduplicates the event, and routes to handlers
-        client.handle_webhook(body, signature, WEBHOOK_SECRET)
+        await run_in_threadpool(client.handle_webhook, body, signature, WEBHOOK_SECRET)
     except WebhookVerificationError as err:
         raise HTTPException(status_code=401, detail="Invalid signature") from err
+    except CommError as err:
+        raise HTTPException(status_code=err.status_code, detail=err.message) from err
 
     return {"ok": True}

@@ -140,8 +140,15 @@ export class StreamSession {
     const now = Date.now();
     if (!this.postedId) {
       // First chunk: post initial reply
-      const res = await this.client.reply(this.messageId, this.text);
-      this.postedId = (res.id as string) || (res.message_id as string);
+      try {
+        const res = await this.client.reply(this.messageId, this.text);
+        this.postedId = (res.id as string) || (res.message_id as string);
+        if (!this.postedId) {
+          this.strategy = "final_only";
+        }
+      } catch (err) {
+        logger.warn("stream initial post failed; will retry on next chunk", err);
+      }
       this.lastEdit = now;
     } else if (now - this.lastEdit >= this.editIntervalMs) {
       // Throttled edit
