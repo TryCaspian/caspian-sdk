@@ -43,6 +43,8 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+const EDIT_CHANNELS = new Set(["telegram", "discord", "slack"]);
+
 /** An inbound message delivered to an onMessage handler. */
 export class Message {
   constructor(
@@ -92,6 +94,19 @@ export class Message {
    */
   typing(): Promise<Record<string, unknown>> {
     return this.client.typing(this.id);
+  }
+
+  /**
+   * Stream a response with live edits on channels that support it.
+   *
+   * On Telegram, Discord and Slack the first chunk posts the message and
+   * subsequent chunks edit it in place (throttled). On channels without edit
+   * support all chunks buffer and a single reply fires on close.
+   *
+   * If no non-empty text was appended, close sends nothing.
+   */
+  stream(throttleMs = 500): StreamResponse {
+    return new StreamResponse(this.client, this.id, this.channel, throttleMs);
   }
 }
 
@@ -282,6 +297,60 @@ class MessageScheduler {
       this.track(this.runDebounce(key, item.event));
     }
     await Promise.all([...this.active]);
+  }
+}
+
+/**
+ * Accumulates streamed chunks and delivers them as a single message.
+ *
+ * On channels that support outbound editing (Telegram, Discord, Slack) the
+ * first non-empty append posts the message and subsequent appends edit it in
+ * place, throttled to avoid API rate limits. On all other channels the text
+ * buffers silently and a single reply fires on close.
+ *
+ * If no non-empty text was appended, close sends nothing.
+ */
+export class StreamResponse {
+  private buffer = "";
+  private outboundId: string | null = null;
+  private lastEdit = 0;
+
+  constructor(
+    private readonly client: CommClient,
+    private readonly messageId: string,
+    readonly channel: string,
+    private readonly throttleMs = 500,
+  ) {}
+
+  get text(): string {
+    return this.buffer;
+  }
+
+  get supportsEdit(): boolean {
+    return EDIT_CHANNELS.has(this.channel);
+  }
+
+  async append(chunk: string): Promise<void> {
+    this.buffer += chunk;
+    if (!this.supportsEdit || !this.buffer) return;
+    const now = Date.now();
+    if (this.outboundId === null) {
+      const result = await this.client.reply(this.messageId, this.buffer);
+      this.outboundId = (result as Record<string, unknown>).id as string ?? null;
+      this.lastEdit = now;
+    } else if (now - this.lastEdit >= this.throttleMs) {
+      await this.client.edit(this.outboundId, this.buffer);
+      this.lastEdit = now;
+    }
+  }
+
+  async close(): Promise<void> {
+    if (!this.buffer) return;
+    if (this.outboundId === null) {
+      await this.client.reply(this.messageId, this.buffer);
+    } else {
+      await this.client.edit(this.outboundId, this.buffer);
+    }
   }
 }
 
@@ -706,6 +775,11 @@ export class CommClient {
    */
   typing(messageId: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
+  }
+
+  /** Edit a message the agent previously sent (used by streaming). */
+  edit(outboundMessageId: string, text: string): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/messages/${outboundMessageId}/edit`, { json: { text } });
   }
 
   /** Receive events by push instead of (or alongside) polling. */

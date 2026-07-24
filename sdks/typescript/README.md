@@ -86,6 +86,26 @@ await message.reply(undefined, undefined, blocks);
 Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 `card`. A button with a `url` is a link; a button with a `value` is a callback.
 
+## Streaming
+
+Stream LLM tokens with live edits on channels that support it:
+
+```ts
+client.onMessage(async (message) => {
+  const s = message.stream();
+  for await (const chunk of myLlm(message.text)) {
+    await s.append(chunk);
+  }
+  await s.close();
+});
+```
+
+On **Telegram, Discord and Slack** the first chunk posts the message and
+subsequent chunks edit it in place (throttled to avoid rate limits). On
+channels without outbound edit support (**email, SMS, WhatsApp, X, …**) all
+chunks buffer silently and a single reply fires on `close()` — no code
+change needed, the fallback is automatic.
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect*()` call — never new handler code.

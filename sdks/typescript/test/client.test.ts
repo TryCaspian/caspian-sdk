@@ -7,6 +7,7 @@ import {
   Interaction,
   Message,
   Reaction,
+  StreamResponse,
 } from "../src/index.js";
 
 /** Build a client whose fetch is driven by a route table. */
@@ -796,5 +797,69 @@ describe("CommClient", () => {
     expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
+  });
+
+  it("stream().append() on an edit-capable channel does post+edit", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ id: "out_1" }))),
+      "POST /v1/messages/out_1/edit": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/edit", ...b }), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    await s.append("Hello");
+    await s.append(" world");
+    await s.close();
+    expect(bodies[0].path).toBe("/reply");
+    expect(bodies[0].text).toBe("Hello");
+    const edits = bodies.filter((b) => b.path === "/edit");
+    expect(edits.length).toBeGreaterThanOrEqual(1);
+    expect(edits[edits.length - 1].text).toBe("Hello world");
+  });
+
+  it("stream() on email buffers and sends a single reply on close", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "email", null, null, "hi", null, client);
+    const s = msg.stream();
+    await s.append("one ");
+    expect(bodies).toHaveLength(0);
+    await s.append("two");
+    expect(bodies).toHaveLength(0);
+    await s.close();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].text).toBe("one two");
+  });
+
+  it("stream error mid-append still delivers partial text", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "email", null, null, "hi", null, client);
+    const s = msg.stream();
+    await s.append("partial");
+    // simulate error: caller catches and still closes
+    await s.close();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].text).toBe("partial");
+  });
+
+  it("stream with no appends sends nothing", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push(b), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream();
+    await s.close();
+    expect(bodies).toHaveLength(0);
   });
 });
