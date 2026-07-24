@@ -57,6 +57,20 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
         from .fake_modem import FakeModemProvider
 
         return FakeModemProvider()
+    if name == "fake-signal":
+        from .fake_signal import FakeSignalProvider
+
+        return FakeSignalProvider()
+    if name == "signal":
+        from .signal import SignalProvider
+
+        return SignalProvider(
+            daemon_url=settings.signal_daemon_url,
+            registered_number=settings.signal_registered_number,
+            api_token=settings.signal_api_token,
+            signing_secret=settings.signal_signing_secret,
+            timeout=settings.signal_timeout,
+        )
     if name == "gsm-modem":
         from .modem import GsmModemProvider
 

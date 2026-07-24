@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     modem_serial_port: str = ""
     modem_msisdn: str = ""
 
+    # ===== SIGNAL ADAPTER =====
+    # Signal adapter via signal-cli daemon. The deployment brings its own
+    # registered phone number; the adapter talks to a local signal-cli running
+    # in JSON-RPC mode. Inbound can be via websocket subscription (primary)
+    # or optional webhook forwarding.
+    signal_daemon_url: str = "http://localhost:8080"
+    signal_registered_number: str = ""
+    signal_api_token: str = ""
+    signal_signing_secret: str = ""
+    signal_timeout: float = 30.0
+    # ===== END SIGNAL ADAPTER =====
+
     discord_base_url: str = "https://discord.com/api/v10"
     # Shared Discord bot for one-click install (OAuth). Developers add this ONE
     # bot to their server; messages route by guild_id to their agent.
