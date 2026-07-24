@@ -41,6 +41,14 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_base=settings.telegram_webhook_base,
             base_url=settings.telegram_base_url,
         )
+
+    if name == "zulip":
+        from .zulip import ZulipProvider
+
+        return ZulipProvider(
+            base_url=settings.zulip_base_url,
+        )
+
     if name == "fake-telegram-user":
         from .fake_telegram_user import FakeTelegramUserProvider
 

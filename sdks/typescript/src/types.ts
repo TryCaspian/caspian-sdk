@@ -158,8 +158,6 @@ export interface Media {
   [key: string]: unknown;
 }
 
-export type ConcurrencyStrategy = "queue" | "debounce" | "drop" | "parallel";
-
 export interface ListenOptions {
   /** Start from this event seq instead of "newest at startup". */
   fromSeq?: number;
@@ -175,8 +173,7 @@ export interface ListenOptions {
    * typing indicator (X, SMS, email); the real answer follows from the handler.
    */
   ack?: string;
-  /** How messages that overlap in one conversation are handled (default "queue"). */
-  concurrency?: ConcurrencyStrategy;
-  /** Quiet window for the debounce strategy in milliseconds (default 500). */
-  debounceMs?: number;
+
+  /** Per-conversation concurrency strategy. */
+  concurrency?: "queue" | "drop" | "parallel";
 }
