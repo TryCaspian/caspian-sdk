@@ -30,6 +30,7 @@ from .base import (
     ProvisionResult,
     SendResult,
     WebhookVerificationError,
+    lower_headers,
 )
 
 SESSION_PATH = "/xrpc/com.atproto.server.createSession"
@@ -60,6 +61,8 @@ INVALID_MESSAGE_ID_ERROR = "invalid Bluesky provider_message_id"
 INVALID_WEBHOOK_PAYLOAD_ERROR = "invalid Bluesky webhook payload"
 WEBHOOK_TOKEN_MISMATCH_ERROR = "Bluesky webhook token mismatch"
 MISSING_WEBHOOK_INBOX_ERROR = "Bluesky webhook requires a provider inbox id"
+MISSING_WEBHOOK_SECRET_ERROR = "Bluesky webhook secret is not configured"
+SESSION_AUTH_ERROR = "Bluesky authentication failed"
 
 
 def _utc_now() -> str:
@@ -165,7 +168,10 @@ class BlueskyProvider:
                 "password": app_password,
             },
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ValueError(SESSION_AUTH_ERROR) from exc
 
         session = response.json()
 
@@ -451,27 +457,54 @@ class BlueskyProvider:
         self,
         *,
         access_token: str,
+        boundary: str | None = None,
     ) -> list[dict[str, object]]:
-        """Fetch mention and reply notifications from Bluesky."""
-        params: list[tuple[str, str]] = [
-            ("limit", "50"),
-            ("reasons", "mention"),
-            ("reasons", "reply"),
-        ]
+        """Fetch mention and reply notifications until the boundary or page end."""
+        notifications: list[dict[str, object]] = []
+        api_cursor: str | None = None
 
-        response = self._client.get(
-            LIST_NOTIFICATIONS_PATH,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-            },
-            params=params,
-        )
-        response.raise_for_status()
+        while True:
+            params: list[tuple[str, str]] = [
+                ("limit", "50"),
+                ("reasons", "mention"),
+                ("reasons", "reply"),
+            ]
 
-        return self._notifications_from_payload(
-            response.json(),
-            error_message=INVALID_NOTIFICATIONS_RESPONSE_ERROR,
-        )
+            if api_cursor:
+                params.append(("cursor", api_cursor))
+
+            response = self._client.get(
+                LIST_NOTIFICATIONS_PATH,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                },
+                params=params,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+
+            page = self._notifications_from_payload(
+                data,
+                error_message=INVALID_NOTIFICATIONS_RESPONSE_ERROR,
+            )
+            notifications.extend(page)
+
+            if boundary and any(
+                isinstance(notification.get("indexedAt"), str)
+                and notification["indexedAt"] <= boundary
+                for notification in page
+            ):
+                break
+
+            next_cursor = data.get("cursor") if isinstance(data, dict) else None
+
+            if not isinstance(next_cursor, str) or not next_cursor or not page:
+                break
+
+            api_cursor = next_cursor
+
+        return notifications
 
     def _normalize_notifications(
         self,
@@ -635,13 +668,16 @@ class BlueskyProvider:
         credentials: Mapping[str, str] | None = None,
     ) -> list[InboundMessage]:
         """Verify and normalize a delivered Bluesky notification payload."""
-        if self._webhook_secret:
-            received_token = {key.lower(): value for key, value in headers.items()}.get(
-                TOKEN_HEADER, ""
-            )
+        if not self._webhook_secret:
+            raise WebhookVerificationError(MISSING_WEBHOOK_SECRET_ERROR)
 
-            if not hmac.compare_digest(received_token, self._webhook_secret):
-                raise WebhookVerificationError(WEBHOOK_TOKEN_MISMATCH_ERROR)
+        received_token = lower_headers(headers).get(
+            TOKEN_HEADER,
+            "",
+        )
+
+        if not hmac.compare_digest(received_token, self._webhook_secret):
+            raise WebhookVerificationError(WEBHOOK_TOKEN_MISMATCH_ERROR)
 
         try:
             data = json.loads(payload)

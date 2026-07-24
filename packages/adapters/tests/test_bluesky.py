@@ -524,7 +524,7 @@ def test_decode_message_id_rejects_invalid_payload():
 
 
 def _encode_parent_message_id() -> str:
-    """Return a valid provisioning request for tests."""
+    """Return a valid parent provider_message_id for reply tests."""
     return _encode_message_id(
         uri=PARENT_URI,
         cid=PARENT_CID,
@@ -738,17 +738,23 @@ def test_parse_webhook_skips_self_authored_notifications() -> None:
     ]
 
 
-def test_parse_webhook_allows_unsigned_payload_without_configured_secret() -> None:
+def test_parse_webhook_rejects_payload_without_configured_secret() -> None:
     provider = BlueskyProvider()
 
-    inbound = provider.parse_webhook(
-        _webhook_payload(
-            _webhook_notification(),
-        ),
-        {},
-        credentials={
-            "provider_resource_id": AGENT_DID,
-        },
+    payload = _webhook_payload(
+        _webhook_notification(),
     )
+    headers: dict[str, str] = {}
+    credentials = {
+        "provider_resource_id": AGENT_DID,
+    }
 
-    assert len(inbound) == 1
+    with pytest.raises(
+        WebhookVerificationError,
+        match="Bluesky webhook secret is not configured",
+    ):
+        provider.parse_webhook(
+            payload,
+            headers,
+            credentials=credentials,
+        )
