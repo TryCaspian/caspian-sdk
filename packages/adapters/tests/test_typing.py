@@ -6,7 +6,9 @@ signals; other channels are a silent no-op.
 """
 
 import httpx
+import pytest
 from caspian_adapters.discord import DiscordProvider
+from caspian_adapters.slack import SlackProvider
 from caspian_adapters.telegram import TelegramProvider
 
 
@@ -76,3 +78,32 @@ def test_discord_edit_message():
     assert seen["method"] == "PATCH"
     assert seen["path"] == "/channels/chan123/messages/msg456"
     assert seen["auth"] == "Bot BOT"
+
+
+def test_discord_edit_message_webhook_only(monkeypatch):
+    seen = {}
+
+    def mock_patch(url, **kwargs):
+        seen["url"] = str(url)
+        seen["body"] = kwargs.get("json")
+        return httpx.Response(200, json={"id": "99", "content": "updated"},
+                              request=httpx.Request("PATCH", url))
+
+    monkeypatch.setattr(httpx, "patch", mock_patch)
+    p = DiscordProvider(base_url="https://discord.test", shared_bot_token="")
+    creds = {"webhook_url": "https://discord.com/api/webhooks/111/tok"}
+    p.edit_message("chan123:msg456", "updated text", credentials=creds)
+    assert "/webhooks/111/tok/messages/msg456" in seen["url"]
+    assert seen["body"] == {"content": "updated text"}
+
+
+def test_slack_edit_message_application_failure():
+    def handler(request):
+        return httpx.Response(200, json={"ok": False, "error": "cant_update_message"})
+
+    p = SlackProvider(base_url="https://slack.test")
+    p._client = httpx.Client(base_url="https://slack.test",
+                             transport=httpx.MockTransport(handler), timeout=5.0)
+    with pytest.raises(RuntimeError, match="cant_update_message"):
+        p.edit_message("C123:1234567890.123456", "new text",
+                       credentials={"bot_token": "xoxb-fake"})

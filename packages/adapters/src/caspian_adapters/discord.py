@@ -185,13 +185,21 @@ class DiscordProvider:
         credentials: Mapping[str, str] | None = None,
     ) -> None:
         """Edit a message we previously sent (used by streaming post+edit)."""
-        token = self._token(credentials)
+        creds = credentials or {}
         channel_id, message_id = split_composite_id(provider_message_id)
-        r = self._client.patch(
-            f"/channels/{channel_id}/messages/{message_id}",
-            json={"content": text},
-            headers={"Authorization": f"Bot {token}"},
-        )
+        if creds.get("webhook_url"):
+            r = httpx.patch(
+                f"{creds['webhook_url']}/messages/{message_id}",
+                json={"content": text},
+                timeout=30.0,
+            )
+        else:
+            token = self._token(credentials)
+            r = self._client.patch(
+                f"/channels/{channel_id}/messages/{message_id}",
+                json={"content": text},
+                headers={"Authorization": f"Bot {token}"},
+            )
         r.raise_for_status()
 
     def _post_webhook(self, credentials: Mapping[str, str], text: str):
