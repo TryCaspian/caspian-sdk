@@ -196,6 +196,39 @@ class Reaction:
     _client: "CommClient" = field(repr=False)
 
 
+@dataclass
+class Command:
+    """A slash/bot command delivered to an on_command handler."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    conversation_id: str | None
+    command: str
+    text: str
+    sender: dict | None
+    source_message: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply in the command's conversation when the gateway supplied an anchor."""
+        if self.source_message:
+            return self._client.reply(
+                self.source_message["id"], text=text, html=html, blocks=blocks, media=media
+            )
+        if self.conversation_id:
+            return self._client.send_message(
+                self.conversation_id, text=text, html=html, blocks=blocks, media=media
+            )
+        raise CommError(400, "command has no conversation or source message to reply to")
+
+
 class CommClient:
     def __init__(
         self,
@@ -213,6 +246,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._command_handlers: list[Callable[[Command], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -736,6 +770,13 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def on_command(
+        self, handler: Callable[["Command"], None]
+    ) -> Callable[["Command"], None]:
+        """Register a handler for slash/bot commands (command.received)."""
+        self._command_handlers.append(handler)
+        return handler
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
@@ -745,6 +786,9 @@ class CommClient:
             return
         if event_type == "reaction.received":
             self._dispatch_reaction(event["data"])
+            return
+        if event_type == "command.received":
+            self._dispatch_command(event["data"])
             return
         if event_type != "message.received":
             return
@@ -933,6 +977,28 @@ class CommClient:
                 handler(reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+
+    def _dispatch_command(self, data: dict) -> None:
+        command = Command(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            conversation_id=data.get("conversation_id"),
+            command=data.get("command", ""),
+            text=data.get("text") or "",
+            sender=data.get("sender"),
+            source_message=data.get("source_message"),
+            _client=self,
+        )
+        for handler in self._command_handlers:
+            try:
+                handler(command)
+            except InsufficientCreditError as exc:
+                self._warn_out_of_credit(exc)
+            except AccountRequiredError as exc:
+                self._warn_account_required(exc)
+            except Exception:
+                logger.exception("on_command handler failed; continuing")
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]

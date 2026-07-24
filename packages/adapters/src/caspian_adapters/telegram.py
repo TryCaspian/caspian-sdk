@@ -16,12 +16,15 @@ their bots never overlap.
 
 import hmac
 import json
+import re
 from collections.abc import Mapping
 
 import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -39,7 +42,10 @@ def bot_id_from_token(token: str) -> str:
     return token.split(":", 1)[0]
 
 
-def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
+COMMAND_RE = re.compile(r"^/([A-Za-z0-9_]+)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$", re.DOTALL)
+
+
+def parse_update(data: dict, bot_id: str) -> list[InboundEvent]:
     """Normalize a Telegram Update into our schema. Text messages only for now.
 
     Handles both fresh (`message`) and `edited_message` updates; group and
@@ -55,16 +61,29 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
     sender_name = " ".join(
         part for part in (sender.get("first_name"), sender.get("last_name")) if part
     )
+    provider_message_id = f"{chat_id}:{message['message_id']}"
+    common = {
+        "external_event_id": f"{bot_id}:{data['update_id']}",
+        "provider_inbox_id": bot_id,
+        "provider_message_id": provider_message_id,
+        "provider_thread_id": str(chat_id),
+        "sender_address": sender.get("username") or str(sender.get("id", "")) or None,
+        "sender_name": sender_name or None,
+        "chat_type": chat.get("type"),
+    }
+    match = COMMAND_RE.match(message["text"].strip())
+    if match and not edited:
+        return [
+            InboundCommand(
+                **common,
+                command=match.group(1),
+                text=match.group(2) or "",
+            )
+        ]
     return [
         InboundMessage(
-            external_event_id=f"{bot_id}:{data['update_id']}",
-            provider_inbox_id=bot_id,
-            provider_message_id=f"{chat_id}:{message['message_id']}",
-            provider_thread_id=str(chat_id),
-            sender_address=sender.get("username") or str(sender.get("id", "")) or None,
-            sender_name=sender_name or None,
+            **common,
             text=message["text"],
-            chat_type=chat.get("type"),
             edited=edited,
         )
     ]
@@ -84,6 +103,7 @@ class TelegramProvider:
             Capability.SEND,
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
+            Capability.COMMANDS,
         }
     )
 
@@ -178,7 +198,7 @@ class TelegramProvider:
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if credentials is None:
             # Telegram webhooks are always per-connection; the scoped route
             # supplies the connection's credentials.

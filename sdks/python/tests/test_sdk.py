@@ -330,6 +330,78 @@ def test_on_reaction_dispatches():
     assert seen[0].action == "added"
 
 
+def test_on_command_dispatches_and_replies_to_source_message():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "command": "triage", "text": "urgent inbox",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "U123"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Command] = []
+
+    @client.on_command
+    def handle(command: Command) -> None:
+        seen.append(command)
+        command.reply(f"running /{command.command} {command.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].command == "triage"
+    assert seen[0].text == "urgent inbox"
+    assert replies[0][0] == "/v1/messages/msg_9/reply"
+    assert replies[0][1]["text"] == "running /triage urgent inbox"
+
+
+def test_command_reply_uses_conversation_when_no_source_message():
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1", "conversation_id": "conv_1",
+                "command": "triage", "text": "", "sender": {"address": "U123"},
+            },
+        }
+    ]
+    sends = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        sends.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    client.on_command(lambda command: command.reply("ok"))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert sends[0][0] == "/v1/conversations/conv_1/messages"
+    assert sends[0][1]["text"] == "ok"
+
+
 def test_message_carries_media_to_handler():
     events = [
         {

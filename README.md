@@ -386,6 +386,34 @@ Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
 `sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
 that can't render blocks; omit it and a clean text fallback is generated for you.
 
+## Reactions and commands
+
+Reactions and slash/bot commands are first-class events where the channel
+supports them. Channels without the capability simply never emit those events.
+
+```python
+@client.on_reaction
+def handle_reaction(reaction):
+    print(reaction.action, reaction.emoji)
+
+@client.on_command
+def handle_command(command):
+    if command.command == "triage":
+        command.reply(f"Triaging: {command.text}")
+```
+
+```typescript
+client.onReaction(async (reaction) => {
+  console.log(reaction.action, reaction.emoji);
+});
+
+client.onCommand(async (command) => {
+  if (command.command === "triage") {
+    await command.reply(`Triaging: ${command.text}`);
+  }
+});
+```
+
 ## What's in this repo
 
 | Package | |
