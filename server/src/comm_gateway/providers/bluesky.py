@@ -23,8 +23,10 @@ import httpx
 
 from .base import (
     Capability,
+    OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
+    SendResult,
 )
 
 SESSION_PATH = "/xrpc/com.atproto.server.createSession"
@@ -33,6 +35,23 @@ LIST_NOTIFICATIONS_PATH = "/xrpc/app.bsky.notification.listNotifications"
 POST_COLLECTION = "app.bsky.feed.post"
 TOKEN_HEADER = "x-caspian-webhook-token"
 INVALID_MESSAGE_ID_ERROR = "invalid Bluesky provider_message_id"
+
+MISSING_CREDENTIALS_ERROR = (
+    "bluesky requires identifier and app_password in the connection credentials"
+)
+
+INVALID_SESSION_RESPONSE_ERROR = "bluesky createSession returned an invalid response"
+
+INVALID_RECORD_RESPONSE_ERROR = "bluesky createRecord returned an invalid response"
+
+MISSING_DID_ERROR = "bluesky createSession response is missing did"
+MISSING_HANDLE_ERROR = "bluesky createSession response is missing handle"
+MISSING_ACCESS_TOKEN_ERROR = "bluesky createSession response is missing accessJwt"
+
+MISSING_URI_ERROR = "bluesky createRecord response is missing uri"
+MISSING_CID_ERROR = "bluesky createRecord response is missing cid"
+
+MISSING_TEXT_ERROR = "bluesky requires a text message"
 
 
 def _utc_now() -> str:
@@ -71,7 +90,7 @@ def _decode_message_id(provider_message_id: str) -> dict[str, str]:
 
     try:
         value = json.loads(base64.urlsafe_b64decode(padded).decode())
-    except ValueError as exc:
+    except (ValueError, UnicodeDecodeError) as exc:
         raise ValueError(INVALID_MESSAGE_ID_ERROR) from exc
 
     required = {"uri", "cid", "root_uri", "root_cid"}
@@ -79,10 +98,7 @@ def _decode_message_id(provider_message_id: str) -> dict[str, str]:
     if (
         not isinstance(value, dict)
         or not required.issubset(value)
-        or not all(
-            isinstance(value[key], str) and value[key]
-            for key in required
-        )
+        or not all(isinstance(value[key], str) and value[key] for key in required)
     ):
         raise ValueError(INVALID_MESSAGE_ID_ERROR)
 
@@ -124,7 +140,7 @@ class BlueskyProvider:
     def _create_session(
         self,
         credentials: Mapping[str, str] | None,
-    ) -> dict:
+    ) -> dict[str, object]:
         """Authenticate a connected account and return its session response."""
         creds = credentials or {}
 
@@ -132,9 +148,7 @@ class BlueskyProvider:
         app_password = creds.get("app_password")
 
         if not identifier or not app_password:
-            raise ValueError(
-                "bluesky requires identifier and app_password credentials"
-            )
+            raise ValueError(MISSING_CREDENTIALS_ERROR)
 
         response = self._client.post(
             SESSION_PATH,
@@ -146,8 +160,9 @@ class BlueskyProvider:
         response.raise_for_status()
 
         session = response.json()
+
         if not isinstance(session, dict):
-            raise ValueError("bluesky createSession returned an invalid response")
+            raise ValueError(INVALID_SESSION_RESPONSE_ERROR)
 
         return session
 
@@ -162,12 +177,170 @@ class BlueskyProvider:
         handle = session.get("handle")
 
         if not isinstance(did, str) or not did:
-            raise ValueError("bluesky createSession response is missing did")
+            raise ValueError(MISSING_DID_ERROR)
 
         if not isinstance(handle, str) or not handle:
-            raise ValueError("bluesky createSession response is missing handle")
+            raise ValueError(MISSING_HANDLE_ERROR)
 
         return ProvisionResult(
             address=handle,
             provider_resource_id=did,
+        )
+
+    def _create_post(
+        self,
+        *,
+        access_token: str,
+        repo: str,
+        text: str,
+        reply: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Create a Bluesky post and return the provider response."""
+        record: dict[str, object] = {
+            "$type": POST_COLLECTION,
+            "text": text,
+            "createdAt": _utc_now(),
+        }
+
+        if reply is not None:
+            record["reply"] = reply
+
+        payload = {
+            "repo": repo,
+            "collection": POST_COLLECTION,
+            "record": record,
+        }
+
+        response = self._client.post(
+            CREATE_RECORD_PATH,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+
+        result = response.json()
+
+        if not isinstance(result, dict):
+            raise ValueError(INVALID_RECORD_RESPONSE_ERROR)
+
+        return result
+
+    def send(
+        self,
+        provider_inbox_id: str,
+        message: OutboundMessage,
+        credentials: Mapping[str, str] | None = None,
+    ) -> SendResult:
+        """Create a new Bluesky post."""
+        del provider_inbox_id
+
+        if not message.text:
+            raise ValueError(MISSING_TEXT_ERROR)
+
+        session = self._create_session(credentials)
+
+        access_token = session.get("accessJwt")
+        did = session.get("did")
+
+        if not isinstance(access_token, str) or not access_token:
+            raise ValueError(MISSING_ACCESS_TOKEN_ERROR)
+
+        if not isinstance(did, str) or not did:
+            raise ValueError(MISSING_DID_ERROR)
+
+        result = self._create_post(
+            access_token=access_token,
+            repo=did,
+            text=message.text,
+        )
+
+        uri = result.get("uri")
+        cid = result.get("cid")
+
+        if not isinstance(uri, str) or not uri:
+            raise ValueError(MISSING_URI_ERROR)
+
+        if not isinstance(cid, str) or not cid:
+            raise ValueError(MISSING_CID_ERROR)
+
+        provider_message_id = _encode_message_id(
+            uri=uri,
+            cid=cid,
+        )
+
+        return SendResult(
+            provider_message_id=provider_message_id,
+            provider_thread_id=provider_message_id,
+        )
+
+    def reply(
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
+        credentials: Mapping[str, str] | None = None,
+    ) -> SendResult:
+        """Reply to an existing Bluesky post."""
+        del provider_inbox_id
+
+        if not message.text:
+            raise ValueError(MISSING_TEXT_ERROR)
+
+        session = self._create_session(credentials)
+
+        access_token = session.get("accessJwt")
+        did = session.get("did")
+
+        if not isinstance(access_token, str) or not access_token:
+            raise ValueError(MISSING_ACCESS_TOKEN_ERROR)
+
+        if not isinstance(did, str) or not did:
+            raise ValueError("bluesky createSession response is missing did")
+
+        parent = _decode_message_id(provider_message_id)
+
+        reply_reference: dict[str, object] = {
+            "root": {
+                "uri": parent["root_uri"],
+                "cid": parent["root_cid"],
+            },
+            "parent": {
+                "uri": parent["uri"],
+                "cid": parent["cid"],
+            },
+        }
+
+        result = self._create_post(
+            access_token=access_token,
+            repo=did,
+            text=message.text,
+            reply=reply_reference,
+        )
+
+        uri = result.get("uri")
+        cid = result.get("cid")
+
+        if not isinstance(uri, str) or not uri:
+            raise ValueError("bluesky createRecord response is missing uri")
+
+        if not isinstance(cid, str) or not cid:
+            raise ValueError("bluesky createRecord response is missing cid")
+
+        new_message_id = _encode_message_id(
+            uri=uri,
+            cid=cid,
+            root_uri=parent["root_uri"],
+            root_cid=parent["root_cid"],
+        )
+
+        thread_id = _encode_message_id(
+            uri=parent["root_uri"],
+            cid=parent["root_cid"],
+        )
+
+        return SendResult(
+            provider_message_id=new_message_id,
+            provider_thread_id=thread_id,
         )
