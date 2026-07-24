@@ -53,6 +53,8 @@ def test_streaming_post_edit():
             s.append(" chunk3")
             # After chunk3, chunk2 should have triggered a PATCH
             assert any(m == "PATCH" for m, path, body in seen)
+            # Ensure the PATCH happened *before* the context exits
+            assert seen[-1][0] == "PATCH"
     finally:
         client.close()
 

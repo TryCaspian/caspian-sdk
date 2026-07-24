@@ -304,11 +304,12 @@ class StreamSession:
             try:
                 result = self._client.reply(self._message_id, text=self.text)
                 self._posted_id = result.get("id") or result.get("message_id")
-                if not self._posted_id:
-                    # The provider doesn't support predictable IDs; fallback to final_only
-                    self._strategy = "final_only"
             except Exception:
-                logger.warning("stream initial post failed; will retry on next chunk")
+                logger.warning("stream initial post failed; falling back to final_only")
+                
+            if not self._posted_id:
+                # The provider doesn't support predictable IDs or failed; fallback to final_only
+                self._strategy = "final_only"
             self._last_edit = now
         elif now - self._last_edit >= self._edit_interval:
             # Throttled edit
@@ -531,8 +532,9 @@ class CommClient:
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
-        self._last_credit_warning: float = 0.0
+        self.handlers: dict[str, list[Callable]] = {}
         self.state = state or InMemoryStateAdapter()
+        self._strategy_cache: dict[str, str] = {}
 
     def close(self) -> None:
         """Execute close."""
@@ -950,18 +952,28 @@ class CommClient:
             json={"text": text, "html": html, "blocks": blocks},
         )
 
+    def invalidate_strategy_cache(self, connection_id: str) -> None:
+        """Invalidate the cached streaming strategy for a connection."""
+        self._strategy_cache.pop(connection_id, None)
+
     def _stream_strategy(self, connection_id: str) -> "StreamStrategy":
         """Determine the streaming strategy for a connection by checking its
         channel capabilities. Returns ``post_edit`` if the channel supports
         editing own messages, ``final_only`` otherwise."""
+        if connection_id in self._strategy_cache:
+            return self._strategy_cache[connection_id]
+            
+        strategy = "final_only"
         try:
             conn = self.get_connection(connection_id)
             capabilities = conn.get("capabilities") or []
             if "edit_outbound" in capabilities:
-                return "post_edit"
+                strategy = "post_edit"
         except Exception:
-            logger.debug("could not resolve streaming strategy; defaulting to final_only")
-        return "final_only"
+            pass
+            
+        self._strategy_cache[connection_id] = strategy
+        return strategy
 
     def set_webhook(self, url: str, secret: str | None = None) -> dict:
         """Receive events by push instead of (or alongside) polling."""

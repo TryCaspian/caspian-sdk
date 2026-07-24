@@ -9,17 +9,17 @@ def test_in_memory_state_adapter_seen():
     adapter = InMemoryStateAdapter(max_events=2)
     assert adapter.seen("evt_1") is False
     assert adapter.seen("evt_1") is True
-    
+
     assert adapter.seen("evt_2") is False
     assert adapter.seen("evt_3") is False
-    
+
     # evt_1 should be evicted because max_events=2
     assert adapter.seen("evt_1") is False
 
 
 def test_in_memory_state_adapter_lock():
     adapter = InMemoryStateAdapter()
-    
+
     result = []
 
     def worker1():
@@ -39,7 +39,7 @@ def test_in_memory_state_adapter_lock():
     # ensure t1 grabs lock first
     time.sleep(0.01)
     t2.start()
-    
+
     t1.join()
     t2.join()
 
@@ -50,17 +50,17 @@ def test_in_memory_state_adapter_lock():
 def test_redis_state_adapter_seen():
     r = fakeredis.FakeRedis()
     adapter = RedisStateAdapter(r)
-    
+
     assert adapter.seen("evt_1") is False
     assert adapter.seen("evt_1") is True
-    
+
     r.flushall()
 
 
 def test_redis_state_adapter_lock():
     r = fakeredis.FakeRedis()
     adapter = RedisStateAdapter(r)
-    
+
     result = []
 
     def worker1():
@@ -79,7 +79,7 @@ def test_redis_state_adapter_lock():
     t1.start()
     time.sleep(0.01)
     t2.start()
-    
+
     t1.join()
     t2.join()
 

@@ -51,6 +51,8 @@ describe("Streaming", () => {
     
     // Assert a PATCH has happened before finalize()
     expect(calls.some(c => c.method === "PATCH")).toBe(true);
+    // Ensure the last call before finalize was a PATCH
+    expect(calls[calls.length - 1].method).toBe("PATCH");
     
     await stream.finalize();
 

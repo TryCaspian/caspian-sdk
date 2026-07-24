@@ -144,11 +144,12 @@ export class StreamSession {
       try {
         const res = await this.client.reply(this.messageId, this.text);
         this.postedId = (res.id as string) || (res.message_id as string);
-        if (!this.postedId) {
-          this.strategy = "final_only";
-        }
       } catch (err) {
-        logger.warn("stream initial post failed; will retry on next chunk", err);
+        logger.warn("stream initial post failed; falling back to final_only", err);
+      }
+      
+      if (!this.postedId) {
+        this.strategy = "final_only";
       }
       this.lastEdit = now;
     } else if (now - this.lastEdit >= this.editIntervalMs) {
@@ -236,6 +237,7 @@ export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
   private readonly running = new Set<string>();
+  private pollTimeout: NodeJS.Timeout | null = null;
   private readonly debounced = new Map<
     string,
     { event: EventRecord; timer?: ReturnType<typeof setTimeout> }
@@ -381,6 +383,7 @@ export class CommClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly handlers: MessageHandler[] = [];
+  private strategyCache = new Map<string, StreamStrategy>();
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
@@ -717,16 +720,27 @@ export class CommClient {
     });
   }
 
+  invalidateStrategyCache(connectionId: string): void {
+    this.strategyCache.delete(connectionId);
+  }
+
   async getStreamStrategy(connectionId: string): Promise<StreamStrategy> {
+    if (this.strategyCache.has(connectionId)) {
+      return this.strategyCache.get(connectionId)!;
+    }
+    
+    let strategy: StreamStrategy = "final_only";
     try {
       const conn = await this.getConnection(connectionId);
       const caps = (conn.capabilities as string[]) || [];
       if (caps.includes("edit_outbound")) {
-        return "post_edit";
+        strategy = "post_edit";
       }
     } catch (err) {
     }
-    return "final_only";
+    
+    this.strategyCache.set(connectionId, strategy);
+    return strategy;
   }
 
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
