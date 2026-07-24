@@ -216,6 +216,10 @@ class CommClient:
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
+        self._conversation_queues = {}
+        self._conversation_running = set()
+        self._concurrency = "queue"
+        self._executor = None
     def close(self) -> None:
         self._http.close()
 
@@ -835,7 +839,7 @@ class CommClient:
                 return last_seq
             for event in batch:
                 last_seq = event["seq"]
-                self._dispatch_event(event)
+                self._route_event(event)
 
     def listen(
         self,
@@ -877,9 +881,23 @@ class CommClient:
                 time.sleep(poll_interval)
                 continue
             for event in batch:
-                self._dispatch_event(event)
+                self._route_event(event)
                 seq = event["seq"]  # advance only after the dispatch attempt
+    def _route_event(self, event: dict) -> None:
+        if event.get("type") != "message.received":
+            self._dispatch_event(event)
+            return
 
+        conversation_id = event["data"]["message"]["conversation_id"]
+
+        if conversation_id not in self._conversation_queues:
+            self._conversation_queues[conversation_id] = []
+
+        self._conversation_queues[conversation_id].append(event)
+
+        self._dispatch_event(event)
+
+        
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""
         while True:
