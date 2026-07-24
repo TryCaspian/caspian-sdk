@@ -17,6 +17,7 @@ Usage:
 
 import logging
 import os
+import threading
 import sys
 import time
 from collections.abc import Callable
@@ -220,6 +221,7 @@ class CommClient:
         self._conversation_queues = {}
         self._conversation_running = set()
         self._concurrency = "queue"
+        self._conversation_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=8)
     def close(self) -> None:
         self._http.close()
@@ -894,41 +896,46 @@ class CommClient:
             return
 
         conversation_id = event["data"]["message"]["conversation_id"]
-        if conversation_id not in self._conversation_queues:
-            self._conversation_queues[conversation_id] = []
 
-        if conversation_id in self._conversation_running:
-            if self._concurrency == "drop":
-                return
+        with self._conversation_lock:
+            if conversation_id not in self._conversation_queues:
+                self._conversation_queues[conversation_id] = []
 
-            if self._concurrency == "parallel":
-                self._executor.submit(
-                    self._dispatch_event,
-                    event,
-                )
+            if conversation_id in self._conversation_running:
+                if self._concurrency == "drop":
+                    return
+
+                if self._concurrency == "parallel":
+                    self._executor.submit(
+                        self._dispatch_event,
+                        event,
+                    )
+                    return
+
+                self._conversation_queues[conversation_id].append(event)
                 return
 
             self._conversation_queues[conversation_id].append(event)
-            return
 
-        self._conversation_queues[conversation_id].append(event)
-
-        self._conversation_running.add(conversation_id)
+            self._conversation_running.add(conversation_id)
 
         self._executor.submit(
             self._process_conversation,
             conversation_id,
-)
+        )
     def _process_conversation(self, conversation_id):
         try:
             while True:
-                if not self._conversation_queues[conversation_id]:
-                    break
+                with self._conversation_lock:
+                    if not self._conversation_queues[conversation_id]:
+                        self._conversation_running.remove(conversation_id)
+                        break
 
-                event = self._conversation_queues[conversation_id].pop(0)
+                    event = self._conversation_queues[conversation_id].pop(0)
+
                 self._dispatch_event(event)
         finally:
-            self._conversation_running.remove(conversation_id)
+            pass
         
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

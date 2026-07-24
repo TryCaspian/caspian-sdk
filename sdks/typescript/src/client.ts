@@ -971,6 +971,8 @@ export class CommClient {
    */
   async listen(opts: ListenOptions = {}): Promise<void> {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
+    this.concurrency = opts.concurrency ?? "queue";
+    
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
     let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));

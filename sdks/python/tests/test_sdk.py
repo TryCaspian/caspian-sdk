@@ -354,6 +354,7 @@ def test_drop_skips_overlapping_messages():
     client._concurrency = "drop"
 
     def handler(message):
+        time.sleep(0.05)
         processed.append(message.text)
 
     client.on_message(handler)
@@ -400,6 +401,7 @@ def test_parallel_processes_overlapping_messages():
     client._concurrency = "parallel"
 
     def handler(message):
+        time.sleep(0.05)
         processed.append(message.text)
 
     client.on_message(handler)
@@ -426,7 +428,7 @@ def test_parallel_processes_overlapping_messages():
             "agent_id": "agt_2",
             "message": {
                 "id": "2",
-                "conversation_id": "conv2",
+                "conversation_id": "conv1",
                 "connection_id": "cn2",
                 "channel": "email",
                 "text": "second",
