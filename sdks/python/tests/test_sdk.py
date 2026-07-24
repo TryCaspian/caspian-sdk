@@ -579,3 +579,73 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+# --- Tests for Typed Auth & Billing Errors (Issue #3) ---
+
+def test_account_required_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "detail": {
+                    "reason": "account_required",
+                    "message": "Sign in to use paid channels.",
+                    "login_options": [{"start": "/v1/auth/device/start"}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 401
+    assert err.reason == "account_required"
+
+
+def test_insufficient_credit_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "message": "Out of credit.",
+                    "balance_cents": 42,
+                    "payment_options": [
+                        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+                    ],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 402
+    assert err.reason == "insufficient_credit"
+
+
+def test_monthly_cap_reached_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "monthly_cap_reached", "message": "Capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "monthly_cap_reached"
