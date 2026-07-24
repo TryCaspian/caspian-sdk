@@ -582,65 +582,70 @@ def test_behavior_prompt_returns_text():
 
 # --- Tests for Typed Auth & Billing Errors (Issue #3) ---
 
-def test_account_required_error(httpx_mock):
-    httpx_mock.add_response(
-        url="https://api.trycaspianai.com/v1/connect/email",
-        status_code=401,
-        json={
-            "error": {
-                "message": "Account login required",
-                "type": "authentication_error",
-                "reason": "account_required",
-                "login_url": "https://trycaspianai.com/login",
-            }
-        },
-    )
-    client = CommClient(api_key="test_key")
-    import pytest
-    with pytest.raises(AccountRequiredError) as exc_info:
-        client.connect_email("test")
-    assert exc_info.value.status_code == 401
-    assert exc_info.value.reason == "account_required"
+def test_account_required_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "detail": {
+                    "reason": "account_required",
+                    "message": "Sign in to use paid channels.",
+                    "login_options": [{"start": "/v1/auth/device/start"}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 401
+    assert err.reason == "account_required"
 
 
-def test_insufficient_credit_error(httpx_mock):
-    httpx_mock.add_response(
-        url="https://api.trycaspianai.com/v1/connect/email",
-        status_code=402,
-        json={
-            "error": {
-                "message": "Insufficient credit balance",
-                "type": "billing_error",
-                "reason": "insufficient_credit",
-                "balance": 0.00,
-            }
-        },
-    )
-    client = CommClient(api_key="test_key")
-    import pytest
-    with pytest.raises(InsufficientCreditError) as exc_info:
-        client.connect_email("test")
-    assert exc_info.value.status_code == 402
-    assert exc_info.value.reason == "insufficient_credit"
+def test_insufficient_credit_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "message": "Out of credit.",
+                    "balance_cents": 42,
+                    "payment_options": [
+                        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+                    ],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 402
+    assert err.reason == "insufficient_credit"
 
 
-def test_monthly_cap_reached_error(httpx_mock):
-    httpx_mock.add_response(
-        url="https://api.trycaspianai.com/v1/connect/email",
-        status_code=429,
-        json={
-            "error": {
-                "message": "Monthly usage cap reached",
-                "type": "rate_limit_error",
-                "reason": "monthly_cap_reached",
-            }
-        },
-    )
-    client = CommClient(api_key="test_key")
-    import pytest
-    with pytest.raises(Exception) as exc_info:
-        client.connect_email("test")
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.reason == "monthly_cap_reached"
+def test_monthly_cap_reached_error_typed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "monthly_cap_reached", "message": "Capped."}},
+        )
 
-
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "monthly_cap_reached"
