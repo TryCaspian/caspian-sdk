@@ -707,11 +707,9 @@ def test_stream_no_double_send_on_reply_failure():
         sender=None, subject=None, text="hi", html=None, media=[], _client=client,
     )
     try:
-        try:
+        with pytest.raises(httpx.ConnectError):
             with msg.stream() as s:
                 s.append("hello")
-        except Exception:
-            pass
     finally:
         client.close()
     reply_calls = [c for c in calls if "/reply" in c]
@@ -744,3 +742,29 @@ def test_stream_final_flush_skips_when_unchanged():
     assert final_edit[1]["text"] == "Hello world"
     all_texts = [b[1]["text"] for b in bodies]
     assert all_texts[-1] != all_texts[-2] or len(edit_calls) == 1
+
+
+def test_stream_no_duplicate_reply_when_id_missing():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    from caspian_sdk import Message
+
+    msg = Message(
+        id="msg_1", conversation_id="c1", connection_id="cn1",
+        customer_id="cus_1", agent_id="agt_1", channel="telegram",
+        sender=None, subject=None, text="hi", html=None, media=[], _client=client,
+    )
+    try:
+        with msg.stream(throttle=0) as s:
+            s.append("a")
+            s.append("b")
+            s.append("c")
+    finally:
+        client.close()
+    reply_calls = [c for c in calls if "/reply" in c]
+    assert len(reply_calls) == 1
