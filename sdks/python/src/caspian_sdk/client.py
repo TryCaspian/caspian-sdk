@@ -22,7 +22,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-
+from concurrent.futures import ThreadPoolExecutor
+import queue
 import httpx
 
 logger = logging.getLogger("caspian_sdk")
@@ -219,7 +220,7 @@ class CommClient:
         self._conversation_queues = {}
         self._conversation_running = set()
         self._concurrency = "queue"
-        self._executor = None
+        self._executor = ThreadPoolExecutor(max_workers=8)
     def close(self) -> None:
         self._http.close()
 
@@ -889,13 +890,23 @@ class CommClient:
             return
 
         conversation_id = event["data"]["message"]["conversation_id"]
-
         if conversation_id not in self._conversation_queues:
             self._conversation_queues[conversation_id] = []
 
         self._conversation_queues[conversation_id].append(event)
 
-        self._dispatch_event(event)
+        if conversation_id in self._conversation_running:
+            self._conversation_queues[conversation_id].append(event)
+            return
+
+        self._conversation_running.add(conversation_id)
+
+        try:
+            while self._conversation_queues[conversation_id]:
+                next_event = self._conversation_queues[conversation_id].pop(0)
+                self._dispatch_event(next_event)
+        finally:
+            self._conversation_running.remove(conversation_id)
 
         
     def _latest_seq(self) -> int:
