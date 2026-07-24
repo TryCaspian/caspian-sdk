@@ -3,7 +3,9 @@
 import base64
 import json
 import time
+from urllib.parse import parse_qs
 
+import httpx
 import pytest
 from caspian_adapters.base import OutboundMessage, WebhookVerificationError
 from caspian_adapters.teams import (
@@ -55,7 +57,7 @@ class StaticVerifier:
         self.token = token
         self.audience = ""
 
-    def verify(self, token: str, audience: str) -> dict:
+    def verify(self, token: str, audience: str, channel_id: str | None = None) -> dict:
         self.audience = audience
         if token != self.token:
             raise WebhookVerificationError("Bot Framework JWT signature mismatch")
@@ -125,6 +127,70 @@ def test_bot_framework_jwt_verifier_accepts_and_rejects_jwks_tokens():
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     with pytest.raises(WebhookVerificationError, match="signature"):
         verifier.verify(_jwt(other_key), APP_ID)
+
+
+def test_teams_provider_caches_access_tokens_per_credential_set():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url == httpx.URL("https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token")
+        assert request.method == "POST"
+        body = parse_qs(request.content.decode())
+        assert body["grant_type"] == ["client_credentials"]
+        assert body["client_id"] == ["app-1"]
+        assert body["client_secret"] == ["secret-1"]
+        assert body["scope"] == ["https://api.botframework.com/.default"]
+        return httpx.Response(200, json={"access_token": "token-1", "expires_in": 3600})
+
+    provider = TeamsProvider()
+    provider._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    assert provider._access_token({"app_id": "app-1", "app_password": "secret-1"}) == "token-1"
+    assert provider._access_token({"app_id": "app-1", "app_password": "secret-1"}) == "token-1"
+    assert len(requests) == 1
+
+
+def test_teams_provider_posts_to_preserved_service_url_and_parses_response():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "token-2", "expires_in": 3600})
+        assert request.url == httpx.URL(
+            "https://example.invalid/service/v3/conversations/19:team@thread.tacv2/activities"
+        )
+        assert request.headers["authorization"] == "Bearer token-2"
+        assert request.method == "POST"
+        assert json.loads(request.content) == {
+            "type": "message",
+            "text": "pong",
+            "replyToId": "reply-1",
+        }
+        return httpx.Response(200, json={"id": "activity-123"})
+
+    provider = TeamsProvider()
+    provider._client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider._conversation_service_urls["19:team@thread.tacv2"] = "https://example.invalid/service"
+
+    result = provider.reply(
+        APP_ID,
+        _message_id("19:team@thread.tacv2", "reply-1"),
+        OutboundMessage(text="pong"),
+        credentials={"app_id": "app-2", "app_password": "secret-2"},
+    )
+
+    assert result.provider_thread_id == "19:team@thread.tacv2"
+    assert result.provider_message_id == _message_id("19:team@thread.tacv2", "activity-123")
+    assert len(requests) == 2
+
+
+def test_teams_provider_requires_recipient_for_send():
+    provider = TeamsProvider()
+
+    with pytest.raises(ValueError, match="recipient"):
+        provider.send(APP_ID, OutboundMessage(text="hello"))
 
 
 def test_fake_teams_consumes_realistic_activity_shape_and_routes_replies():

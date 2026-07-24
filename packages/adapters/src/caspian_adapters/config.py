@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     slack_apps: str = ""
 
     teams_messaging_endpoint: str = ""
-    teams_connector_base_url: str = "https://smba.trafficmanager.net/amer"
+    teams_connector_base_url: str = "https://smba.trafficmanager.net/teams"
     teams_token_url: str = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
     teams_openid_config_url: str = (
         "https://login.botframework.com/v1/.well-known/openidconfiguration"

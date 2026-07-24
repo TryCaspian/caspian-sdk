@@ -29,7 +29,7 @@ from .base import (
     lower_headers,
 )
 
-CONNECTOR_BASE = "https://smba.trafficmanager.net/amer"
+CONNECTOR_BASE = "https://smba.trafficmanager.net/teams"
 TOKEN_URL = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
 OPENID_CONFIG_URL = (
     "https://login.botframework.com/v1/.well-known/openidconfiguration"
@@ -79,7 +79,7 @@ def parse_activity(data: dict, app_id: str) -> list[InboundMessage]:
             sender_name=sender.get("name"),
             recipients=[{"id": recipient.get("id"), "name": recipient.get("name")}],
             text=text,
-            html=data.get("textFormat") == "xml" and text or None,
+            html=text if data.get("textFormat") == "xml" else None,
             chat_type=_chat_type(conversation),
             attachments=attachments,
         )
@@ -89,6 +89,8 @@ def parse_activity(data: dict, app_id: str) -> list[InboundMessage]:
 def parse_attachments(data: dict) -> list[Attachment]:
     out: list[Attachment] = []
     for attachment in data.get("attachments") or []:
+        if not attachment.get("contentUrl"):
+            continue
         out.append(
             Attachment(
                 url=attachment.get("contentUrl"),
@@ -101,7 +103,7 @@ def parse_attachments(data: dict) -> list[Attachment]:
 
 
 def _chat_type(conversation: Mapping[str, object]) -> str | None:
-    if conversation.get("isGroup") is True:
+    if conversation.get("isGroup") is True or conversation.get("conversationType") == "groupChat":
         return "group"
     return "private" if conversation.get("conversationType") == "personal" else "channel"
 
@@ -114,8 +116,10 @@ class BotFrameworkJwtVerifier:
         self._client = httpx.Client(timeout=30.0)
         self._jwks: dict | None = None
         self._jwks_url = ""
+        self._jwks_loaded_at = 0.0
+        self._jwks_refresh_interval = 24 * 60 * 60
 
-    def verify(self, token: str, audience: str) -> dict:
+    def verify(self, token: str, audience: str, channel_id: str | None = None) -> dict:
         header, claims, signing_input, signature = self._decode(token)
         if header.get("alg") != "RS256":
             raise WebhookVerificationError("Bot Framework JWT algorithm mismatch")
@@ -126,7 +130,7 @@ class BotFrameworkJwtVerifier:
         now = int(time.time())
         if int(claims.get("nbf", 0)) > now or int(claims.get("exp", 0)) <= now:
             raise WebhookVerificationError("Bot Framework JWT expired or not yet valid")
-        key = self._key(header.get("kid", ""))
+        key = self._key(header.get("kid", ""), channel_id)
         digest = Hash(SHA256())
         digest.update(signing_input)
         hashed = digest.finalize()
@@ -146,25 +150,48 @@ class BotFrameworkJwtVerifier:
             raise WebhookVerificationError("invalid Bot Framework JWT") from exc
         return header, claims, f"{head}.{body}".encode(), signature
 
-    def _key(self, kid: str):
-        for jwk in self._jwks_doc().get("keys", []):
+    def _key(self, kid: str, channel_id: str | None = None):
+        key, endorsement_mismatch = self._find_key(kid, channel_id, self._jwks_doc())
+        if key is not None:
+            return key
+        key, forced_mismatch = self._find_key(kid, channel_id, self._jwks_doc(force=True))
+        if key is not None:
+            return key
+        if endorsement_mismatch or forced_mismatch:
+            raise WebhookVerificationError("Bot Framework JWT channel endorsement mismatch")
+        raise WebhookVerificationError("Bot Framework JWT key not found")
+
+    def _find_key(self, kid: str, channel_id: str | None, jwks_doc: dict):
+        endorsement_mismatch = False
+        for jwk in jwks_doc.get("keys", []):
             if jwk.get("kid") == kid and jwk.get("kty") == "RSA":
+                endorsements = jwk.get("endorsements") or []
+                if channel_id and endorsements and channel_id not in endorsements:
+                    endorsement_mismatch = True
+                    continue
                 public_numbers = rsa.RSAPublicNumbers(
                     e=int.from_bytes(_b64url_decode(jwk["e"]), "big"),
                     n=int.from_bytes(_b64url_decode(jwk["n"]), "big"),
                 )
-                return public_numbers.public_key()
-        raise WebhookVerificationError("Bot Framework JWT key not found")
+                return public_numbers.public_key(), False
+        return None, endorsement_mismatch
 
-    def _jwks_doc(self) -> dict:
-        if self._jwks is not None:
+    def _jwks_doc(self, force: bool = False) -> dict:
+        now = time.time()
+        if (
+            not force
+            and self._jwks is not None
+            and (not self._jwks_url or now - self._jwks_loaded_at < self._jwks_refresh_interval)
+        ):
             return self._jwks
-        config = self._client.get(self._openid_config_url)
-        config.raise_for_status()
-        self._jwks_url = config.json()["jwks_uri"]
+        if not self._jwks_url or force:
+            config = self._client.get(self._openid_config_url)
+            config.raise_for_status()
+            self._jwks_url = config.json()["jwks_uri"]
         jwks = self._client.get(self._jwks_url)
         jwks.raise_for_status()
         self._jwks = jwks.json()
+        self._jwks_loaded_at = now
         return self._jwks
 
 
@@ -189,6 +216,8 @@ class TeamsProvider:
         self._token_url = token_url
         self._client = httpx.Client(timeout=30.0)
         self._verifier = verifier or BotFrameworkJwtVerifier(openid_config_url)
+        self._conversation_service_urls: dict[str, str] = {}
+        self._token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         app_id = request.credentials["app_id"]
@@ -201,6 +230,8 @@ class TeamsProvider:
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
+        if not message.to:
+            raise ValueError("teams send requires at least one recipient conversation id")
         conversation_id = message.to[0]
         return self._post_activity(provider_inbox_id, conversation_id, message, credentials)
 
@@ -225,19 +256,31 @@ class TeamsProvider:
         app_id = (credentials or {}).get("app_id")
         if not app_id:
             raise WebhookVerificationError("teams webhooks require app_id credentials")
-        self._verify_authorization(headers, app_id)
         try:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
-        return parse_activity(data, app_id)
+        header_map = lower_headers(headers)
+        channel_id = data.get("channelId") or header_map.get("channelid") or header_map.get("channel-id")
+        self._verify_authorization(headers, app_id, channel_id)
+        messages = parse_activity(data, app_id)
+        service_url = data.get("serviceUrl")
+        if service_url:
+            for inbound in messages:
+                self._conversation_service_urls[inbound.provider_thread_id] = service_url.rstrip("/")
+        return messages
 
-    def _verify_authorization(self, headers: Mapping[str, str], app_id: str) -> None:
+    def _verify_authorization(
+        self, headers: Mapping[str, str], app_id: str, channel_id: str | None = None
+    ) -> None:
         auth = lower_headers(headers).get("authorization", "")
         scheme, _, token = auth.partition(" ")
         if scheme.lower() != "bearer" or not token:
             raise WebhookVerificationError("missing Bot Framework bearer token")
-        self._verifier.verify(token, app_id)
+        try:
+            self._verifier.verify(token, app_id, channel_id)
+        except TypeError:
+            self._verifier.verify(token, app_id)
 
     def _post_activity(
         self,
@@ -257,7 +300,7 @@ class TeamsProvider:
                 for a in message.attachments
             ]
         response = self._client.post(
-            f"{self._connector_base_url}/v3/conversations/{conversation_id}/activities",
+            f"{self._service_url(conversation_id)}/v3/conversations/{conversation_id}/activities",
             json=body,
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -275,6 +318,11 @@ class TeamsProvider:
             return creds["access_token"]
         if not (creds.get("app_id") and creds.get("app_password")):
             raise RuntimeError("teams outbound requires app_id and app_password credentials")
+        cache_key = (creds["app_id"], creds["app_password"])
+        cached = self._token_cache.get(cache_key)
+        now = time.time()
+        if cached and cached[1] > now:
+            return cached[0]
         response = self._client.post(
             self._token_url,
             data={
@@ -285,7 +333,14 @@ class TeamsProvider:
             },
         )
         response.raise_for_status()
-        return response.json()["access_token"]
+        data = response.json()
+        token = data["access_token"]
+        expires_in = int(data.get("expires_in", 3600))
+        self._token_cache[cache_key] = (token, now + max(expires_in - 300, 0))
+        return token
+
+    def _service_url(self, conversation_id: str) -> str:
+        return self._conversation_service_urls.get(conversation_id) or self._connector_base_url
 
 
 class FakeTeamsProvider:
