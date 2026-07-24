@@ -1,6 +1,7 @@
 """Zulip adapter."""
 
 import json
+from collections.abc import Mapping
 
 import httpx
 
@@ -61,6 +62,19 @@ class ZulipProvider:
         base_url: str = "https://zulip.com/api/v1",
     ) -> None:
         self._client = httpx.Client(base_url=base_url, timeout=30.0)
+    @staticmethod
+    def _credentials(
+        credentials: Mapping[str, str] | None,
+    ) -> tuple[str, str]:
+        if credentials is None:
+            raise ValueError(
+                "connection is missing email/api_key credentials"
+            )
+
+        return (
+            credentials["email"],
+            credentials["api_key"],
+        )
     def parse_webhook(
         self,
         payload: bytes,
@@ -105,7 +119,31 @@ class ZulipProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        raise NotImplementedError
+        email, api_key = self._credentials(credentials)
+
+        body = {
+            "type": "private",
+            "to": message.to[0],
+            "content": message.text or "",
+        }
+
+        if message.subject:
+            body["type"] = "stream"
+            body["topic"] = message.subject
+
+        response = self._client.post(
+            "/messages",
+            json=body,
+            auth=(email, api_key),
+        )
+        response.raise_for_status()
+
+        result = response.json()
+
+        return SendResult(
+            provider_message_id=str(result["id"]),
+            provider_thread_id=str(body["to"]),
+        )
     def reply(
         self,
         provider_inbox_id: str,
@@ -113,4 +151,88 @@ class ZulipProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        raise NotImplementedError
+        email, api_key = self._credentials(credentials)
+
+        body = {
+            "type": "private",
+            "to": provider_inbox_id,
+            "content": message.text or "",
+        }
+
+        if message.subject:
+            body["type"] = "stream"
+            body["topic"] = message.subject
+            body["to"] = provider_message_id
+
+        response = self._client.post(
+            "/messages",
+            json=body,
+            auth=(email, api_key),
+        )
+        response.raise_for_status()
+
+        result = response.json()
+
+        return SendResult(
+            provider_message_id=str(result["id"]),
+            provider_thread_id=str(body["to"]),
+        )
+def test_send(monkeypatch):
+    provider = ZulipProvider()
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": 123}
+
+    monkeypatch.setattr(
+        provider._client,
+        "post",
+        lambda *args, **kwargs: Response(),
+    )
+
+    result = provider.send(
+        provider_inbox_id="bot@example.com",
+        message=OutboundMessage(
+            text="hello",
+            to=("alice@example.com",),
+        ),
+        credentials={
+            "email": "bot@example.com",
+            "api_key": "secret",
+        },
+    )
+
+    assert result.provider_message_id == "123"
+    assert result.provider_thread_id == "alice@example.com"
+def test_reply(monkeypatch):
+    provider = ZulipProvider()
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": 456}
+
+    monkeypatch.setattr(
+        provider._client,
+        "post",
+        lambda *args, **kwargs: Response(),
+    )
+
+    result = provider.reply(
+        provider_inbox_id="alice@example.com",
+        provider_message_id="alice@example.com",
+        message=OutboundMessage(
+            text="hi back",
+        ),
+        credentials={
+            "email": "bot@example.com",
+            "api_key": "secret",
+        },
+    )
+
+    assert result.provider_message_id == "456"
