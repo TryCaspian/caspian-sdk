@@ -138,6 +138,20 @@ def test_destination_rejects_extra_segments():
         _destination("dm:55,88:777:extra")
 
 
+@pytest.mark.parametrize(
+    "routing",
+    [
+        "stream:7:topic:not-an-id",  # trailing message id must be numeric
+        "dm:55,88:not-an-id",
+        "dm:55,,88",  # empty participant segment
+        "dm:55,abc",  # non-numeric participant
+    ],
+)
+def test_destination_rejects_malformed_segments(routing):
+    with pytest.raises(ValueError, match="unroutable"):
+        _destination(routing)
+
+
 # --- webhook verification --------------------------------------------------
 
 
@@ -221,6 +235,20 @@ def test_reply_routes_to_dm_recipients():
     assert result.provider_thread_id == "dm:55,88"
 
 
+def test_send_rejects_empty_destination_and_missing_credentials():
+    provider = ZulipProvider()
+    with pytest.raises(ValueError, match="routing destination"):
+        provider.send("inbox", OutboundMessage(text="hi"), credentials=CREDS)
+    # Missing site/bot_email/api_key must fail with a descriptive error, not a
+    # bare KeyError from the credentials dict.
+    with pytest.raises(ValueError, match="missing Zulip credentials"):
+        provider.send(
+            "inbox",
+            OutboundMessage(text="hi", to=("stream:7:support",)),
+            credentials={"webhook_token": TOKEN},
+        )
+
+
 def test_provision_resolves_bot_user_id():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/users/me"
@@ -254,6 +282,15 @@ def test_fake_rejects_bad_token():
     bad["token"] = "nope"
     with pytest.raises(WebhookVerificationError):
         fake.parse_webhook(json.dumps(bad).encode(), {})
+
+
+def test_fake_fails_closed_on_empty_token():
+    # An explicitly-empty webhook_token must reject like the real adapter, not
+    # silently skip verification.
+    fake = FakeZulipProvider()
+    payload = json.dumps(fake.webhook_payload()).encode()
+    with pytest.raises(WebhookVerificationError, match="webhook_token"):
+        fake.parse_webhook(payload, {}, credentials={"webhook_token": ""})
 
 
 # --- registry --------------------------------------------------------------

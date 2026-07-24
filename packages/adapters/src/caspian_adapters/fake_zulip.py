@@ -67,8 +67,12 @@ class FakeZulipProvider:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON") from exc
+        # Mirror the real adapter: fail closed on a missing token rather than
+        # skipping verification.
         token = (credentials or {}).get("webhook_token", self.webhook_token)
-        if token and str(data.get("token", "")) != str(token):
+        if not token:
+            raise WebhookVerificationError("connection is missing a webhook_token credential")
+        if str(data.get("token", "")) != str(token):
             raise WebhookVerificationError("Zulip token mismatch")
         return parse_message(data)
 

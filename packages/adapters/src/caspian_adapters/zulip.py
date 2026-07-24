@@ -65,16 +65,20 @@ def _destination(routing: str) -> tuple[str, dict]:
     """
     parts = routing.split(":")
     kind = parts[0]
-    if kind == "stream" and len(parts) in (3, 4):
+    # A trailing 4th (stream) / 3rd (dm) segment must be a numeric message id;
+    # anything else is a malformed destination, not something to route anyway.
+    if kind == "stream" and len(parts) in (3, 4) and (len(parts) == 3 or parts[3].isdigit()):
         stream_id, quoted_topic = parts[1], parts[2]
         # Zulip's `to` accepts a numeric stream id or a channel name; keep whichever
         # we were handed so callers can also address a stream by name.
         to = int(stream_id) if stream_id.isdigit() else stream_id
         fields = {"type": "stream", "to": to, "topic": unquote(quoted_topic)}
         return f"stream:{stream_id}:{quoted_topic}", fields
-    if kind == "dm" and len(parts) in (2, 3) and parts[1]:
-        ids = [int(x) for x in parts[1].split(",") if x]
-        return encode_dm(ids), {"type": "direct", "to": json.dumps(sorted(ids))}
+    if kind == "dm" and len(parts) in (2, 3) and (len(parts) == 2 or parts[2].isdigit()):
+        segments = parts[1].split(",")
+        if segments and all(s.isdigit() for s in segments):
+            ids = [int(s) for s in segments]
+            return encode_dm(ids), {"type": "direct", "to": json.dumps(sorted(ids))}
     raise ValueError(f"unroutable Zulip destination: {routing!r}")
 
 
@@ -169,6 +173,9 @@ class ZulipProvider:
         return creds
 
     def _post_message(self, creds: Mapping[str, str], fields: dict, content: str) -> dict:
+        missing = [k for k in ("site", "bot_email", "api_key") if not creds.get(k)]
+        if missing:
+            raise ValueError(f"connection is missing Zulip credentials: {', '.join(missing)}")
         site = creds["site"].rstrip("/")
         response = self._client.post(
             f"{site}/api/v1/messages",
@@ -203,6 +210,8 @@ class ZulipProvider:
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
+        if not message.to:
+            raise ValueError("Zulip send requires a routing destination in message.to")
         creds = self._creds(credentials)
         thread, fields = _destination(message.to[0])
         data = self._post_message(creds, fields, message.text or "")
