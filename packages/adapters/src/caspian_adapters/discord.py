@@ -19,6 +19,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -241,7 +242,7 @@ class DiscordProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         # Normal Discord messages arrive over the Gateway listener, which bridges
         # each MESSAGE_CREATE to this connection's scoped webhook. The scoped route
         # supplies the connection's resource id (the application id) in credentials.

@@ -20,6 +20,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -122,7 +123,7 @@ class _MetaMessagingProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if self._app_secret:
             received = lower_headers(headers).get("x-hub-signature-256", "")
             expected = "sha256=" + hmac.new(

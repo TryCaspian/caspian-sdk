@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AccountRequiredError,
+  Command,
   CommClient,
   CommError,
   InsufficientCreditError,
@@ -510,6 +511,77 @@ describe("CommClient", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].emoji).toBe("thumbsup");
     expect(seen[0].action).toBe("added");
+  });
+
+  it("onCommand dispatches a command and reply routes to the source message", async () => {
+    const replies: any[] = [];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              conversation_id: "conv_1",
+              command: "triage",
+              text: "urgent inbox",
+              source_message: { id: "msg_9" },
+              sender: { address: "U123" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/messages/msg_9/reply": (req) =>
+        req.json().then((b) => (replies.push(b), json({ delivered: true }))),
+    });
+    const seen: Command[] = [];
+    client.onCommand(async (command) => {
+      seen.push(command);
+      await command.reply(`running /${command.command} ${command.text}`);
+    });
+
+    await client.dispatchPending(0);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].command).toBe("triage");
+    expect(seen[0].text).toBe("urgent inbox");
+    expect(replies[0].text).toBe("running /triage urgent inbox");
+  });
+
+  it("command reply uses the conversation when there is no source message", async () => {
+    const sends: any[] = [];
+    const { client, calls } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              conversation_id: "conv_1",
+              command: "triage",
+              text: "",
+              sender: { address: "U123" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/conversations/conv_1/messages": (req) =>
+        req.json().then((b) => (sends.push(b), json({ delivered: true }))),
+    });
+    client.onCommand((command) => command.reply("ok"));
+
+    await client.dispatchPending(0);
+
+    expect(calls.map((c) => c.path)).toContain("/v1/conversations/conv_1/messages");
+    expect(sends[0].text).toBe("ok");
   });
 
   it("a message carries received media to the handler", async () => {

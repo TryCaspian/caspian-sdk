@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from caspian_adapters.base import WebhookVerificationError
+from caspian_adapters.base import InboundCommand, WebhookVerificationError
 from caspian_adapters.telegram import TelegramProvider, bot_id_from_token, parse_update
 
 BOT_TOKEN = "7123456789:AAEexample"
@@ -39,6 +39,32 @@ def test_parse_update_marks_edited_and_group_chats():
     inbound = parse_update(_update(edited=True, chat_type="group"), BOT_ID)
     assert inbound[0].edited is True
     assert inbound[0].chat_type == "group"
+
+
+def test_parse_update_normalizes_bot_command():
+    inbound = parse_update(_update("/start onboarding now"), BOT_ID)
+    assert len(inbound) == 1
+    command = inbound[0]
+    assert isinstance(command, InboundCommand)
+    assert command.command == "start"
+    assert command.text == "onboarding now"
+    assert command.provider_inbox_id == BOT_ID
+    assert command.provider_message_id == "900:55"
+    assert command.sender_address == "alice"
+
+
+def test_parse_update_normalizes_bot_command_with_mention():
+    inbound = parse_update(_update("/help@CaspianBot billing"), BOT_ID)
+    command = inbound[0]
+    assert isinstance(command, InboundCommand)
+    assert command.command == "help"
+    assert command.text == "billing"
+
+
+def test_parse_update_keeps_edited_commands_as_messages():
+    inbound = parse_update(_update("/start", edited=True), BOT_ID)
+    assert not isinstance(inbound[0], InboundCommand)
+    assert inbound[0].text == "/start"
 
 
 def test_parse_update_skips_textless():

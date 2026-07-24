@@ -7,9 +7,10 @@ exercised on the same normalization path as the live adapters.
 import json
 import secrets
 from collections.abc import Mapping
+from urllib.parse import parse_qs, urlencode
 
 from .base import (
-    InboundMessage,
+    InboundEvent,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -18,7 +19,7 @@ from .base import (
 )
 from .discord import DiscordProvider, parse_gateway_message
 from .messenger import InstagramProvider, parse_messaging_webhook
-from .slack import SlackProvider, parse_event
+from .slack import SlackProvider, parse_event, parse_slash_command
 
 
 class FakeDiscordProvider:
@@ -77,7 +78,7 @@ class FakeDiscordProvider:
         return SendResult(provider_message_id=f"{cid}:{secrets.randbelow(99999)}",
                           provider_thread_id=cid)
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
         try:
             event = json.loads(payload)
         except ValueError as exc:
@@ -193,7 +194,11 @@ class FakeSlackProvider:
         self._seq += 1
         return 1_752_000_000 + self._seq
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
+        content_type = {k.lower(): v for k, v in headers.items()}.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type:
+            data = {k: v[-1] for k, v in parse_qs(payload.decode()).items()}
+            return parse_slash_command(data)
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -217,6 +222,49 @@ class FakeSlackProvider:
                 "channel_type": "channel",
             },
         }
+
+    def reaction_payload(
+        self,
+        *,
+        channel="C123",
+        ts="1752000000.0000",
+        user="U456",
+        reaction="thumbsup",
+        removed: bool = False,
+    ):
+        self._seq += 1
+        return {
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "event_id": f"EvReact{self._seq}",
+            "event": {
+                "type": "reaction_removed" if removed else "reaction_added",
+                "user": user,
+                "reaction": reaction,
+                "item": {"type": "message", "channel": channel, "ts": ts},
+            },
+        }
+
+    def slash_command_payload(
+        self,
+        *,
+        command="/triage",
+        text="",
+        channel="C123",
+        user="U456",
+        user_name="customer",
+    ) -> bytes:
+        self._seq += 1
+        return urlencode({
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "channel_id": channel,
+            "user_id": user,
+            "user_name": user_name,
+            "command": command,
+            "text": text,
+            "trigger_id": f"fake.{self._seq}",
+        }).encode()
 
 
 class _FakeMetaMessaging:
@@ -250,7 +298,7 @@ class _FakeMetaMessaging:
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
         return params.get("hub.challenge") if params.get("hub.mode") == "subscribe" else None
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
         try:
             json.loads(payload)
         except ValueError as exc:

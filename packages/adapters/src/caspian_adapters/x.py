@@ -51,6 +51,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -430,7 +431,7 @@ class XProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if self._webhook_secret:
             received = {k.lower(): v for k, v in headers.items()}.get(
                 "x-twitter-webhooks-signature", ""

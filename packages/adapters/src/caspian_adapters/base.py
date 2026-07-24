@@ -45,6 +45,8 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    REACTIONS = "reactions"  # add/remove emoji reactions on messages
+    COMMANDS = "commands"  # slash commands, bot commands, or equivalent invocations
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -109,6 +111,45 @@ class InboundMessage:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class InboundReaction:
+    """A normalized emoji reaction/tapback on a provider message."""
+
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    emoji: str
+    action: str  # "added" | "removed"
+    sender_address: str | None = None
+    sender_name: str | None = None
+    chat_type: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundCommand:
+    """A normalized slash command, bot command, or equivalent invocation."""
+
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    command: str
+    text: str = ""  # arguments after the command, if any
+    sender_address: str | None = None
+    sender_name: str | None = None
+    chat_type: str | None = None
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+type InboundEvent = InboundMessage | InboundReaction | InboundCommand
+
+
 class ChannelProvider(Protocol):
     """The contract every transport implements, regardless of channel.
 
@@ -152,4 +193,4 @@ class ChannelProvider(Protocol):
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]: ...
+    ) -> list[InboundEvent]: ...

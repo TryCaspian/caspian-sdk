@@ -4,10 +4,16 @@ import hashlib
 import hmac
 import json
 import time
+from urllib.parse import urlencode
 
 import pytest
-from caspian_adapters.base import WebhookVerificationError
-from caspian_adapters.slack import MAX_TIMESTAMP_SKEW, SlackProvider, parse_event
+from caspian_adapters.base import InboundCommand, InboundReaction, WebhookVerificationError
+from caspian_adapters.slack import (
+    MAX_TIMESTAMP_SKEW,
+    SlackProvider,
+    parse_event,
+    parse_slash_command,
+)
 
 SIGNING_SECRET = "sign-me"
 
@@ -63,6 +69,90 @@ def test_parse_event_skips_bot_and_subtype_messages():
     assert parse_event(_event(subtype="message_changed")) == []
 
 
+def test_parse_event_normalizes_reactions():
+    data = _event()
+    data["event"] = {
+        "type": "reaction_added",
+        "user": "U999",
+        "reaction": "thumbsup",
+        "item": {"type": "message", "channel": "C123", "ts": "1752000000.0001"},
+    }
+    inbound = parse_event(data)
+    assert len(inbound) == 1
+    reaction = inbound[0]
+    assert isinstance(reaction, InboundReaction)
+    assert reaction.action == "added"
+    assert reaction.emoji == "thumbsup"
+    assert reaction.sender_address == "U999"
+    assert reaction.provider_inbox_id == "A1:T1"
+    assert reaction.provider_message_id == "C123:1752000000.0001"
+
+
+def test_parse_event_normalizes_reaction_removed():
+    data = _event()
+    data["event"] = {
+        "type": "reaction_removed",
+        "user": "U999",
+        "reaction": "eyes",
+        "item": {"type": "message", "channel": "C123", "ts": "1752000000.0001"},
+    }
+    inbound = parse_event(data)
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].action == "removed"
+
+
+def test_parse_event_skips_reactions_on_non_message_items():
+    data = _event()
+    data["event"] = {
+        "type": "reaction_added",
+        "user": "U999",
+        "reaction": "eyes",
+        "item": {"type": "file", "file": "F123"},
+    }
+    assert parse_event(data) == []
+
+
+def test_parse_slash_command_normalizes_form_fields():
+    inbound = parse_slash_command({
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "channel_id": "C123",
+        "user_id": "U456",
+        "user_name": "alice",
+        "command": "/triage",
+        "text": "urgent inbox",
+        "trigger_id": "1337.abc",
+    })
+    assert len(inbound) == 1
+    command = inbound[0]
+    assert isinstance(command, InboundCommand)
+    assert command.provider_inbox_id == "A1:T1"
+    assert command.provider_thread_id == "C123"
+    assert command.command == "triage"
+    assert command.text == "urgent inbox"
+    assert command.sender_address == "U456"
+
+
+def test_parse_webhook_accepts_signed_slash_command():
+    provider = _provider()
+    payload = urlencode({
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "channel_id": "C123",
+        "user_id": "U456",
+        "command": "/triage",
+        "text": "urgent inbox",
+        "trigger_id": "1337.abc",
+    }).encode()
+    headers = {
+        **_signed_headers(payload),
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    inbound = provider.parse_webhook(payload, headers)
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].command == "triage"
+
+
 def test_parse_webhook_accepts_valid_signature():
     provider = _provider()
     payload = json.dumps(_event()).encode()
@@ -105,6 +195,8 @@ def test_url_verification_returns_no_messages():
 def test_route_key_is_app_and_team():
     payload = json.dumps(_event(team="T9", app="A7")).encode()
     assert SlackProvider.route_key(payload) == "A7:T9"
+    form = urlencode({"team_id": "T9", "api_app_id": "A7", "command": "/triage"}).encode()
+    assert SlackProvider.route_key(form) == "A7:T9"
     assert SlackProvider.route_key(b"not json") is None
     assert SlackProvider.route_key(b"{}") is None
 

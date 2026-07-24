@@ -12,12 +12,16 @@ import hmac
 import json
 import time
 from collections.abc import Mapping
+from urllib.parse import parse_qs
 
 import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -34,10 +38,31 @@ API = "https://slack.com/api"
 MAX_TIMESTAMP_SKEW = 60 * 5
 
 
-def parse_event(data: dict) -> list[InboundMessage]:
-    """Normalize a Slack Events API callback into our schema (user messages only)."""
+def parse_event(data: dict) -> list[InboundEvent]:
+    """Normalize a Slack Events API callback into our schema."""
     event = data.get("event", {})
-    if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
+    event_type = event.get("type")
+    if event_type == "reaction_added" or event_type == "reaction_removed":
+        item = event.get("item") or {}
+        if item.get("type") != "message":
+            return []
+        channel = item.get("channel", "")
+        ts = item.get("ts", "")
+        if not (channel and ts):
+            return []
+        return [
+            InboundReaction(
+                external_event_id=data.get("event_id") or f"{channel}:{ts}:{event_type}",
+                provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+                provider_message_id=f"{channel}:{ts}",
+                provider_thread_id=channel,
+                emoji=event.get("reaction", ""),
+                action="added" if event_type == "reaction_added" else "removed",
+                sender_address=event.get("user"),
+                chat_type=item.get("type"),
+            )
+        ]
+    if event_type != "message" or event.get("bot_id") or event.get("subtype"):
         return []
     channel = event["channel"]
     ts = event["ts"]
@@ -57,6 +82,35 @@ def parse_event(data: dict) -> list[InboundMessage]:
     ]
 
 
+def parse_slash_command(data: Mapping[str, str]) -> list[InboundCommand]:
+    """Normalize a Slack slash-command form payload into our schema."""
+    command = (data.get("command") or "").strip()
+    channel = data.get("channel_id") or ""
+    team = data.get("team_id") or ""
+    user = data.get("user_id") or ""
+    if not (command and channel and team):
+        return []
+    app_id = data.get("api_app_id") or ""
+    trigger = (
+        data.get("trigger_id")
+        or data.get("command_id")
+        or f"{team}:{channel}:{user}:{command}"
+    )
+    return [
+        InboundCommand(
+            external_event_id=trigger,
+            provider_inbox_id=f"{app_id}:{team}",
+            provider_message_id=trigger,
+            provider_thread_id=channel,
+            command=command.lstrip("/"),
+            text=data.get("text") or "",
+            sender_address=user or None,
+            sender_name=data.get("user_name") or None,
+            chat_type="slash_command",
+        )
+    ]
+
+
 class SlackProvider:
     name = "slack"
     channel = "slack"
@@ -66,7 +120,13 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {
+            Capability.RECEIVE,
+            Capability.REPLY,
+            Capability.SEND,
+            Capability.REACTIONS,
+            Capability.COMMANDS,
+        }
     )
 
     def __init__(
@@ -136,7 +196,7 @@ class SlackProvider:
         try:
             data = json.loads(payload)
         except ValueError:
-            return None
+            data = {k: v[-1] for k, v in parse_qs(payload.decode()).items()}
         team = data.get("team_id", "")
         app_id = data.get("api_app_id", "")
         if not (team or app_id):
@@ -250,6 +310,21 @@ class SlackProvider:
             raise RuntimeError(f"Slack chat.postMessage failed: {data.get('error')}")
         return data
 
+    def react(self, provider_message_id: str, emoji: str, credentials=None) -> dict:
+        """Add a reaction to a Slack message."""
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/reactions.add",
+            json={"channel": channel, "timestamp": ts, "name": emoji.strip(":")},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")
+        return {"reacted": True}
+
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         # The OAuth callback already set the address/resource id; provision is a
         # no-op confirmation that keeps the worker flow uniform.
@@ -283,11 +358,16 @@ class SlackProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
+        h = lower_headers(headers)
+        content_type = h.get("content-type", "")
         try:
-            data = json.loads(payload)
+            if "application/x-www-form-urlencoded" in content_type:
+                data = {k: v[-1] for k, v in parse_qs(payload.decode()).items()}
+            else:
+                data = json.loads(payload)
         except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON payload") from exc
+            raise WebhookVerificationError("invalid Slack payload") from exc
         # Verify with the signing secret of the app that SENT this event (identified
         # by api_app_id in the pool), else the connection's stored secret.
         api_app_id = data.get("api_app_id", "")
@@ -295,7 +375,6 @@ class SlackProvider:
         if not signing_secret:
             _, _, signing_secret = self._app(credentials)
         if signing_secret:
-            h = lower_headers(headers)
             ts = h.get("x-slack-request-timestamp", "")
             sig = h.get("x-slack-signature", "")
             # Reject stale (or unparseable) timestamps before checking the
@@ -315,4 +394,6 @@ class SlackProvider:
         if data.get("type") == "url_verification":
             # handled in the route (returns the challenge); no messages here
             return []
+        if "application/x-www-form-urlencoded" in content_type:
+            return parse_slash_command(data)
         return parse_event(data)
