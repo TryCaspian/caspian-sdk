@@ -1,14 +1,16 @@
 """Minimal auto-reply agent.
 
-Point CASPIAN_BASE_URL and CASPIAN_API_KEY at a Caspian gateway (hosted, or any
-deployment of the Caspian gateway), then:
+Point CASPIAN_BASE_URL and CASPIAN_API_KEY (or the legacy COMM_BASE_URL /
+COMM_API_KEY names) at a Caspian gateway (hosted, or any deployment of the
+Caspian gateway) — `caspian init` writes them to ./.env — then:
 
     uv run python examples/autoreply.py
 """
 
 from caspian_sdk import CommClient
 
-# Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or ./.env
+# Reads CASPIAN_API_KEY / CASPIAN_BASE_URL (legacy COMM_API_KEY / COMM_BASE_URL
+# also work) from the environment or ./.env, e.g. as written by `caspian init`
 # (base_url defaults to the hosted gateway at https://api.trycaspianai.com).
 client = CommClient()
 
