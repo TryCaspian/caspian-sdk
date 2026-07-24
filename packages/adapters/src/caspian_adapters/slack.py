@@ -38,7 +38,13 @@ MAX_TIMESTAMP_SKEW = 60 * 5
 def parse_event(data: dict) -> list[InboundMessage]:
     """Normalize a Slack Events API callback into our schema (user messages only)."""
     event = data.get("event", {})
-    if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
+
+    subtype = event.get("subtype")
+    if (
+        event.get("type") != "message"
+        or event.get("bot_id")
+        or (subtype and subtype != "file_share")
+    ):
         return []
 
     channel = event["channel"]
