@@ -90,7 +90,7 @@ def parse_slash_command(data: Mapping[str, str]) -> list[InboundCommand]:
     user = data.get("user_id") or ""
     if not (command and channel and team):
         return []
-    app_id = data.get("api_app_id") or data.get("enterprise_id") or ""
+    app_id = data.get("api_app_id") or ""
     trigger = (
         data.get("trigger_id")
         or data.get("command_id")

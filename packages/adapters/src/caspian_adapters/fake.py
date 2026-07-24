@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -97,7 +98,7 @@ class FakeEmailProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         try:
             data = json.loads(payload)
         except ValueError as exc:

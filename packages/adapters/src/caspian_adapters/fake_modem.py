@@ -9,6 +9,7 @@ import json
 import secrets
 
 from .base import (
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -55,7 +56,7 @@ class FakeModemProvider:
     ) -> SendResult:
         return self._record(recipient, message.text)
 
-    def parse_webhook(self, payload: bytes, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload: bytes, headers, credentials=None) -> list[InboundEvent]:
         data = json.loads(payload)
         return [
             InboundMessage(
