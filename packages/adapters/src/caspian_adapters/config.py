@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    teams_messaging_endpoint: str = ""
+    teams_connector_base_url: str = "https://smba.trafficmanager.net/amer"
+    teams_token_url: str = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+    teams_openid_config_url: str = (
+        "https://login.botframework.com/v1/.well-known/openidconfiguration"
+    )
+
     # Instagram DM / Facebook Messenger via the developer's own Meta app + Page
     # (Graph API). Page id + access token identify the Page the agent answers as.
     instagram_page_id: str = ""

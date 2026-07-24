@@ -109,6 +109,19 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             scopes=settings.slack_scopes,
             apps=pool,
         )
+    if name == "fake-teams":
+        from .teams import FakeTeamsProvider
+
+        return FakeTeamsProvider()
+    if name == "teams":
+        from .teams import TeamsProvider
+
+        return TeamsProvider(
+            messaging_endpoint=settings.teams_messaging_endpoint,
+            connector_base_url=settings.teams_connector_base_url,
+            token_url=settings.teams_token_url,
+            openid_config_url=settings.teams_openid_config_url,
+        )
     if name == "x":
         from .x import XProvider
 
