@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,8 +67,8 @@ class Settings(BaseSettings):
     # Apps; these deployment values power one-click installation.
     github_app_id: str = ""
     github_app_slug: str = ""
-    github_private_key: str = ""
-    github_webhook_secret: str = ""
+    github_private_key: SecretStr = SecretStr("")
+    github_webhook_secret: SecretStr = SecretStr("")
     github_api_base: str = "https://api.github.com"
 
     # Instagram DM / Facebook Messenger via the developer's own Meta app + Page
@@ -93,3 +94,4 @@ class Settings(BaseSettings):
     x_webhook_secret: str = ""  # overrides x_api_secret for CRC/signature if set
     x_base_url: str = "https://api.x.com"
     x_dm_poll_interval: float = 10.0  # seconds between DM polls per connection
+

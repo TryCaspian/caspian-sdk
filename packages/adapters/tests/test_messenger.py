@@ -30,17 +30,23 @@ def _provider(handler=None, cls=InstagramProvider):
 
 
 def _webhook(channel: str, sender="777", text="hello"):
-    return json.dumps({
-        "object": channel,
-        "entry": [{
-            "id": PAGE_ID,
-            "messaging": [{
-                "sender": {"id": sender},
-                "recipient": {"id": PAGE_ID},
-                "message": {"mid": "mid.1", "text": text},
-            }],
-        }],
-    }).encode()
+    return json.dumps(
+        {
+            "object": channel,
+            "entry": [
+                {
+                    "id": PAGE_ID,
+                    "messaging": [
+                        {
+                            "sender": {"id": sender},
+                            "recipient": {"id": PAGE_ID},
+                            "message": {"mid": "mid.1", "text": text},
+                        }
+                    ],
+                }
+            ],
+        }
+    ).encode()
 
 
 def _signature(payload: bytes) -> str:
@@ -97,35 +103,63 @@ def test_parse_webhook_rejects_bad_signature():
 
 def test_echo_and_textless_events_skipped():
     provider = _provider()
-    payload = json.dumps({
-        "object": "instagram",
-        "entry": [{"id": PAGE_ID, "messaging": [
-            {"sender": {"id": "777"}, "message": {"mid": "m1", "text": "hi", "is_echo": True}},
-            {"sender": {"id": "777"}, "message": {"mid": "m2"}},
-        ]}],
-    }).encode()
+    payload = json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": PAGE_ID,
+                    "messaging": [
+                        {
+                            "sender": {"id": "777"},
+                            "message": {"mid": "m1", "text": "hi", "is_echo": True},
+                        },
+                        {"sender": {"id": "777"}, "message": {"mid": "m2"}},
+                    ],
+                }
+            ],
+        }
+    ).encode()
     inbound = provider.parse_webhook(payload, {"x-hub-signature-256": _signature(payload)})
     assert inbound == []
 
 
 def test_hub_challenge_echo():
     provider = _provider()
-    ok = provider.meta_verify({
-        "hub.mode": "subscribe", "hub.verify_token": "verify-me", "hub.challenge": "999",
-    })
+    ok = provider.meta_verify(
+        {
+            "hub.mode": "subscribe",
+            "hub.verify_token": "verify-me",
+            "hub.challenge": "999",
+        }
+    )
     assert ok == "999"
-    assert provider.meta_verify({
-        "hub.mode": "subscribe", "hub.verify_token": "wrong", "hub.challenge": "999",
-    }) is None
+    assert (
+        provider.meta_verify(
+            {
+                "hub.mode": "subscribe",
+                "hub.verify_token": "wrong",
+                "hub.challenge": "999",
+            }
+        )
+        is None
+    )
 
 
 def test_hub_challenge_rejects_when_verify_token_unset():
     # A provider with no configured verify_token must not echo the challenge,
     # even for an empty incoming token (would otherwise fail open).
     provider = InstagramProvider(page_id=PAGE_ID, access_token="page-token")
-    assert provider.meta_verify({
-        "hub.mode": "subscribe", "hub.verify_token": "", "hub.challenge": "999",
-    }) is None
+    assert (
+        provider.meta_verify(
+            {
+                "hub.mode": "subscribe",
+                "hub.verify_token": "",
+                "hub.challenge": "999",
+            }
+        )
+        is None
+    )
 
 
 def test_facebook_provider_same_shape():

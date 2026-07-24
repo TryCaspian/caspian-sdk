@@ -252,7 +252,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
-| <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
+| <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14" alt=""/> &nbsp;GitHub issues / PRs | ✅ | — |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
@@ -389,6 +389,12 @@ await message.reply(undefined, undefined, blocks);
 Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
 `sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
 that can't render blocks; omit it and a clean text fallback is generated for you.
+
+## Streaming
+
+Caspian supports streaming responses natively. When you stream a message to a channel, the SDK automatically determines the best strategy based on the platform's capabilities:
+- **`post_edit` (Native Streaming)**: On platforms that support rapid message edits (like Discord, Slack, and Telegram), the SDK will post an initial message and continuously edit it as new chunks arrive, giving a true typing-like experience.
+- **`final_only` (Fallback)**: On immutable platforms (like Email, SMS, or X/Twitter), the SDK automatically buffers the stream and sends only the final complete message once the stream finishes, preventing fragmented or spammy messages.
 
 ## What's in this repo
 

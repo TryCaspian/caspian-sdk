@@ -87,3 +87,13 @@ export class InsufficientCreditError extends CommError {
     return this.client.topUp(amountCents ?? 2000);
   }
 }
+/**
+ * Error thrown when webhook payload signature verification fails.
+ */
+export class WebhookVerificationError extends CommError {
+  constructor() {
+    super(401, "Webhook signature mismatch");
+    this.name = "WebhookVerificationError";
+    Object.setPrototypeOf(this, WebhookVerificationError.prototype);
+  }
+}

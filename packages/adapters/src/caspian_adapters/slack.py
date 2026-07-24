@@ -65,17 +65,16 @@ class SlackProvider:
     # pending until the workspace owner approves the install.
     connect_credentials = ()
     oauth = True
-    capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
-    )
+    capabilities = frozenset({Capability.RECEIVE, Capability.REPLY, Capability.SEND})
 
     def __init__(
         self,
         client_id: str = "",
         client_secret: str = "",
         signing_secret: str = "",
-        scopes: str = ("chat:write,chat:write.customize,channels:history,"
-                       "im:history,app_mentions:read"),
+        scopes: str = (
+            "chat:write,chat:write.customize,channels:history,im:history,app_mentions:read"
+        ),
         base_url: str = API,
         apps: list[dict] | None = None,
     ) -> None:
@@ -87,8 +86,14 @@ class SlackProvider:
         if apps:
             self.apps = [dict(a) for a in apps]
         elif client_id:
-            self.apps = [{"app_id": "", "client_id": client_id,
-                          "client_secret": client_secret, "signing_secret": signing_secret}]
+            self.apps = [
+                {
+                    "app_id": "",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "signing_secret": signing_secret,
+                }
+            ]
         else:
             self.apps = []
         self.scopes = scopes
@@ -228,8 +233,15 @@ class SlackProvider:
 
     # Messaging
 
-    def _post(self, token: str, channel: str, text: str, thread_ts: str | None,
-              username: str | None = None, icon_url: str | None = None):
+    def _post(
+        self,
+        token: str,
+        channel: str,
+        text: str,
+        thread_ts: str | None,
+        username: str | None = None,
+        icon_url: str | None = None,
+    ):
         body: dict = {"channel": channel, "text": text}
         if thread_ts:
             body["thread_ts"] = thread_ts
@@ -263,23 +275,34 @@ class SlackProvider:
     ) -> SendResult:
         creds = credentials or {}
         channel = message.to[0]
-        data = self._post(creds["bot_token"], channel, message.text or "", None,
-                          username=creds.get("display_name"), icon_url=creds.get("icon_url"))
-        return SendResult(
-            provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
+        data = self._post(
+            creds["bot_token"],
+            channel,
+            message.text or "",
+            None,
+            username=creds.get("display_name"),
+            icon_url=creds.get("icon_url"),
         )
+        return SendResult(provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel)
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         creds = credentials or {}
         channel, ts = split_composite_id(provider_message_id)
-        data = self._post(creds["bot_token"], channel, message.text or "", ts,
-                          username=creds.get("display_name"), icon_url=creds.get("icon_url"))
-        return SendResult(
-            provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
+        data = self._post(
+            creds["bot_token"],
+            channel,
+            message.text or "",
+            ts,
+            username=creds.get("display_name"),
+            icon_url=creds.get("icon_url"),
         )
+        return SendResult(provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel)
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
@@ -307,9 +330,9 @@ class SlackProvider:
             if skew > MAX_TIMESTAMP_SKEW:
                 raise WebhookVerificationError("Slack timestamp too old")
             basestring = f"v0:{ts}:".encode() + payload
-            expected = "v0=" + hmac.new(
-                signing_secret.encode(), basestring, hashlib.sha256
-            ).hexdigest()
+            expected = (
+                "v0=" + hmac.new(signing_secret.encode(), basestring, hashlib.sha256).hexdigest()
+            )
             if not hmac.compare_digest(expected, sig):
                 raise WebhookVerificationError("Slack signature mismatch")
         if data.get("type") == "url_verification":

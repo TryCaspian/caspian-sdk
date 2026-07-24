@@ -308,8 +308,7 @@ def test_reply_and_send_message_forward_blocks():
         client.close()
 
     assert bodies[0][0] == "/v1/messages/msg_1/reply"
-    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload,
-                            "media": None}
+    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload, "media": None}
     assert bodies[1][0] == "/v1/conversations/conv_1/messages"
     assert bodies[1][1] == {"text": None, "html": None, "blocks": payload, "media": None}
 
@@ -357,9 +356,13 @@ def test_on_interaction_dispatches_and_replies():
             "seq": 1,
             "type": "interaction.received",
             "data": {
-                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
-                "conversation_id": "conv_1", "value": "reorder_123",
-                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "conversation_id": "conv_1",
+                "value": "reorder_123",
+                "source_message": {"id": "msg_9"},
+                "sender": {"address": "u"},
             },
         }
     ]
@@ -400,9 +403,13 @@ def test_on_reaction_dispatches():
             "seq": 1,
             "type": "reaction.received",
             "data": {
-                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
-                "emoji": "thumbsup", "action": "added",
-                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "emoji": "thumbsup",
+                "action": "added",
+                "source_message": {"id": "msg_9"},
+                "sender": {"address": "u"},
             },
         }
     ]
@@ -429,10 +436,14 @@ def test_message_carries_media_to_handler():
             "seq": 1,
             "type": "message.received",
             "data": {
-                "customer_id": "cus_1", "agent_id": "agt_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
                 "message": {
-                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
-                    "channel": "email", "text": "see attached",
+                    "id": "m1",
+                    "conversation_id": "c1",
+                    "connection_id": "cn1",
+                    "channel": "email",
+                    "text": "see attached",
                     "media": [{"name": "r.pdf", "mime_type": "application/pdf"}],
                 },
             },

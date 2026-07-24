@@ -52,30 +52,38 @@ class FakeDiscordProvider:
             from .discord import webhook_id_from_url
 
             name = creds.get("username") or "webhook"
-            return ProvisionResult(address=name,
-                                   provider_resource_id=webhook_id_from_url(creds["webhook_url"]))
-        return ProvisionResult(address="#fake-bot",
-                               provider_resource_id=self._app(creds))
+            return ProvisionResult(
+                address=name, provider_resource_id=webhook_id_from_url(creds["webhook_url"])
+            )
+        return ProvisionResult(address="#fake-bot", provider_resource_id=self._app(creds))
 
     def send(self, provider_inbox_id, message: OutboundMessage, credentials=None) -> SendResult:
         creds = credentials or {}
         if creds.get("webhook_url"):
-            self.sent.append({"webhook": creds["webhook_url"], "username": creds.get("username"),
-                              "text": message.text})
-            return SendResult(provider_message_id=f"wh:{secrets.randbelow(99999)}",
-                              provider_thread_id="wh")
+            self.sent.append(
+                {
+                    "webhook": creds["webhook_url"],
+                    "username": creds.get("username"),
+                    "text": message.text,
+                }
+            )
+            return SendResult(
+                provider_message_id=f"wh:{secrets.randbelow(99999)}", provider_thread_id="wh"
+            )
         cid = message.to[0]
         self.sent.append({"channel": cid, "text": message.text})
-        return SendResult(provider_message_id=f"{cid}:{secrets.randbelow(99999)}",
-                          provider_thread_id=str(cid))
+        return SendResult(
+            provider_message_id=f"{cid}:{secrets.randbelow(99999)}", provider_thread_id=str(cid)
+        )
 
     def reply(
         self, provider_inbox_id, provider_message_id, message, credentials=None
     ) -> SendResult:
         cid, _, target = provider_message_id.partition(":")
         self.replies.append({"channel": cid, "in_reply_to": target, "text": message.text})
-        return SendResult(provider_message_id=f"{cid}:{secrets.randbelow(99999)}",
-                          provider_thread_id=cid)
+        return SendResult(
+            provider_message_id=f"{cid}:{secrets.randbelow(99999)}", provider_thread_id=cid
+        )
 
     def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
         try:
@@ -134,8 +142,12 @@ class FakeSlackProvider:
         return 1
 
     def app_at(self, index: int) -> dict:
-        return {"app_id": self.app_id, "client_id": self.client_id,
-                "client_secret": "fake-secret", "signing_secret": "fake-signing"}
+        return {
+            "app_id": self.app_id,
+            "client_id": self.client_id,
+            "client_secret": "fake-secret",
+            "signing_secret": "fake-signing",
+        }
 
     def authorize_url(self, redirect_uri: str, state: str, app=None) -> str:
         return f"https://slack.com/oauth/v2/authorize?state={state}&redirect_uri={redirect_uri}"
@@ -173,7 +185,8 @@ class FakeSlackProvider:
         return ProvisionResult(
             address=(request.credentials or {}).get("address", "slack"),
             provider_resource_id=(request.credentials or {}).get(
-                "provider_resource_id", f"{self.app_id}:{self.team_id}"),
+                "provider_resource_id", f"{self.app_id}:{self.team_id}"
+            ),
         )
 
     def send(self, provider_inbox_id, message: OutboundMessage, credentials=None) -> SendResult:
@@ -231,8 +244,9 @@ class _FakeMetaMessaging:
         self._seq = 0
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        return ProvisionResult(address=f"{self.channel}:{self.page_id}",
-                               provider_resource_id=self.page_id)
+        return ProvisionResult(
+            address=f"{self.channel}:{self.page_id}", provider_resource_id=self.page_id
+        )
 
     def send(self, provider_inbox_id, message: OutboundMessage, credentials=None) -> SendResult:
         to = message.to[0]

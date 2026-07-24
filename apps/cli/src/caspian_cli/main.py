@@ -77,22 +77,23 @@ def _raise_for_error(response: httpx.Response) -> None:
         try:
             payload = response.json()
             detail = (
-                payload.get("detail", response.text)
-                if isinstance(payload, dict)
-                else response.text
+                payload.get("detail", response.text) if isinstance(payload, dict) else response.text
             )
         except ValueError:
             detail = response.text
         # A billing block (out of credit / spend cap) comes back as a structured
         # body - print a clear, actionable message instead of a raw dict.
         if isinstance(detail, dict) and detail.get("reason") in {
-            "insufficient_credit", "monthly_cap_reached", "channel_cap_reached"
+            "insufficient_credit",
+            "monthly_cap_reached",
+            "channel_cap_reached",
         }:
             _exit_out_of_credit(detail)
         # A paid channel used before the developer signed in.
         if isinstance(detail, dict) and detail.get("reason") == "account_required":
-            print(f"\n{detail.get('message', 'Sign-in required for paid channels.')}",
-                  file=sys.stderr)
+            print(
+                f"\n{detail.get('message', 'Sign-in required for paid channels.')}", file=sys.stderr
+            )
             print("  Sign in once:  caspian login\n", file=sys.stderr)
             sys.exit(3)
         sys.exit(f"Error {response.status_code}: {detail}")
@@ -102,8 +103,7 @@ def _exit_out_of_credit(detail: dict) -> None:
     balance = detail.get("balance_cents")
     bal = f"${balance / 100:.2f}" if isinstance(balance, int) else "unknown"
     opts = detail.get("payment_options") or []
-    dash = next((o.get("url") for o in opts if o.get("url")),
-                "https://dashboard.trycaspianai.com")
+    dash = next((o.get("url") for o in opts if o.get("url")), "https://dashboard.trycaspianai.com")
     print("\nOut of Caspian credit - this paid channel is blocked.", file=sys.stderr)
     print(f"  {detail.get('message', '')}", file=sys.stderr)
     print(f"  Balance: {bal}", file=sys.stderr)
@@ -212,7 +212,8 @@ def _pick_channel(requested: str | None) -> str:
             "x": "one-click 'Sign in with X', or bring your own tokens",
             "whatsapp": "Caspian hosted",
             "imessage": "Caspian hosted",
-            "instagram": "OAuth (your Meta app)", "facebook": "OAuth (your Meta app)",
+            "instagram": "OAuth (your Meta app)",
+            "facebook": "OAuth (your Meta app)",
         }.get(ch, "")
         print(f"  {i}. {ch}" + (f"  ({note})" if note else ""))
     choice = _ask("Which channel do you want to connect? (number or name)", "1")
@@ -228,8 +229,9 @@ def _email_body(args) -> dict:
     domain = args.domain
     username = args.username
     if domain is None and username is None and sys.stdin.isatty():
-        which = _ask("Use the gateway's default domain or your own custom domain?",
-                     "default").lower()
+        which = _ask(
+            "Use the gateway's default domain or your own custom domain?", "default"
+        ).lower()
         if which.startswith("c"):
             domain = _ask("Your verified custom subdomain (e.g. agents.yourco.com)")
             if domain:
@@ -265,8 +267,9 @@ def _connect_install_channel(channel: str, args) -> None:
         kind = _ask(f"{channel}: (a) quick one-click install, or (b) bring your own?", "a")
         quick = not kind.lower().startswith("b")
     if quick:
-        conn = _request("POST", f"/v1/connections/{channel}/install",
-                        json_body={"display_name": args.name})
+        conn = _request(
+            "POST", f"/v1/connections/{channel}/install", json_body={"display_name": args.name}
+        )
         _print_authorize(channel, conn)
         return
     # bring-your-own paths
@@ -274,14 +277,24 @@ def _connect_install_channel(channel: str, args) -> None:
         token = args.bot_token or _ask("Paste your bot token (discord.com/developers)")
         if not token:
             sys.exit("discord BYO needs a bot token.")
-        _await_active(_request("POST", "/v1/connections/discord",
-                     json_body={"display_name": args.name, "bot_token": token}))
+        _await_active(
+            _request(
+                "POST",
+                "/v1/connections/discord",
+                json_body={"display_name": args.name, "bot_token": token},
+            )
+        )
     elif channel == "slack":
-        conn = _request("POST", "/v1/connections/slack", json_body={
-            "display_name": args.name,
-            "slack_client_id": _ask("Slack client id"),
-            "slack_client_secret": _ask("Slack client secret"),
-            "slack_signing_secret": _ask("Slack signing secret")})
+        conn = _request(
+            "POST",
+            "/v1/connections/slack",
+            json_body={
+                "display_name": args.name,
+                "slack_client_id": _ask("Slack client id"),
+                "slack_client_secret": _ask("Slack client secret"),
+                "slack_signing_secret": _ask("Slack signing secret"),
+            },
+        )
         _print_authorize("slack", conn)
     elif channel == "github":
         private_key_path = _ask("Path to GitHub App private key PEM")
@@ -300,10 +313,17 @@ def _connect_install_channel(channel: str, args) -> None:
             "receive_mode": "mentions"})
         _print_authorize("github", conn)
     elif channel == "x":
-        _await_active(_request("POST", "/v1/connections/x", json_body={
-            "access_token": _ask("X access token"),
-            "access_secret": _ask("X access token secret"),
-            "user_id": _ask("X numeric user id (before the '-' in the access token)")}))
+        _await_active(
+            _request(
+                "POST",
+                "/v1/connections/x",
+                json_body={
+                    "access_token": _ask("X access token"),
+                    "access_secret": _ask("X access token secret"),
+                    "user_id": _ask("X numeric user id (before the '-' in the access token)"),
+                },
+            )
+        )
 
 
 def _connect_one(channel: str, args) -> None:
@@ -396,8 +416,9 @@ def cmd_login(args) -> None:
     interval = start.get("interval", 5)
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
-        result = _request("POST", "/v1/auth/device/token",
-                          json_body={"device_code": start["device_code"]})
+        result = _request(
+            "POST", "/v1/auth/device/token", json_body={"device_code": start["device_code"]}
+        )
         status = result.get("status")
         if status == "approved":
             print("\nSigned in. This project is now tied to your account.")
@@ -428,8 +449,10 @@ def cmd_billing(args) -> None:
         print(f"Channel caps:   {caps}")
     ap = b.get("autopay", {})
     if ap.get("enabled"):
-        print(f"Autopay:        on (refill {_fmt_cents(ap.get('topup_cents'))} below "
-              f"{_fmt_cents(ap.get('threshold_cents'))})")
+        print(
+            f"Autopay:        on (refill {_fmt_cents(ap.get('topup_cents'))} below "
+            f"{_fmt_cents(ap.get('threshold_cents'))})"
+        )
     else:
         print("Autopay:        off")
     if b["balance_cents"] <= 0:
@@ -444,6 +467,7 @@ def cmd_topup(args) -> None:
     print(result.get("note", ""))
     if args.open:
         import webbrowser
+
         webbrowser.open(url)
 
 
@@ -465,8 +489,19 @@ def main() -> None:
         nargs="?",
         default=None,
         choices=[
-            None, "email", "telegram", "phone", "whatsapp", "imessage", "rcs",
-            "discord", "slack", "github", "x", "instagram", "facebook",
+            None,
+            "email",
+            "telegram",
+            "phone",
+            "whatsapp",
+            "imessage",
+            "rcs",
+            "discord",
+            "slack",
+            "github",
+            "x",
+            "instagram",
+            "facebook",
         ],
         help="Channel to connect; omit to be shown the live options and asked",
     )
@@ -507,7 +542,10 @@ def main() -> None:
         "amount", type=float, nargs="?", default=20.0, help="Dollars to add (default 20)"
     )
     p_topup.add_argument(
-        "--cents", dest="amount_cents", type=int, default=None,
+        "--cents",
+        dest="amount_cents",
+        type=int,
+        default=None,
         help="Exact amount in cents (overrides the dollar amount)",
     )
     p_topup.add_argument("--open", action="store_true", help="Open the checkout link in a browser")

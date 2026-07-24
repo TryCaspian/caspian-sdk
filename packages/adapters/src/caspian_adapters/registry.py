@@ -119,8 +119,8 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
         return GitHubProvider(
             app_id=settings.github_app_id,
             app_slug=settings.github_app_slug,
-            private_key=settings.github_private_key,
-            webhook_secret=settings.github_webhook_secret,
+            private_key=settings.github_private_key.get_secret_value(),
+            webhook_secret=settings.github_webhook_secret.get_secret_value(),
             base_url=settings.github_api_base,
         )
     if name == "x":

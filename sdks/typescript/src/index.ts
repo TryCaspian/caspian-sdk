@@ -1,6 +1,6 @@
 export { CommClient, Message, Interaction, Reaction } from "./client.js";
 export type { MessageHandler, InteractionHandler, ReactionHandler } from "./client.js";
-export { CommError, AccountRequiredError, InsufficientCreditError } from "./errors.js";
+export { CommError, AccountRequiredError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
 export type {
   Agent,
   AutopayOptions,
@@ -21,3 +21,4 @@ export type {
   SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";
+export * from "./state.js";

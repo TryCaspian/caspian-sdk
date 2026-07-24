@@ -216,7 +216,10 @@ class GoogleMeetProvider:
         return self._result(space)
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         # No in-meeting text reply; start a fresh meeting for the same thread.
@@ -225,7 +228,10 @@ class GoogleMeetProvider:
         return self._result(space)
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         space = self._create_space()

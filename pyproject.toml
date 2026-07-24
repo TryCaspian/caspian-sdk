@@ -21,6 +21,7 @@ members = ["apps/cli", "packages/adapters", "sdks/python"]
 
 [dependency-groups]
 dev = [
+  "fakeredis>=2.37.0",
   "pytest>=9.0.3,<10",
   "pytest-cov>=6,<7",
   "ruff>=0.12,<1",
