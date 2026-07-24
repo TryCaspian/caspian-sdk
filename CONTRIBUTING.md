@@ -75,7 +75,7 @@ npm run typecheck    # tsc --noEmit
 ## Questions / community
 
 - Open a thread in [GitHub Discussions](https://github.com/TryCaspian/caspian-sdk/discussions) for questions, ideas, or help.
-<!-- Discord invite: TODO -->
+- Join the [Discord community](https://discord.gg/A28qnkvgCM) to chat with maintainers and other contributors.
 
 ## Reporting security issues
 
