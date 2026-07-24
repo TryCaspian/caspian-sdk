@@ -404,6 +404,8 @@ class StreamResponse:
         self._buffer = ""
         self._outbound_id: str | None = None
         self._last_edit = 0.0
+        self._last_sent_text = ""
+        self._reply_attempted = False
 
     @property
     def text(self) -> str:
@@ -426,19 +428,27 @@ class StreamResponse:
             return
         now = time.monotonic()
         if self._outbound_id is None:
+            self._reply_attempted = True
             result = self._client.reply(self._message_id, text=self._buffer)
             self._outbound_id = result.get("id")
             self._last_edit = now
+            self._last_sent_text = self._buffer
         elif now - self._last_edit >= self._throttle:
             self._client.edit(self._outbound_id, text=self._buffer)
             self._last_edit = now
+            self._last_sent_text = self._buffer
 
     def _flush(self) -> None:
         if not self._buffer:
             return
         if self._outbound_id is None:
+            if self._reply_attempted:
+                return
             self._client.reply(self._message_id, text=self._buffer)
-        else:
+        elif self._buffer != self._last_sent_text:
+            remaining = self._throttle - (time.monotonic() - self._last_edit)
+            if remaining > 0:
+                time.sleep(remaining)
             self._client.edit(self._outbound_id, text=self._buffer)
 
 
