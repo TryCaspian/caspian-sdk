@@ -19,6 +19,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -31,17 +32,37 @@ from .base import (
 )
 
 
-def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[InboundMessage]:
+def parse_messaging_webhook(
+    payload: bytes,
+    page_id: str,
+    channel: str,
+) -> list[InboundMessage]:
     data = json.loads(payload)
     out: list[InboundMessage] = []
+
     for entry in data.get("entry", []):
         recipient_id = entry.get("id", page_id)
+
         for m in entry.get("messaging", []):
             message = m.get("message")
-            if not message or message.get("is_echo") or not message.get("text"):
+            if not message or message.get("is_echo"):
                 continue
+
             sender = m["sender"]["id"]
             mid = message.get("mid", "")
+            text = message.get("text")
+
+            attachments = [
+                Attachment(
+                    url=attachment.get("payload", {}).get("url"),
+                    filename=attachment.get("payload", {}).get("filename"),
+                )
+                for attachment in message.get("attachments", [])
+            ]
+
+            if not text and not attachments:
+                continue
+
             out.append(
                 InboundMessage(
                     external_event_id=mid,
@@ -50,10 +71,12 @@ def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[
                     provider_thread_id=sender,
                     sender_address=sender,
                     recipients=[{"address": recipient_id}],
-                    text=message["text"],
+                    text=text,
                     chat_type=channel,
+                    attachments=attachments,
                 )
             )
+
     return out
 
 
