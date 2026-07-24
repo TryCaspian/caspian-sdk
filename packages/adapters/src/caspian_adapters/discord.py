@@ -18,6 +18,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -47,8 +48,17 @@ def parse_gateway_message(
     if data.get("author", {}).get("bot"):
         return []  # ignore other bots (and our own echoes) by default
     content = data.get("content")
-    if not content:
-        return []
+    attachments = [
+        Attachment(
+            url=a.get("url"),
+            mime_type=a.get("content_type"),
+            filename=a.get("filename"),
+            size_bytes=a.get("size"),
+        )
+        for a in data.get("attachments") or []
+    ]
+    if not content and not attachments:
+        return []  # nothing to deliver — a system event or an empty edit
     guild_id = data.get("guild_id")
     if route_by_guild:
         if guild_id is None:
@@ -66,8 +76,9 @@ def parse_gateway_message(
             provider_thread_id=channel_id,
             sender_address=author.get("username") or str(author.get("id", "")) or None,
             sender_name=author.get("global_name") or author.get("username"),
-            text=content,
+            text=content or None,
             chat_type="dm" if guild_id is None else "guild",
+            attachments=attachments,
         )
     ]
 
@@ -125,6 +136,7 @@ class DiscordProvider:
             Capability.INITIATE,
             Capability.GROUP_VISIBILITY,
             Capability.SEE_BOTS,
+            Capability.ATTACHMENTS,
         }
     )
 
