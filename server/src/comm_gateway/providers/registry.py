@@ -67,6 +67,14 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             serial_port=settings.modem_serial_port,
             msisdn=settings.modem_msisdn,
         )
+    if name == "signal":
+        from .signal import SignalProvider
+
+        return SignalProvider(
+            number=settings.signal_number,
+            daemon_url=settings.signal_daemon_url,
+            webhook_secret=settings.signal_webhook_secret,
+        )
     if name == "fake-caspian-phone":
         from .fakes.fake_caspian_phone import FakeCaspianPhoneProvider
 
