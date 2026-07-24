@@ -1,5 +1,7 @@
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import crypto from "node:crypto";
+import { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
+export { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError };
 import type {
   Agent,
   AutopayOptions,
@@ -349,8 +351,6 @@ class MessageScheduler {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    // ponytail: overlap state stays in this process. A shared state adapter is
-    // the upgrade path if listen() later coordinates multiple workers.
     for (const [key, item] of this.debounced) {
       if (item.timer) clearTimeout(item.timer);
       if (this.running.has(key)) continue;
@@ -377,6 +377,7 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private processedEvents = new Set<string>();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -423,7 +424,6 @@ export class CommClient {
         const body = (await response.json()) as { detail?: unknown };
         detailValue = body?.detail;
         if (body && body.detail != null) {
-          // FastAPI validation errors put an array/object under `detail`.
           detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
         } else {
           detail = JSON.stringify(body);
@@ -431,7 +431,6 @@ export class CommClient {
       } catch {
         detail = await response.text().catch(() => response.statusText);
       }
-      // A paid channel needs a one-time developer sign-in first.
       if (
         response.status === 401 &&
         isRecord(detailValue) &&
@@ -439,8 +438,6 @@ export class CommClient {
       ) {
         throw new AccountRequiredError(response.status, detailValue, this);
       }
-      // A billing block (out of credit / spend cap) carries a structured body;
-      // raise the typed error so callers can react in code.
       if (
         (response.status === 402 || response.status === 429) &&
         isRecord(detailValue) &&
@@ -470,17 +467,10 @@ export class CommClient {
 
   // ---- Platform behaviour guides (opt-in) ----------------------------------
 
-  /**
-   * A ready-to-inject system-prompt block telling your agent how to behave on
-   * each channel you've connected (Slack threads, WhatsApp 24h window, SMS
-   * length, formatting, etc.). Append it to your agent's system prompt — or
-   * ignore it and write your own. Empty string if nothing is connected yet.
-   */
   behaviorPrompt(): Promise<string> {
     return this.getText("/v1/behavior-prompt");
   }
 
-  /** The behaviour guide for a single channel (e.g. "slack", "discord"). */
   channelGuide(channel: string): Promise<string> {
     return this.getText(`/v1/channels/${channel}/guide`);
   }
@@ -526,10 +516,6 @@ export class CommClient {
     return connection;
   }
 
-  /**
-   * Connect an email inbox. Pass `domain` for a verified custom domain and
-   * `username` to pick the exact local part (custom domains only).
-   */
   connectEmail(
     opts: ConnectOptions & { domain?: string; username?: string } = {},
   ): Promise<Connection> {
@@ -537,16 +523,11 @@ export class CommClient {
     return this.connect("email", rest, { domain: domain ?? null, username: username ?? null });
   }
 
-  /** Connect a Telegram bot. Get a token from @BotFather; we do the rest. */
   connectTelegram(opts: ConnectOptions & { botToken: string }): Promise<Connection> {
     const { botToken, ...rest } = opts;
     return this.connect("telegram", rest, { bot_token: botToken });
   }
 
-  /**
-   * Register a custom subdomain (e.g. agents.example.com). Returns the DNS
-   * records to add at the registrar; poll getDomain() until active.
-   */
   addDomain(domain: string): Promise<Domain> {
     return this.request("POST", "/v1/domains", { json: { domain } });
   }
@@ -559,30 +540,16 @@ export class CommClient {
     return this.request("GET", `/v1/domains/${domainId}`);
   }
 
-  /**
-   * Connect an SMS/voice phone line. `provider` picks the backend when more than
-   * one is configured (e.g. gsm-modem, or a hosted provider); omit for default.
-   */
   connectPhone(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("phone", rest, { provider: provider ?? null });
   }
 
-  /**
-   * Connect a WhatsApp number. `provider` picks the backend when more than one is
-   * configured, `provider` picks one explicitly; omit for the default.
-   */
   connectWhatsapp(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("whatsapp", rest, { provider: provider ?? null });
   }
 
-  /**
-   * Begin Meta WhatsApp Embedded Signup for one of your customers. Returns
-   * { session, launcher_url, expires_in }. Hand launcher_url to whoever owns the
-   * WhatsApp Business account: they click through Meta's popup once and their
-   * number is provisioned onto this agent. Poll getConnection() until active.
-   */
   startWhatsappOnboarding(
     opts: { customerId?: string; agentId?: string; displayName?: string; capabilities?: string[] } = {},
   ): Promise<WhatsappOnboarding> {
@@ -594,21 +561,14 @@ export class CommClient {
     return this.request("POST", "/v1/connections/whatsapp/onboarding-session", { json: body });
   }
 
-  /** Connect an iMessage line (Caspian hosted). */
   connectImessage(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("imessage", opts);
   }
 
-  /** Connect an RCS Business Messaging sender (Caspian hosted). */
   connectRcs(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("rcs", opts);
   }
 
-  /**
-   * Connect a Discord identity. Either a bot (`botToken` from
-   * discord.com/developers) OR a channel `webhookUrl` for a per-agent identity
-   * with a custom `username`/`avatarUrl` (no bot needed).
-   */
   connectDiscord(
     opts: ConnectOptions & {
       botToken?: string;
@@ -626,11 +586,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * One-click install of the gateway's shared Discord bot (no bot token). Returns
-   * a connection with an `authorize_url`. Pass `displayName` to give the bot YOUR
-   * custom name in that server.
-   */
   installDiscord(
     opts: { customerId?: string; agentId?: string; displayName?: string } = {},
   ): Promise<Connection> {
@@ -643,11 +598,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * Start a Slack install with your OWN Slack app (create one at
-   * api.slack.com/apps and pass its client id/secret/signing secret). Returns a
-   * connection with an `authorize_url`; the workspace owner clicks it to approve.
-   */
   connectSlack(
     opts: ConnectOptions & {
       slackClientId?: string;
@@ -663,11 +613,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * One-click install of the gateway's shared Slack app (no app to create).
-   * Returns a connection with an `authorize_url` ("Add to Slack"). Pass
-   * `displayName` and `iconUrl` to post under YOUR own name + icon.
-   */
   installSlack(
     opts: { customerId?: string; agentId?: string; displayName?: string; iconUrl?: string } = {},
   ): Promise<Connection> {
@@ -681,10 +626,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * Change the name/icon the agent posts under, after connecting — no re-install.
-   * Slack: next message; Discord shared bot: re-sets the per-server nickname.
-   */
   updateBranding(
     connectionId: string,
     opts: { displayName?: string; iconUrl?: string } = {},
@@ -694,11 +635,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * Connect an X (Twitter) account as a reactive DM bot. Bring the account's
-   * OAuth tokens: `accessToken` + `userId`, and `accessSecret` for a
-   * bring-your-own account. People DM the account and the agent replies.
-   */
   connectX(
     opts: ConnectOptions & {
       accessToken: string;
@@ -716,22 +652,16 @@ export class CommClient {
     });
   }
 
-  /**
-   * One-click connect of an X account as a DM bot — no tokens to paste. Returns a
-   * connection with an `authorize_url` ("Sign in with X").
-   */
   installX(opts: { customerId?: string; agentId?: string } = {}): Promise<Connection> {
     return this.request("POST", "/v1/connections/x/install", {
       json: { customer_id: opts.customerId ?? null, agent_id: opts.agentId ?? null },
     });
   }
 
-  /** Start an Instagram DM install (OAuth). Returns a connection with an authorize_url. */
   connectInstagram(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("instagram", { ...opts, wait: false });
   }
 
-  /** Start a Facebook Messenger install (OAuth). Returns a connection with an authorize_url. */
   connectFacebook(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("facebook", { ...opts, wait: false });
   }
@@ -750,12 +680,6 @@ export class CommClient {
     return this.request("GET", `/v1/conversations/${conversationId}/messages`);
   }
 
-  /**
-   * Reply to a message. Pass `blocks` — a list of provider-neutral rich blocks
-   * (heading, text, divider, image, fields, list, buttons, card) — to send a
-   * rich message. Slack, Discord, Telegram and email render it natively; every
-   * other channel degrades to clean text automatically.
-   */
   reply(
     messageId: string,
     text?: string | null,
@@ -768,27 +692,14 @@ export class CommClient {
     });
   }
 
-  /**
-   * Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS —
-   * Slack/Telegram/Discord). Best-effort; a channel with no reaction API returns
-   * `reacted: false` rather than erroring.
-   */
   react(messageId: string, emoji: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/react`, { json: { emoji } });
   }
 
-  /**
-   * Show a "thinking…" indicator on the channel a message arrived on
-   * (Discord/Telegram; no-op where unsupported). Best-effort.
-   */
   typing(messageId: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
   }
 
-  /**
-   * Edit an outbound message previously sent by this agent.
-   * Only works on channels with Capability.EDIT_OUTBOUND (Slack, Discord, Telegram).
-   */
   editMessage(
     messageId: string,
     text?: string | null,
@@ -800,7 +711,6 @@ export class CommClient {
     });
   }
 
-  /** Determine streaming strategy for a connection based on capabilities. */
   async getStreamStrategy(connectionId: string): Promise<StreamStrategy> {
     try {
       const conn = await this.getConnection(connectionId);
@@ -809,12 +719,10 @@ export class CommClient {
         return "post_edit";
       }
     } catch (err) {
-      // Default to final_only if we can't look up the connection
     }
     return "final_only";
   }
 
-  /** Receive events by push instead of (or alongside) polling. */
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/webhook", { json: { url, secret: secret ?? null } });
   }
@@ -823,22 +731,10 @@ export class CommClient {
     return this.request("GET", "/v1/webhook");
   }
 
-  /** Configured transports and their capabilities. */
   channels(): Promise<Record<string, unknown>[]> {
     return this.request("GET", "/v1/channels");
   }
 
-  // ---- Account sign-in (one-time, required before paid channels) -----------
-
-  /**
-   * Sign the developer in once to open a billing account for this project.
-   *
-   * Paid channels require a real account before any spend. This prints a URL for
-   * the developer to open in a browser and resolves once they approve. The
-   * project you've already built with is carried over — same API key, nothing
-   * lost. After this, add credit with `topUp()` and connect paid channels
-   * freely; the agent needs no further human sign-in.
-   */
   async login(opts: LoginOptions = {}): Promise<Record<string, unknown>> {
     const start = await this.request<any>("POST", "/v1/auth/device/start", {
       json: { api_key: this.apiKey },
@@ -868,32 +764,14 @@ export class CommClient {
     throw new CommError(408, "device login timed out");
   }
 
-  // ---- Billing (pay-as-you-go credit) --------------------------------------
-
-  /**
-   * Current credit balance, spend, spend caps, and autopay state. Paid channels
-   * draw down this balance; free channels (email, Telegram, Discord, Slack)
-   * never do.
-   */
   billing(): Promise<Record<string, unknown>> {
     return this.request("GET", "/v1/billing");
   }
 
-  /**
-   * Mint a hosted checkout link to add credit. Returns
-   * `{ checkout_url, session_id, amount_cents, ... }` — open the URL (or hand it
-   * to whoever holds the card). Credit lands seconds after payment; poll
-   * `billing()` or watch for the `billing.credited` event. Minimum 100 cents.
-   */
   topUp(amountCents = 2000): Promise<Record<string, unknown>> {
     return this.request("POST", "/v1/billing/topup", { json: { amount_cents: amountCents } });
   }
 
-  /**
-   * Cap spend so autopay/credit can't run away. `monthlyCapCents` caps total
-   * monthly spend; `channelCaps` caps per channel (e.g. { whatsapp: 5000 }).
-   * Returns the updated billing state.
-   */
   setSpendLimits(opts: SpendLimitsOptions = {}): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = {};
     if (opts.monthlyCapCents !== undefined) body.monthly_cap_cents = opts.monthlyCapCents;
@@ -901,12 +779,6 @@ export class CommClient {
     return this.request("PUT", "/v1/billing/limits", { json: body });
   }
 
-  /**
-   * Auto-refill the balance from a saved card when it drops below
-   * `thresholdCents` (adds `topupCents`). Requires a card on file (complete one
-   * `topUp()` checkout first) and a `monthlyCapCents` — an uncapped
-   * auto-replenishing budget is not allowed. Pass `enabled: false` to turn off.
-   */
   setAutopay(opts: AutopayOptions = {}): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/billing/autopay", {
       json: {
@@ -918,12 +790,6 @@ export class CommClient {
     });
   }
 
-  /**
-   * Proactively send into an existing conversation (needs Capability.SEND).
-   *
-   * Pass `blocks` — provider-neutral rich blocks — to render natively on
-   * Slack/Discord/Telegram/email and degrade to clean text elsewhere.
-   */
   sendMessage(
     conversationId: string,
     text?: string | null,
@@ -936,14 +802,12 @@ export class CommClient {
     });
   }
 
-  /** Cold-start a conversation (needs Capability.INITIATE — user account). */
   initiate(connectionId: string, recipient: string, text: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/connections/${connectionId}/initiate`, {
       json: { recipient, text },
     });
   }
 
-  /** Pull history from before the connection (needs Capability.BACKFILL). */
   backfill(conversationId: string, limit = 50): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/conversations/${conversationId}/backfill`, { json: { limit } });
   }
@@ -970,23 +834,16 @@ export class CommClient {
 
   // ---- Event handling ------------------------------------------------------
 
-  /** Register a handler. The same handler answers every channel you connect. */
   onMessage(handler: MessageHandler): MessageHandler {
     this.handlers.push(handler);
     return handler;
   }
 
-  /**
-   * Register a handler for button taps (interaction.received). The same handler
-   * answers taps from every channel with interactive buttons (Slack, Discord,
-   * Telegram).
-   */
   onInteraction(handler: InteractionHandler): InteractionHandler {
     this.interactionHandlers.push(handler);
     return handler;
   }
 
-  /** Register a handler for emoji reactions (reaction.received). */
   onReaction(handler: ReactionHandler): ReactionHandler {
     this.reactionHandlers.push(handler);
     return handler;
@@ -1064,14 +921,10 @@ export class CommClient {
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
     if (this.handlers.length) {
-      // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
       try {
         await message.typing();
       } catch {
-        /* ignore */
       }
-      // Optional instant acknowledgement (listen({ ack })) for channels with no
-      // typing indicator; the real answer follows from the handler.
       if (this.ackMessage) {
         try {
           await message.reply(this.ackMessage);
@@ -1090,9 +943,6 @@ export class CommClient {
       try {
         await handler(message);
       } catch (err) {
-        // Paid channel used before the developer signed in, or the project is
-        // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
-        // keep the loop alive so one blocked reply can't stop the listener.
         if (err instanceof AccountRequiredError) {
           this.warnAccountRequired(err);
         } else if (err instanceof InsufficientCreditError) {
@@ -1104,7 +954,6 @@ export class CommClient {
     }
   }
 
-  /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
   private warnAccountRequired(err: AccountRequiredError): void {
     const now = Date.now();
     if (now - this.lastCreditWarning < 60_000) return;
@@ -1121,7 +970,6 @@ export class CommClient {
     process.stderr.write(lines.join("\n") + "\n");
   }
 
-  /** Print a prominent, rate-limited banner when a paid reply is blocked. */
   private warnOutOfCredit(err: InsufficientCreditError): void {
     const now = Date.now();
     if (now - this.lastCreditWarning < 60_000) return;
@@ -1149,10 +997,43 @@ export class CommClient {
     process.stderr.write(lines.join("\n") + "\n");
   }
 
-  /**
-   * Process all currently available events once. Returns the last seen seq.
-   * Handler exceptions are caught per message, so this always drains the queue.
-   */
+  async handleWebhook(
+    body: string | Buffer,
+    signature: string,
+    secret: string
+  ): Promise<void> {
+    const bodyBuffer = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf-8");
+    const hmac = crypto.createHmac("sha256", secret);
+    hmac.update(bodyBuffer);
+    const expected = hmac.digest("hex");
+
+    const expectedBuf = Buffer.from(expected, "ascii");
+    const signatureBuf = Buffer.from(signature, "ascii");
+    if (expectedBuf.length !== signatureBuf.length || !crypto.timingSafeEqual(expectedBuf, signatureBuf)) {
+      throw new WebhookVerificationError();
+    }
+
+    let event: Record<string, any>;
+    try {
+      event = JSON.parse(bodyBuffer.toString("utf-8"));
+    } catch (err: any) {
+      throw new CommError(400, "invalid JSON payload");
+    }
+
+    const eventId = event.id;
+    if (eventId) {
+      if (this.processedEvents.has(eventId)) return;
+      this.processedEvents.add(eventId);
+    }
+
+    if (this.processedEvents.size > 1000) {
+      this.processedEvents.clear();
+      if (eventId) this.processedEvents.add(eventId);
+    }
+
+    await this.dispatchEvent(event as EventRecord);
+  }
+
   async dispatchPending(afterSeq = 0): Promise<number> {
     let lastSeq = afterSeq;
     for (;;) {
@@ -1165,12 +1046,6 @@ export class CommClient {
     }
   }
 
-  /**
-   * Poll the event stream forever, dispatching inbound messages to handlers.
-   * Resilient by design: a handler that throws is logged and skipped, and a
-   * failed poll is retried with exponential backoff. Messages use a per-conversation
-   * queue by default. Pass an AbortSignal to stop.
-   */
   async listen(opts: ListenOptions = {}): Promise<void> {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
     const pollMs = (opts.pollInterval ?? 1) * 1000;
@@ -1201,7 +1076,7 @@ export class CommClient {
         }
         for (const event of batch) {
           await scheduler.submit(event);
-          seq = event.seq; // advance after the scheduler accepts the event
+          seq = event.seq;
         }
       }
     } finally {

@@ -23,6 +23,9 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+import hashlib
+import hmac
+import json
 from pathlib import Path
 from threading import Lock, Timer
 from typing import TYPE_CHECKING, Literal
@@ -67,6 +70,12 @@ class CommError(Exception):
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class WebhookVerificationError(CommError):
+    """Raised when an inbound webhook fails signature verification."""
+    def __init__(self, detail: str = "Webhook signature mismatch") -> None:
+        super().__init__(401, detail)
 
 
 class AccountRequiredError(CommError):
@@ -502,6 +511,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        self._processed_events: set[str] = set()
 
     def close(self) -> None:
         self._http.close()
@@ -1210,6 +1220,49 @@ class CommClient:
                     seq = event["seq"]  # advance after the scheduler accepts the event
         finally:
             scheduler.close()
+
+    def handle_webhook(
+        self, body: str | bytes, signature: str, secret: str
+    ) -> None:
+        """Process a single event pushed by the gateway (serverless mode).
+
+        Verifies the HMAC-SHA256 signature, enforces idempotency within this
+        invocation, and routes the event to your registered handlers (e.g.
+        ``@client.on_message``). Handlers run synchronously in the calling thread.
+
+        Args:
+            body: The raw HTTP request body.
+            signature: The signature header from the gateway.
+            secret: Your configured webhook secret.
+        
+        Raises:
+            WebhookVerificationError: If the signature is invalid.
+        """
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        
+        expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise WebhookVerificationError()
+
+        try:
+            event = json.loads(body)
+        except ValueError as exc:
+            raise CommError(400, "invalid JSON payload") from exc
+
+        event_id = event.get("id")
+        if event_id:
+            if event_id in self._processed_events:
+                return  # already handled in this invocation
+            self._processed_events.add(event_id)
+        
+        # Discard old events to bound memory on warm serverless containers
+        if len(self._processed_events) > 1000:
+            self._processed_events.clear()
+            if event_id:
+                self._processed_events.add(event_id)
+
+        self._dispatch_event(event)
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

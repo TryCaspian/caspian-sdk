@@ -9,6 +9,7 @@ from .client import (
     Message,
     Reaction,
     StreamSession,
+    WebhookVerificationError,
 )
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "Message",
     "Reaction",
     "StreamSession",
+    "WebhookVerificationError",
     "blocks",
 ]
