@@ -348,12 +348,13 @@ export class StreamResponse {
     if (!this.supportsEdit || !this.buffer) return;
     const now = Date.now();
     if (this.outboundId === null) {
+      if (this.replyAttempted) return;
       this.replyAttempted = true;
       const result = await this.client.reply(this.messageId, this.buffer);
       this.outboundId = (result as Record<string, unknown>).id as string ?? null;
       this.lastEdit = now;
       this.lastSentText = this.buffer;
-    } else if (now - this.lastEdit >= this.throttleMs) {
+    } else if (now - this.lastEdit >= this.throttleMs && this.buffer !== this.lastSentText) {
       await this.client.edit(this.outboundId, this.buffer);
       this.lastEdit = now;
       this.lastSentText = this.buffer;

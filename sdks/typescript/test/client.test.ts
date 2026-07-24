@@ -901,5 +901,23 @@ describe("CommClient", () => {
     await s.close();
     const replies = bodies.filter((b) => b.path === "/reply");
     expect(replies).toHaveLength(1);
+    const edits = bodies.filter((b) => b.path === "/edit");
+    expect(edits).toHaveLength(0);
+  });
+
+  it("reply returning no id does not cause duplicate sends on later appends", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ delivered: true }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    await s.append("a");
+    await s.append("b");
+    await s.append("c");
+    await s.close();
+    const replies = bodies.filter((b) => b.path === "/reply");
+    expect(replies).toHaveLength(1);
   });
 });
