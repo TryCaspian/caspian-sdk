@@ -36,6 +36,21 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function messageEvent(seq: number, conversationId: string, text: string) {
+  return {
+    seq,
+    type: "message.received",
+    data: {
+      message: {
+        id: `m${seq}`,
+        conversation_id: conversationId,
+        connection_id: "cn",
+        text,
+      },
+    },
+  };
+}
+
 describe("CommClient", () => {
   it("requires an API key", () => {
     delete process.env.CASPIAN_API_KEY;
@@ -96,6 +111,35 @@ describe("CommClient", () => {
     expect(conn.address).toBe("a@x");
     // body maps camelCase -> snake_case
     expect(calls[0].body).toMatchObject({ customer_id: null, agent_id: null, domain: null });
+  });
+
+  it("connectEmail with wait: false returns immediately without polling", async () => {
+    const { client, calls } = makeClient({
+      "POST /v1/connections/email": () => json({ id: "conn_1", status: "provisioning" }),
+    });
+    const conn = await client.connectEmail({ wait: false });
+    expect(conn.status).toBe("provisioning");
+    
+    // Verify no polling requests occurred (only the POST should be present)
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].path).toBe("/v1/connections/email");
+  });
+
+  it("connectEmail throws CommError on provisioning failure", async () => {
+    const { client } = makeClient({
+      "POST /v1/connections/email": () => json({ id: "conn_1", status: "provisioning" }),
+      "GET /v1/connections/conn_1": () => {
+        return json({ id: "conn_1", status: "failed", error: "DNS verification failed" });
+      },
+    });
+    
+    const err = await client
+      .connectEmail({ pollInterval: 0.001 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(CommError);
+    expect(err.statusCode).toBe(502);
+    expect(err.detail).toBe("provisioning failed: DNS verification failed");
   });
 
   it("maps camelCase channel fields to snake_case on the wire", async () => {
@@ -241,6 +285,190 @@ describe("CommClient", () => {
     expect(seen).toEqual(["hi"]); // handler still ran
   });
 
+  it("listen queues each conversation without blocking the others", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_2", "other"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") await firstBlocked;
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({ fromSeq: 0, pollInterval: 0.001, signal: ac.signal });
+
+    expect(seen).toEqual(["other", "first", "second"]);
+  });
+
+  it("listen debounce keeps the latest message without overlapping handlers", async () => {
+    const ac = new AbortController();
+    let latestStarted = false;
+    let followupSent = false;
+    let stopScheduled = false;
+    let releaseLatest!: () => void;
+    const latestBlocked = new Promise<void>((resolve) => {
+      releaseLatest = resolve;
+    });
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_1", "latest"),
+          ]);
+        }
+        if (after === 3 && latestStarted && !followupSent) {
+          followupSent = true;
+          return json([messageEvent(4, "conv_1", "after")]);
+        }
+        if (after >= 4 && !stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseLatest, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "latest") {
+        latestStarted = true;
+        await latestBlocked;
+      }
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "debounce",
+      debounceMs: 10,
+    });
+
+    expect(seen).toEqual(["latest", "after"]);
+  });
+
+  it("listen drop ignores messages while a conversation is busy", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_1", "third"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") await firstBlocked;
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "drop",
+    });
+
+    expect(seen).toEqual(["first"]);
+  });
+
+  it("listen parallel allows handlers in one conversation to overlap", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted = false;
+    let secondFinished = false;
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") {
+        firstStarted = true;
+        await firstBlocked;
+      }
+      seen.push(message.text ?? "");
+      if (message.text === "second") secondFinished = true;
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "parallel",
+    });
+
+    expect(firstStarted).toBe(true);
+    expect(secondFinished).toBe(true);
+    expect(seen).toEqual(["second", "first"]);
+  });
+
+  it("listen validates overlap options", async () => {
+    const { client } = makeClient({});
+    await expect(
+      client.listen({ fromSeq: 0, concurrency: "invalid" as any }),
+    ).rejects.toThrow("concurrency");
+    await expect(client.listen({ fromSeq: 0, debounceMs: -1 })).rejects.toThrow("debounceMs");
+  });
+
   it("raises AccountRequiredError on a 401 account_required body", async () => {
     const { client } = makeClient({
       "POST /v1/connections/x": () =>
@@ -287,6 +515,30 @@ describe("CommClient", () => {
     expect(err.paymentOptions[0].url).toBe("https://pay/1");
   });
 
+  it("uses the suggested payment option amount when topping up without an amount", async () => {
+    const { client, calls } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json(
+          {
+            detail: {
+              reason: "insufficient_credit",
+              message: "Out of credit.",
+              payment_options: [{ create: { body: { amount_cents: 5000 } } }],
+            },
+          },
+          402,
+        ),
+      "POST /v1/billing/topup": () => json({ checkout_url: "https://pay/1" }),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+
+    await err.topUp();
+
+    const topup = calls.find((c) => c.path === "/v1/billing/topup");
+    expect(topup?.body).toEqual({ amount_cents: 5000 });
+  });
+
   it("raises InsufficientCreditError on a 429 monthly_cap_reached body", async () => {
     const { client } = makeClient({
       "POST /v1/messages/m1/reply": () =>
@@ -295,6 +547,17 @@ describe("CommClient", () => {
     const err = await client.reply("m1", "hi").catch((e) => e);
     expect(err).toBeInstanceOf(InsufficientCreditError);
     expect(err.statusCode).toBe(429);
+  });
+
+  it("raises InsufficientCreditError on a 429 channel_cap_reached body", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": () =>
+        json({ detail: { reason: "channel_cap_reached", message: "Channel capped." } }, 429),
+    });
+    const err = await client.reply("m1", "hi").catch((e) => e);
+    expect(err).toBeInstanceOf(InsufficientCreditError);
+    expect(err.statusCode).toBe(429);
+    expect(err.reason).toBe("channel_cap_reached");
   });
 
   it("billing methods hit the right endpoints with snake_case bodies", async () => {
@@ -344,6 +607,49 @@ describe("CommClient", () => {
     expect(last).toBe(1);
     const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("OUT OF CREDIT");
+    errSpy.mockRestore();
+  });
+
+  it("account-required in a handler warns but does not stop the drain", async () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 2) return json([]);
+        const message = (seq: number) => ({
+          seq,
+          type: "message.received",
+          data: {
+            message: {
+              id: `m${seq}`,
+              conversation_id: "c",
+              connection_id: "cn",
+              text: "hi",
+            },
+          },
+        });
+        return json([message(1), message(2)]);
+      },
+      "POST /v1/messages/m1/typing": () => json({}),
+      "POST /v1/messages/m2/typing": () => json({}),
+    });
+    let handled = 0;
+    client.onMessage(() => {
+      handled += 1;
+      throw new AccountRequiredError(
+        401,
+        { reason: "account_required", message: "Sign in to use paid channels." },
+        client,
+      );
+    });
+
+    const last = await client.dispatchPending(0);
+
+    expect(last).toBe(2);
+    expect(handled).toBe(2);
+    const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("SIGN-IN REQUIRED");
+    expect(printed).toContain("Sign in to use paid channels.");
     errSpy.mockRestore();
   });
 

@@ -1,10 +1,17 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
 import json
+import threading
 
 import httpx
 import pytest
-from caspian_sdk import CommClient, CommError
+from caspian_sdk import (
+    AccountRequiredError,
+    CommClient,
+    CommError,
+    InsufficientCreditError,
+)
+from caspian_sdk.client import _MessageScheduler
 
 API_KEY = "comm_test_key"
 
@@ -12,6 +19,21 @@ API_KEY = "comm_test_key"
 def _client(handler) -> CommClient:
     http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://gw.test")
     return CommClient(api_key=API_KEY, base_url="http://gw.test", http=http)
+
+
+def _message_event(seq: int, conversation_id: str, text: str) -> dict:
+    return {
+        "seq": seq,
+        "type": "message.received",
+        "data": {
+            "message": {
+                "id": f"msg_{seq}",
+                "conversation_id": conversation_id,
+                "connection_id": "conn_1",
+                "text": text,
+            }
+        },
+    }
 
 
 def test_requests_carry_bearer_auth():
@@ -44,6 +66,92 @@ def test_error_maps_to_comm_error_with_detail():
             client.close()
     assert excinfo.value.status_code == 422
     assert "bot_token" in str(excinfo.value)
+
+
+def test_account_required_maps_from_401():
+    """A 401 with reason=account_required raises the typed AccountRequiredError,
+    carrying the sign-in message and raw login_options for callers to react."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "detail": {
+                    "reason": "account_required",
+                    "message": "Sign in to use paid channels.",
+                    "login_options": [{"start": "/v1/auth/device/start"}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert isinstance(err, CommError)
+    assert err.status_code == 401
+    assert err.reason == "account_required"
+    assert err.detail == "Sign in to use paid channels."
+    assert err.login_options == [{"start": "/v1/auth/device/start"}]
+
+
+def test_insufficient_credit_maps_from_402():
+    """A 402 with reason=insufficient_credit raises InsufficientCreditError with
+    the structured balance and payment_options the gateway returns."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "message": "Out of credit.",
+                    "balance_cents": 42,
+                    "payment_options": [
+                        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+                    ],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert isinstance(err, CommError)
+    assert err.status_code == 402
+    assert err.reason == "insufficient_credit"
+    assert err.detail == "Out of credit."
+    assert err.balance_cents == 42
+    assert err.payment_options[0]["url"] == "https://pay/1"
+
+
+def test_monthly_cap_reached_maps_from_429():
+    """A 429 spend-cap block also raises InsufficientCreditError (429 shares the
+    typed billing error with 402), preserving the 429 status code."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "monthly_cap_reached", "message": "Capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "monthly_cap_reached"
+    assert err.detail == "Capped."
 
 
 def test_connect_email_waits_for_provisioning():
@@ -269,6 +377,195 @@ def test_message_carries_media_to_handler():
     finally:
         client.close()
     assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
+
+
+def test_queue_serializes_each_conversation_and_keeps_others_moving():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    first_started = threading.Event()
+    release_first = threading.Event()
+    other_finished = threading.Event()
+    seen = []
+
+    @client.on_message
+    def handle(message):
+        if message.text == "first":
+            first_started.set()
+            release_first.wait(timeout=1)
+        seen.append(message.text)
+        if message.text == "other":
+            other_finished.set()
+
+    scheduler = _MessageScheduler(client._dispatch_event, "queue", 500)
+    try:
+        scheduler.submit(_message_event(1, "conv_1", "first"))
+        assert first_started.wait(timeout=1)
+        scheduler.submit(_message_event(2, "conv_1", "second"))
+        scheduler.submit(_message_event(3, "conv_2", "other"))
+        assert other_finished.wait(timeout=1)
+        release_first.set()
+        scheduler.close()
+    finally:
+        release_first.set()
+        client.close()
+
+    assert seen == ["other", "first", "second"]
+
+
+def test_listen_uses_queue_by_default():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    release_first = threading.Event()
+    seen = []
+    polls = 0
+
+    def events(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls == 1:
+            return [
+                _message_event(1, "conv_1", "first"),
+                _message_event(2, "conv_1", "second"),
+            ]
+        release_first.set()
+        raise KeyboardInterrupt
+
+    @client.on_message
+    def handle(message):
+        if message.text == "first":
+            release_first.wait(timeout=1)
+        seen.append(message.text)
+
+    client.events = events
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            client.listen(from_seq=0, poll_interval=0)
+    finally:
+        release_first.set()
+        client.close()
+
+    assert seen == ["first", "second"]
+
+
+def test_queue_continues_after_handler_error():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(message):
+        if message.text == "bad":
+            raise RuntimeError("boom")
+        seen.append(message.text)
+
+    scheduler = _MessageScheduler(client._dispatch_event, "queue", 500)
+    try:
+        scheduler.submit(_message_event(1, "conv_1", "bad"))
+        scheduler.submit(_message_event(2, "conv_1", "good"))
+        scheduler.close()
+    finally:
+        client.close()
+
+    assert seen == ["good"]
+
+
+def test_debounce_keeps_only_the_latest_message():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    latest_started = threading.Event()
+    release_latest = threading.Event()
+    after_handled = threading.Event()
+    seen = []
+
+    @client.on_message
+    def handle(message):
+        if message.text == "latest":
+            latest_started.set()
+            release_latest.wait(timeout=1)
+        seen.append(message.text)
+        if message.text == "after":
+            after_handled.set()
+
+    scheduler = _MessageScheduler(client._dispatch_event, "debounce", 10)
+    try:
+        scheduler.submit(_message_event(1, "conv_1", "first"))
+        scheduler.submit(_message_event(2, "conv_1", "second"))
+        scheduler.submit(_message_event(3, "conv_1", "latest"))
+        assert latest_started.wait(timeout=1)
+        scheduler.submit(_message_event(4, "conv_1", "after"))
+        release_latest.set()
+        assert after_handled.wait(timeout=1)
+        scheduler.close()
+    finally:
+        release_latest.set()
+        client.close()
+
+    assert seen == ["latest", "after"]
+
+
+def test_drop_ignores_messages_while_a_handler_is_running():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    started = threading.Event()
+    release = threading.Event()
+    seen = []
+
+    @client.on_message
+    def handle(message):
+        started.set()
+        release.wait(timeout=1)
+        seen.append(message.text)
+
+    scheduler = _MessageScheduler(client._dispatch_event, "drop", 500)
+    try:
+        scheduler.submit(_message_event(1, "conv_1", "first"))
+        assert started.wait(timeout=1)
+        scheduler.submit(_message_event(2, "conv_1", "second"))
+        scheduler.submit(_message_event(3, "conv_1", "third"))
+        release.set()
+        scheduler.close()
+    finally:
+        release.set()
+        client.close()
+
+    assert seen == ["first"]
+
+
+def test_parallel_allows_handlers_for_one_conversation_to_overlap():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    first_started = threading.Event()
+    second_finished = threading.Event()
+    release_first = threading.Event()
+    seen = []
+
+    @client.on_message
+    def handle(message):
+        if message.text == "first":
+            first_started.set()
+            release_first.wait(timeout=1)
+        seen.append(message.text)
+        if message.text == "second":
+            second_finished.set()
+
+    scheduler = _MessageScheduler(client._dispatch_event, "parallel", 500)
+    try:
+        scheduler.submit(_message_event(1, "conv_1", "first"))
+        assert first_started.wait(timeout=1)
+        scheduler.submit(_message_event(2, "conv_1", "second"))
+        assert second_finished.wait(timeout=1)
+        release_first.set()
+        scheduler.close()
+    finally:
+        release_first.set()
+        client.close()
+
+    assert set(seen) == {"first", "second"}
+
+
+def test_listen_rejects_invalid_overlap_options():
+    client = _client(lambda request: httpx.Response(200, json=[]))
+    try:
+        with pytest.raises(ValueError, match="concurrency"):
+            client.listen(from_seq=0, concurrency="invalid")
+        with pytest.raises(ValueError, match="debounce_ms"):
+            client.listen(from_seq=0, debounce_ms=-1)
+    finally:
+        client.close()
 
 
 def test_behavior_prompt_returns_text():

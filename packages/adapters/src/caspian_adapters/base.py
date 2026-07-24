@@ -45,6 +45,7 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    ATTACHMENTS = "attachments"  # send/receive file attachments (image, document, voice, …)
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -76,11 +77,30 @@ class ProvisionResult:
 
 
 @dataclass(frozen=True)
+class Attachment:
+    """A file carried alongside a message — image, document, voice note, etc.
+
+    ``url`` is a directly fetchable link when the provider gives one (Discord).
+    When the provider only hands back an opaque handle (Telegram's ``file_id``),
+    ``provider_file_id`` carries it and ``url`` stays ``None`` until it is
+    resolved downstream. The remaining fields are filled in when the provider
+    reports them.
+    """
+
+    url: str | None = None
+    mime_type: str | None = None
+    filename: str | None = None
+    size_bytes: int | None = None
+    provider_file_id: str | None = None
+
+
+@dataclass(frozen=True)
 class OutboundMessage:
     text: str | None = None
     html: str | None = None
     subject: str | None = None
     to: tuple[str, ...] = ()
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -104,6 +124,7 @@ class InboundMessage:
     chat_type: str | None = None  # "private" | "group" | "channel" | ...
     edited: bool = False
     auto_generated: bool = False  # auto-responder/bounce/no-reply; never auto-reply to these
+    attachments: list[Attachment] = field(default_factory=list)
 
     def to_payload(self) -> dict:
         return asdict(self)

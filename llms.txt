@@ -8,6 +8,8 @@
 2. Config: the client reads `CASPIAN_API_KEY` and `CASPIAN_BASE_URL` from env or `./.env`. Against a running Caspian gateway, mint a key with `POST {base}/v1/projects/sandbox` (no signup) — or fetch `{base}/SKILL.md`, which is the gateway's own agent-readable integration guide with exact, current instructions. Prefer SKILL.md when a gateway URL is available.
 3. Write ONE handler; it fires for every connected channel:
 
+### Python
+
 ```python
 from caspian_sdk import CommClient
 
@@ -20,6 +22,24 @@ def handle(message):
     message.reply(your_agent_logic(message.text))
 
 client.listen()  # blocks; dedupes within a run
+```
+
+### TypeScript
+
+```ts
+import { CommClient } from "caspian-sdk";
+
+const client = new CommClient();
+
+await client.connectEmail({
+  username: "my-agent",
+});
+
+client.onMessage(async (message) => {
+  await message.reply(yourAgentLogic(message.text));
+});
+
+await client.listen();
 ```
 
 4. Add channels with more `connect_*()` calls — never new handler code:

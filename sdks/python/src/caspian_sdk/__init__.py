@@ -3,6 +3,7 @@ from .client import (
     AccountRequiredError,
     CommClient,
     CommError,
+    ConcurrencyStrategy,
     InsufficientCreditError,
     Interaction,
     Message,

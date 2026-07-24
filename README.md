@@ -15,6 +15,8 @@
   <a href="./llms.txt">llms.txt for agents</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
+  ·
+  <a href="https://discord.gg/A28qnkvgCM">Discord</a>
 </p>
 
 <p align="center">
@@ -28,6 +30,7 @@
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
+  <a href="https://discord.gg/A28qnkvgCM"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -207,7 +210,7 @@ Adapters declare what the channel can physically do; an agent can never be grant
 <td valign="top">
 
 **🧪 Offline fakes for every channel**<br/>
-Fakes consume each platform's *real* payload shapes — 80 tests across Python + TS, zero network.
+Fakes consume each platform's *real* payload shapes — 131 tests across Python + TS, zero network.
 
 </td>
 </tr>
@@ -429,9 +432,9 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 70 Python tests, all offline
+uv run pytest        # 100 Python tests, all offline
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 10 vitest tests
+cd sdks/typescript && npm ci && npm test   # 31 vitest tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
