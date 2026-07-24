@@ -9,7 +9,7 @@ import secrets
 from collections.abc import Mapping
 
 from .base import (
-    InboundMessage,
+    InboundEvent,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -18,7 +18,7 @@ from .base import (
 )
 from .discord import DiscordProvider, parse_gateway_message
 from .messenger import InstagramProvider, parse_messaging_webhook
-from .slack import SlackProvider, parse_event
+from .slack import SlackProvider, parse_event, parse_slash_command
 
 
 class FakeDiscordProvider:
@@ -77,13 +77,16 @@ class FakeDiscordProvider:
         return SendResult(provider_message_id=f"{cid}:{secrets.randbelow(99999)}",
                           provider_thread_id=cid)
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
         try:
             event = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON") from exc
         app_id = (credentials or {}).get("provider_resource_id", self.app_id)
         return parse_gateway_message(event, app_id)
+
+    def react(self, provider_inbox_id, provider_message_id, emoji, credentials=None):
+        pass  # fake: no-op
 
     def webhook_payload(self, *, channel_id="chan1", text="Hi there", author="customer"):
         self._seq += 1
@@ -94,6 +97,35 @@ class FakeDiscordProvider:
                 "channel_id": channel_id,
                 "content": text,
                 "author": {"id": str(555000 + self._seq), "username": author},
+            },
+        }
+
+    def reaction_payload(self, *, channel_id="chan1", message_id="700001", emoji="👍",
+                         action="MESSAGE_REACTION_ADD", user_id="555001"):
+        return {
+            "t": action,
+            "d": {
+                "channel_id": channel_id,
+                "message_id": message_id,
+                "emoji": {"name": emoji},
+                "user_id": user_id,
+            },
+        }
+
+    def command_payload(self, *, channel_id="chan1", command="deploy", options=None,
+                        user_id="555001", interaction_id="int1"):
+        data = {
+            "name": command,
+            "options": [{"name": k, "value": v} for k, v in (options or {}).items()],
+        }
+        return {
+            "t": "INTERACTION_CREATE",
+            "d": {
+                "id": interaction_id,
+                "type": 2,
+                "channel_id": channel_id,
+                "data": data,
+                "member": {"user": {"id": user_id, "username": f"user{user_id}"}},
             },
         }
 
@@ -193,14 +225,19 @@ class FakeSlackProvider:
         self._seq += 1
         return 1_752_000_000 + self._seq
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
         try:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON") from exc
         if data.get("type") == "url_verification":
             return []
+        if data.get("command"):
+            return parse_slash_command(data)
         return parse_event(data)
+
+    def react(self, provider_inbox_id, provider_message_id, emoji, credentials=None):
+        pass  # fake: no-op
 
     def webhook_payload(self, *, channel="C123", text="Hi there", user="U456"):
         self._seq += 1
@@ -216,6 +253,35 @@ class FakeSlackProvider:
                 "ts": f"{self._next()}.0000",
                 "channel_type": "channel",
             },
+        }
+
+    def reaction_payload(self, *, channel="C123", emoji="thumbsup", user="U456",
+                         message_ts="1752000000.0001", action="reaction_added"):
+        self._seq += 1
+        return {
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "event_id": f"Ev{self._seq}",
+            "event": {
+                "type": action,
+                "user": user,
+                "reaction": emoji,
+                "item": {"type": "message", "channel": channel, "ts": message_ts},
+            },
+        }
+
+    def command_payload(self, *, command="/deploy", text="staging", user="U456",
+                        channel="C123"):
+        self._seq += 1
+        return {
+            "team_id": self.team_id,
+            "api_app_id": self.app_id,
+            "command": command,
+            "text": text,
+            "user_id": user,
+            "channel_id": channel,
+            "channel_type": "channel",
+            "trigger_id": f"trigger_{self._seq}",
         }
 
 
@@ -250,7 +316,7 @@ class _FakeMetaMessaging:
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
         return params.get("hub.challenge") if params.get("hub.mode") == "subscribe" else None
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
         try:
             json.loads(payload)
         except ValueError as exc:

@@ -19,7 +19,7 @@ from collections.abc import Mapping
 
 from .base import (
     Capability,
-    InboundMessage,
+    InboundEvent,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -94,6 +94,6 @@ class GsmModemProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str],
         credentials=None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         # A modem has no webhook; inbound comes from the AT poll listener.
         raise NotImplementedError("gsm-modem inbound arrives via the AT poll loop, not webhooks")
