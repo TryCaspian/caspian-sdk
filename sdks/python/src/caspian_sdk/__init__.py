@@ -1,6 +1,7 @@
 from . import blocks
 from .client import (
     AccountRequiredError,
+    Attachment,
     CommClient,
     CommError,
     InsufficientCreditError,
@@ -11,6 +12,7 @@ from .client import (
 
 __all__ = [
     "AccountRequiredError",
+    "Attachment",
     "CommClient",
     "CommError",
     "InsufficientCreditError",

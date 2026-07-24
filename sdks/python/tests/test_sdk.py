@@ -6,6 +6,7 @@ import httpx
 import pytest
 from caspian_sdk import (
     AccountRequiredError,
+    Attachment,
     CommClient,
     CommError,
     InsufficientCreditError,
@@ -44,7 +45,7 @@ def test_error_maps_to_comm_error_with_detail():
     client = _client(handler)
     with pytest.raises(CommError) as excinfo:
         try:
-            client.connect_telegram(bot_token=None)
+            client.connect_telegram(bot_token="")
         finally:
             client.close()
     assert excinfo.value.status_code == 422
@@ -239,11 +240,11 @@ def test_reply_and_send_forward_attachments():
         return httpx.Response(200, json={"delivered": True})
 
     attachments = [
-        {
-            "url": "https://x/i.png",
-            "mime_type": "image/png",
-            "name": "i.png",
-        }
+        Attachment(
+            url="https://x/i.png",
+            mime_type="image/png",
+            name="i.png",
+        )
     ]
 
     client = _client(handler)
@@ -257,14 +258,30 @@ def test_reply_and_send_forward_attachments():
         "text": "here",
         "html": None,
         "blocks": None,
-        "attachments": attachments,
+        "attachments": [
+            {
+                "url": "https://x/i.png",
+                "data": None,
+                "mime_type": "image/png",
+                "name": "i.png",
+                "size": None,
+            }
+        ],
     }
 
     assert bodies[1][1] == {
         "text": None,
         "html": None,
         "blocks": None,
-        "attachments": attachments,
+        "attachments": [
+            {
+                "url": "https://x/i.png",
+                "data": None,
+                "mime_type": "image/png",
+                "name": "i.png",
+                "size": None,
+            }
+        ],
     }
 
 
@@ -322,6 +339,7 @@ def test_on_interaction_dispatches_and_replies():
         client.close()
     assert len(seen) == 1
     assert seen[0].value == "reorder_123"
+    assert seen[0].source_message is not None
     assert seen[0].source_message["id"] == "msg_9"
     # reply routed to the source message
     assert replies[0][0] == "/v1/messages/msg_9/reply"
@@ -399,10 +417,7 @@ def test_message_carries_attachments_to_handler():
         client.close()
 
     assert seen[0].attachments == [
-        {
-            "name": "r.pdf",
-            "mime_type": "application/pdf",
-        }
+        Attachment(name="r.pdf", mime_type="application/pdf")
     ]
 
 

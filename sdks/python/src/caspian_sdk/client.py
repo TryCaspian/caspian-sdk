@@ -20,7 +20,7 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import httpx
@@ -113,6 +113,17 @@ class InsufficientCreditError(CommError):
 
 
 @dataclass
+class Attachment:
+    """A file attachment on an inbound or outbound message."""
+
+    url: str | None = None
+    data: str | None = None
+    mime_type: str | None = None
+    name: str | None = None
+    size: int | None = None
+
+
+@dataclass
 class Message:
     """An inbound message delivered to an on_message handler."""
 
@@ -127,16 +138,16 @@ class Message:
     text: str | None
     html: str | None
     _client: "CommClient" = field(repr=False)
-    # File attachments received with the message: each {"url"|"data", "mime_type",
-    # "name", "size"}. Empty on channels/messages with no attachments.
-    attachments: list[dict] = field(default_factory=list)
+    # File attachments received with the message. Empty on channels/messages with no
+    # attachments.
+    attachments: list[Attachment] = field(default_factory=list)
 
     def reply(
         self,
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        attachments: list[dict] | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> dict:
         return self._client.reply(
             self.id,
@@ -177,12 +188,12 @@ class Interaction:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        attachments: list[dict] | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> dict:
         """Reply in the thread the button lived in (replies to the source message)."""
         if not self.source_message:
             raise CommError(400, "interaction has no source message to reply to")
-    
+
         return self._client.reply(
             self.source_message["id"],
             text=text,
@@ -219,6 +230,7 @@ class CommClient:
         if not api_key:
             raise CommError(401, "No API key: pass api_key or set CASPIAN_API_KEY (env or ./.env)")
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
+        assert base_url is not None
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         self._handlers: list[Callable[[Message], None]] = []
@@ -535,23 +547,26 @@ class CommClient:
     def list_messages(self, conversation_id: str) -> list[dict]:
         return self._request("GET", f"/v1/conversations/{conversation_id}/messages")
 
+    def _attachment_payload(self, attachment: Attachment) -> dict:
+        return asdict(attachment)
+
     def reply(
         self,
         message_id: str,
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        attachments: list[dict] | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> dict:
         """Reply on the channel the message arrived from.
-    
+
         Pass ``blocks`` — a list of provider-neutral block dicts (heading, text,
         divider, image, fields, list, buttons, card) — to send a rich message.
         Channels that support rich layout (Slack, Discord, Telegram, email)
         render it natively; every other channel degrades to clean text
         automatically. See ``caspian_sdk.blocks`` for helper builders.
-    
-        Pass ``attachments`` — a list of attachment dicts — to attach files.
+
+        Pass ``attachments`` — a list of attachment objects — to attach files.
         """
         return self._request(
             "POST",
@@ -560,7 +575,9 @@ class CommClient:
                 "text": text,
                 "html": html,
                 "blocks": blocks,
-                "attachments": attachments,
+                "attachments": [self._attachment_payload(a) for a in attachments]
+                if attachments is not None
+                else None,
             },
         )
 
@@ -682,14 +699,14 @@ class CommClient:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        attachments: list[dict] | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> dict:
         """Proactively send into an existing conversation (needs Capability.SEND).
-    
+
         Pass ``blocks`` — a list of provider-neutral block dicts — for a rich
         message that renders natively on Slack/Discord/Telegram/email and
         degrades to clean text elsewhere.
-    
+
         Pass ``attachments`` to attach files.
         """
         return self._request(
@@ -699,7 +716,9 @@ class CommClient:
                 "text": text,
                 "html": html,
                 "blocks": blocks,
-                "attachments": attachments,
+                "attachments": [self._attachment_payload(a) for a in attachments]
+                if attachments is not None
+                else None,
             },
         )
 
@@ -967,6 +986,9 @@ class CommClient:
             subject=message.get("subject"),
             text=message.get("text"),
             html=message.get("html"),
-            attachments=message.get("attachments") or [],
+            attachments=[
+                Attachment(**attachment)
+                for attachment in message.get("attachments") or []
+            ],
             _client=self,
         )
