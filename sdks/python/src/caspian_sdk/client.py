@@ -896,18 +896,24 @@ class CommClient:
         self._conversation_queues[conversation_id].append(event)
 
         if conversation_id in self._conversation_running:
-            self._conversation_queues[conversation_id].append(event)
             return
 
         self._conversation_running.add(conversation_id)
 
+        self._executor.submit(
+            self._process_conversation,
+            conversation_id,
+)
+    def _process_conversation(self, conversation_id):
         try:
-            while self._conversation_queues[conversation_id]:
-                next_event = self._conversation_queues[conversation_id].pop(0)
-                self._dispatch_event(next_event)
+            while True:
+                if not self._conversation_queues[conversation_id]:
+                    break
+
+                event = self._conversation_queues[conversation_id].pop(0)
+                self._dispatch_event(event)
         finally:
             self._conversation_running.remove(conversation_id)
-
         
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""
