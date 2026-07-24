@@ -282,3 +282,244 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+def _message_event(seq: int, msg_id: str, conv_id: str = "c1") -> dict:
+    return {
+        "seq": seq,
+        "type": "message.received",
+        "data": {
+            "message": {
+                "id": msg_id,
+                "conversation_id": conv_id,
+                "connection_id": "c",
+            }
+        },
+    }
+
+def test_concurrency_queue():
+    import threading
+    import time
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+    state_lock = threading.Lock()
+    first_entered = threading.Event()
+    overlap = False
+    inside = 0
+
+    def handle(m):
+        nonlocal inside, overlap
+        with state_lock:
+            inside += 1
+            overlap = overlap or inside > 1
+        if m.id == "m1":
+            first_entered.set()
+            time.sleep(0.05)
+        seen.append(m.id)
+        with state_lock:
+            inside -= 1
+
+    client.on_message(handle)
+    try:
+        t1 = threading.Thread(
+            target=client._handle_concurrency, args=(_message_event(1, "m1"), "queue", 500)
+        )
+        t2 = threading.Thread(
+            target=client._handle_concurrency, args=(_message_event(2, "m2"), "queue", 500)
+        )
+        t1.start()
+        assert first_entered.wait(0.5)
+        t2.start()
+        time.sleep(0.01)
+        assert seen == []
+        t1.join()
+        t2.join()
+    finally:
+        client.close()
+    assert seen == ["m1", "m2"]
+    assert not overlap
+
+def test_concurrency_parallel():
+    import threading
+    import time
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def handle(m):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            seen.append(m.id)
+            active -= 1
+
+    client.on_message(handle)
+    try:
+        start = time.monotonic()
+        client._handle_concurrency(_message_event(1, "m1"), "parallel", 500)
+        client._handle_concurrency(_message_event(2, "m2"), "parallel", 500)
+        time.sleep(0.08)
+        elapsed = time.monotonic() - start
+    finally:
+        client.close()
+    assert sorted(seen) == ["m1", "m2"]
+    assert max_active == 2
+    assert elapsed < 0.10
+
+def test_concurrency_drop():
+    import threading
+
+    events1 = [_message_event(1, "m1")]
+    events2 = [_message_event(2, "m2")]
+    
+    def handler(request):
+        nonlocal events1, events2
+        after = int(dict(request.url.params).get("after_seq", 0))
+        if after == 0 and events1:
+            res = events1
+            events1 = []
+            return httpx.Response(200, json=res)
+        if after == 1 and events2:
+            res = events2
+            events2 = []
+            return httpx.Response(200, json=res)
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+    def handle(m):
+        seen.append(m.id)
+        if len(seen) == 1:
+            # Re-entrant fetch from another thread while this is in-flight
+            t = threading.Thread(
+                target=client.dispatch_pending, args=(1,), kwargs={"concurrency": "drop"}
+            )
+            t.start()
+            t.join()
+            
+    client.on_message(handle)
+    try:
+        client.dispatch_pending(0, concurrency="drop")
+    finally:
+        client.close()
+    
+    # m2 should be dropped because m1 was in-flight
+    assert seen == ["m1"]
+
+
+def test_concurrency_drop_check_and_set_is_atomic():
+    import threading
+    import time
+
+    class RacingInFlight(set):
+        def __init__(self, should_race):
+            super().__init__()
+            self.should_race = should_race
+            self.barrier = threading.Barrier(2)
+
+        def __contains__(self, item):
+            if self.should_race():
+                result = super().__contains__(item)
+                self.barrier.wait(timeout=0.5)
+                time.sleep(0.01)
+                return result
+            return super().__contains__(item)
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+    client._in_flight = RacingInFlight(lambda: not seen)
+    start = threading.Barrier(2)
+
+    def handle(m):
+        seen.append(m.id)
+        time.sleep(0.03)
+
+    def dispatch(event):
+        start.wait(timeout=0.5)
+        client._handle_concurrency(event, "drop", 500)
+
+    client.on_message(handle)
+    try:
+        t1 = threading.Thread(target=dispatch, args=(_message_event(1, "m1"),))
+        t2 = threading.Thread(target=dispatch, args=(_message_event(2, "m2"),))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+
+
+def test_concurrency_debounce():
+    import time
+    events = [_message_event(1, "m1"), _message_event(2, "m2"), _message_event(3, "m3")]
+    def handler(request):
+        after = int(dict(request.url.params).get("after_seq", 0))
+        return httpx.Response(200, json=[] if after >= 3 else events)
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0, concurrency="debounce", debounce_ms=40)
+        time.sleep(0.02)
+        assert seen == []
+        time.sleep(0.06)
+    finally:
+        client.close()
+        
+    assert len(seen) == 1
+    assert seen[0].id == "m3"
+    assert len(seen[0].coalesced_messages) == 2
+    assert seen[0].coalesced_messages[0].id == "m1"
+    assert seen[0].coalesced_messages[1].id == "m2"
+
+
+@pytest.mark.parametrize("concurrency", ["queue", "parallel", "debounce", "drop"])
+def test_concurrency_handler_exception_releases_state(concurrency):
+    import time
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+
+    def handle(m):
+        seen.append(m.id)
+        if m.id == "boom":
+            raise RuntimeError("boom")
+
+    client.on_message(handle)
+    try:
+        client._handle_concurrency(_message_event(1, "boom"), concurrency, 10)
+        if concurrency in {"parallel", "debounce"}:
+            time.sleep(0.05)
+        client._handle_concurrency(_message_event(2, "ok"), concurrency, 10)
+        if concurrency in {"parallel", "debounce"}:
+            time.sleep(0.05)
+    finally:
+        client.close()
+
+    assert seen == ["boom", "ok"]
+    assert "c1" not in client._in_flight
+    assert "c1" not in client._conv_locks
+    assert "c1" not in client._conv_debounce_timers
+    assert "c1" not in client._conv_debounce_events
