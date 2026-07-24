@@ -848,6 +848,7 @@ class CommClient:
         poll_interval: float = 1.0,
         max_backoff: float = 30.0,
         ack: str | None = None,
+        concurrency: str = "queue",
     ) -> None:
         """Poll the event stream forever, dispatching inbound messages to handlers.
 
@@ -863,6 +864,9 @@ class CommClient:
         """
         if ack is not None:
             self._ack = ack
+
+        self._concurrency = concurrency
+
         seq = self._latest_seq() if from_seq is None else from_seq
         backoff = poll_interval
         while True:
@@ -896,6 +900,8 @@ class CommClient:
         self._conversation_queues[conversation_id].append(event)
 
         if conversation_id in self._conversation_running:
+            if self._concurrency == "drop":
+                return
             return
 
         self._conversation_running.add(conversation_id)
