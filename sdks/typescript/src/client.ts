@@ -31,15 +31,18 @@ function isRecord(value: unknown): value is Record<string, any> {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      // Detach the abort listener when the timer fires normally: listen()
+      // reuses one long-lived signal for every poll, so leaving the listener
+      // attached would accumulate one dead closure per sleep forever.
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -342,8 +345,12 @@ export class CommClient {
     if (response.status >= 400) {
       let detailValue: unknown;
       let detail: string;
+      // Read the body once as text: response.json() consumes the stream, so a
+      // later response.text() fallback could never run — non-JSON error bodies
+      // (an HTML 502 from a proxy, say) would lose their real detail.
+      const raw = await response.text().catch(() => "");
       try {
-        const body = (await response.json()) as { detail?: unknown };
+        const body = JSON.parse(raw) as { detail?: unknown };
         detailValue = body?.detail;
         if (body && body.detail != null) {
           // FastAPI validation errors put an array/object under `detail`.
@@ -352,7 +359,7 @@ export class CommClient {
           detail = JSON.stringify(body);
         }
       } catch {
-        detail = await response.text().catch(() => response.statusText);
+        detail = raw || response.statusText;
       }
       // A paid channel needs a one-time developer sign-in first.
       if (
