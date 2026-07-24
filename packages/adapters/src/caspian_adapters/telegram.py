@@ -43,6 +43,14 @@ def bot_id_from_token(token: str) -> str:
     return token.split(":", 1)[0]
 
 
+def reaction_key(reaction: dict) -> str:
+    """Stable identity for Telegram emoji and custom emoji reaction entries."""
+    if reaction.get("type") == "custom_emoji":
+        custom_emoji_id = reaction.get("custom_emoji_id")
+        return f"custom_emoji:{custom_emoji_id}" if custom_emoji_id else ""
+    return reaction.get("emoji", "")
+
+
 def parse_attachments(message: dict) -> list[Attachment]:
     """Pull any file attachments out of a Telegram message.
 
@@ -100,9 +108,9 @@ def parse_update(data: dict, bot_id: str) -> list[InboundEvent]:
         new_reaction = reaction_update.get("new_reaction", [])
         user = reaction_update.get("user") or reaction_update.get("actor_chat") or {}
         sender_address = user.get("username") or str(user.get("id", "")) or None
-        # Determine which emoji was added or removed by diffing old/new
-        old_emojis = {r.get("emoji", "") for r in old_reaction}
-        new_emojis = {r.get("emoji", "") for r in new_reaction}
+        # Determine which reaction was added or removed by diffing old/new.
+        old_emojis = {key for r in old_reaction if (key := reaction_key(r))}
+        new_emojis = {key for r in new_reaction if (key := reaction_key(r))}
         added = new_emojis - old_emojis
         removed = old_emojis - new_emojis
         results: list[InboundEvent] = []

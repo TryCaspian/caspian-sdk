@@ -255,6 +255,24 @@ def test_parse_reaction_multiple_emojis():
     assert removed[0].emoji == "👍"
 
 
+def test_parse_reaction_custom_emoji_keeps_identity():
+    update = {
+        "update_id": 301,
+        "message_reaction": {
+            "message_id": 55,
+            "chat": {"id": 900, "type": "private"},
+            "user": {"id": 42, "username": "alice"},
+            "old_reaction": [{"type": "custom_emoji", "custom_emoji_id": "old123"}],
+            "new_reaction": [{"type": "custom_emoji", "custom_emoji_id": "new456"}],
+        },
+    }
+    inbound = parse_update(update, BOT_ID)
+    added = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "added"]
+    removed = [e for e in inbound if isinstance(e, InboundReaction) and e.action == "removed"]
+    assert added[0].emoji == "custom_emoji:new456"
+    assert removed[0].emoji == "custom_emoji:old123"
+
+
 # --- Bot commands ---
 
 

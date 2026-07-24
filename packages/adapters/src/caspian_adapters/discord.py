@@ -71,7 +71,9 @@ def parse_gateway_message(
             inbox_id = application_id
         return [
             InboundReaction(
-                external_event_id=f"reaction:{event_type}:{channel_id}:{message_id}:{emoji_name}",
+                external_event_id=(
+                    f"reaction:{event_type}:{channel_id}:{message_id}:{user_id}:{emoji_name}"
+                ),
                 provider_inbox_id=inbox_id,
                 emoji=emoji_name,
                 action="added" if event_type == "MESSAGE_REACTION_ADD" else "removed",

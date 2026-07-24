@@ -131,7 +131,7 @@ class SlackProvider:
         client_secret: str = "",
         signing_secret: str = "",
         scopes: str = ("chat:write,chat:write.customize,channels:history,"
-                       "im:history,app_mentions:read,reactions:read,commands"),
+                       "im:history,app_mentions:read,reactions:read,reactions:write,commands"),
         base_url: str = API,
         apps: list[dict] | None = None,
     ) -> None:
@@ -341,7 +341,7 @@ class SlackProvider:
         self, provider_inbox_id: str, provider_message_id: str, emoji: str,
         credentials=None,
     ) -> None:
-        """Add an emoji reaction to a message (needs reactions:read scope for verify)."""
+        """Add an emoji reaction to a message (needs reactions:write scope)."""
         creds = credentials or {}
         channel, ts = split_composite_id(provider_message_id)
         r = self._client.post(

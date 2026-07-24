@@ -130,6 +130,12 @@ def test_app_pool_selection():
     assert provider.app_at(99)["app_id"] == "A2"  # clamps to last
 
 
+def test_default_scopes_include_reaction_read_and_write():
+    provider = SlackProvider(client_id="c1")
+    assert "reactions:read" in provider.scopes
+    assert "reactions:write" in provider.scopes
+
+
 def test_pool_verifies_with_sending_apps_secret():
     pool = [
         {"app_id": "A1", "client_id": "c1", "client_secret": "s1", "signing_secret": "g1"},

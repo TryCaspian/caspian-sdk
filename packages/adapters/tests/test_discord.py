@@ -122,6 +122,12 @@ def test_parse_reaction_add():
     assert inbound[0].sender_address == "555"
 
 
+def test_parse_reaction_external_event_id_includes_user():
+    [alice] = parse_gateway_message(_reaction_event(user_id="555"), APP_ID)
+    [bob] = parse_gateway_message(_reaction_event(user_id="777"), APP_ID)
+    assert alice.external_event_id != bob.external_event_id
+
+
 def test_parse_reaction_remove():
     inbound = parse_gateway_message(_reaction_event(action="MESSAGE_REACTION_REMOVE"), APP_ID)
     assert len(inbound) == 1
