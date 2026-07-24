@@ -86,6 +86,25 @@ await message.reply(undefined, undefined, blocks);
 Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 `card`. A button with a `url` is a link; a button with a `value` is a callback.
 
+## Streaming replies
+
+Caspian supports streaming responses token by token. If a channel supports post+edit (like Telegram or Discord), it posts a placeholder immediately and updates it in place. On other channels (like Email or SMS), it buffers the stream and sends a single final reply on close().
+
+Always call `.close()` in a `finally` block to ensure the stream is flushed.
+
+```ts
+client.onMessage(async (message) => {
+  const stream = message.stream();
+  try {
+    for await (const chunk of llmStream(message.text)) {
+      await stream.append(chunk);
+    }
+  } finally {
+    await stream.close();
+  }
+});
+```
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect*()` call — never new handler code.

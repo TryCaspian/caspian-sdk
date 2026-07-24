@@ -64,6 +64,18 @@ message.reply(blocks=[
 Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 `card`. A button with a `url` is a link; a button with a `value` is a callback.
 
+## Streaming replies
+
+Caspian supports streaming responses token by token. If a channel supports post+edit (like Telegram or Discord), it posts a placeholder immediately and updates it in place. On other channels (like Email or SMS), it buffers the stream and sends a single final reply on exit.
+
+```python
+@client.on_message
+def handle(message):
+    with message.stream() as s:
+        for chunk in llm_stream(message.text):
+            s.append(chunk)
+```
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect_*()` call — never new handler code.

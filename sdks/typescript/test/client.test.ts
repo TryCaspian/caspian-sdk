@@ -491,4 +491,119 @@ describe("CommClient", () => {
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
   });
+
+  describe("Message.stream", () => {
+    it("handles edit-mode streaming (POST start, PATCH append, POST finalize)", async () => {
+      const calls: any[] = [];
+      const { client } = makeClient({
+        "GET /v1/channels": () =>
+          json([{ channel: "telegram", capabilities: ["stream_edit"] }]),
+        "POST /v1/messages/m1/stream": () =>
+          json({ mode: "edit", stream_id: "s1" }),
+        "PATCH /v1/streams/s1": async (req) => {
+          calls.push({ method: "PATCH", body: await req.json() });
+          return json({ ok: true });
+        },
+        "POST /v1/streams/s1/finalize": async (req) => {
+          calls.push({ method: "FINALIZE", body: await req.json() });
+          return json({ ok: true });
+        },
+      });
+
+      const message = new Message(
+        "m1",
+        "c1",
+        "cn1",
+        "cus1",
+        "agt1",
+        "telegram",
+        null,
+        null,
+        "test",
+        null,
+        client,
+      );
+
+      const stream = message.stream();
+      await stream.append("Hello");
+      await stream.append(" world");
+      await stream.close();
+
+      expect(calls).toEqual([
+        { method: "PATCH", body: { text: "Hello" } },
+        { method: "PATCH", body: { text: "Hello world" } },
+        { method: "FINALIZE", body: { text: "Hello world" } },
+      ]);
+    });
+
+    it("falls back to final mode if channel lacks stream_edit capability", async () => {
+      const calls: any[] = [];
+      const { client } = makeClient({
+        "GET /v1/channels": () =>
+          json([{ channel: "email", capabilities: [] }]),
+        "POST /v1/messages/m1/reply": async (req) => {
+          calls.push({ method: "REPLY", body: await req.json() });
+          return json({ delivered: true });
+        },
+      });
+
+      const message = new Message(
+        "m1",
+        "c1",
+        "cn1",
+        "cus1",
+        "agt1",
+        "email",
+        null,
+        null,
+        "test",
+        null,
+        client,
+      );
+
+      const stream = message.stream();
+      await stream.append("Hello");
+      await stream.append(" world");
+      await stream.close();
+
+      // No patch/finalize calls, only final reply
+      expect(calls).toEqual([
+        { method: "REPLY", body: { text: "Hello world", html: null, blocks: null, media: null } },
+      ]);
+    });
+
+    it("appends error marker when closed with an error", async () => {
+      const calls: any[] = [];
+      const { client } = makeClient({
+        "GET /v1/channels": () =>
+          json([{ channel: "email", capabilities: [] }]),
+        "POST /v1/messages/m1/reply": async (req) => {
+          calls.push({ method: "REPLY", body: await req.json() });
+          return json({ delivered: true });
+        },
+      });
+
+      const message = new Message(
+        "m1",
+        "c1",
+        "cn1",
+        "cus1",
+        "agt1",
+        "email",
+        null,
+        null,
+        "test",
+        null,
+        client,
+      );
+
+      const stream = message.stream();
+      await stream.append("Hello");
+      await stream.close(new Error("crashed"));
+
+      expect(calls).toEqual([
+        { method: "REPLY", body: { text: "Hello [stream interrupted]", html: null, blocks: null, media: null } },
+      ]);
+    });
+  });
 });

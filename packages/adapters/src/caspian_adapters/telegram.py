@@ -83,6 +83,7 @@ class TelegramProvider:
             Capability.SEND,
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
+            Capability.STREAM_EDIT,
         }
     )
 
@@ -131,6 +132,50 @@ class TelegramProvider:
         token = self._token(credentials)
         self._call(token, "sendChatAction",
                    {"chat_id": provider_thread_id, "action": "typing"})
+
+    def stream_send(
+        self,
+        provider_inbox_id: str,
+        chat_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> str:
+        """Post a placeholder message and return a composite id for later edits.
+
+        Returns "{chat_id}:{message_id}" — the same composite format used
+        throughout the adapter — so the caller can pass it to stream_edit.
+        """
+        token = self._token(credentials)
+        result = self._call(
+            token,
+            "sendMessage",
+            {"chat_id": chat_id, "text": text or "…"},
+        )
+        return f"{chat_id}:{result['message_id']}"
+
+    def stream_edit(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        """Replace the text of a previously posted message with accumulated tokens.
+
+        We intentionally preserve already-streamed tokens even on error — partial
+        output is better than silence. The caller is responsible for calling this
+        one final time in __exit__ with the full buffer.
+        """
+        token = self._token(credentials)
+        chat_id, message_id = split_composite_id(provider_message_id)
+        self._call(
+            token,
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": int(message_id),
+                "text": text or "…",
+            },
+        )
 
     def send(
         self,

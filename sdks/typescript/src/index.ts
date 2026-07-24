@@ -18,5 +18,6 @@ export type {
   LoginOptions,
   Media,
   SpendLimitsOptions,
+  StreamHandle,
   WhatsappOnboarding,
 } from "./types.js";

@@ -45,6 +45,8 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    STREAM_EDIT = "stream_edit"  # post a message then edit it as tokens arrive
+
 
 
 # Every valid capability string, for validating a connection's manifest.

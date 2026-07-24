@@ -8,6 +8,7 @@ from .client import (
     Message,
     Reaction,
 )
+from .stream import MessageStream
 
 __all__ = [
     "AccountRequiredError",
@@ -16,6 +17,7 @@ __all__ = [
     "InsufficientCreditError",
     "Interaction",
     "Message",
+    "MessageStream",
     "Reaction",
     "blocks",
 ]

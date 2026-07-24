@@ -22,6 +22,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .stream import MessageStream
+
 
 import httpx
 
@@ -54,6 +59,74 @@ def _config(explicit: str | None, env_key: str, default: str | None = None) -> s
             if value:
                 return value
     return default
+
+
+class StreamHandle:
+    """Context manager for streaming a response token by token.
+
+    On platforms that support it (Telegram, Discord), posts a placeholder
+    message immediately and edits it in place as tokens arrive. On platforms
+    that cannot edit outbound messages (email, SMS, X), buffers silently and
+    sends a single reply when the with-block exits.
+
+    If an exception occurs mid-stream, __exit__ still fires and sends whatever
+    was buffered. We intentionally preserve partial output — a truncated answer
+    is more useful than silence, and the exception propagates normally so the
+    caller can log or handle it.
+
+    Usage::
+
+        with message.stream() as s:
+            for chunk in llm(message.text):
+                s.append(chunk)
+    """
+
+    def __init__(
+        self,
+        send_fn,        # callable(text: str) -> str  — posts initial msg, returns composite_id
+        edit_fn=None,   # callable(composite_id: str, text: str) -> None  — or None for fallback
+        reply_fn=None,  # callable(text: str) — used in fallback (no edit_fn) path
+    ) -> None:
+        self._buf = ""
+        self._msg_id: str | None = None
+        self._send = send_fn
+        self._edit = edit_fn
+        self._reply = reply_fn
+        self._ERROR_MARKER = " [stream interrupted]"
+
+    def append(self, chunk: str) -> None:
+        """Add a token to the buffer. Edits the live message if the platform supports it."""
+        self._buf += chunk
+        if self._edit and self._msg_id:
+            # Best-effort: a rate-limit or network blip here shouldn't crash the handler.
+            try:
+                self._edit(self._msg_id, self._buf)
+            except Exception:
+                pass
+
+    def __enter__(self) -> "StreamHandle":
+        if self._edit:
+            # Post placeholder so the user sees something immediately.
+            self._msg_id = self._send("…")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        buf = self._buf
+        if exc_type is not None:
+            # Partial output is preserved; marker signals truncation.
+            buf += self._ERROR_MARKER
+        if self._edit and self._msg_id:
+            try:
+                self._edit(self._msg_id, buf or "…")
+            except Exception:
+                pass
+        elif self._reply:
+            # Fallback: single send at the end.
+            try:
+                self._reply(buf)
+            except Exception:
+                pass
+        return False  # never suppress the exception
 
 
 class CommError(Exception):
@@ -150,6 +223,22 @@ class Message:
         no-op where the platform has none). Fired automatically before your
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
+
+    def stream(self) -> "MessageStream":
+        """Return a context manager for streaming a response token by token.
+
+        Check your channel's capabilities to know which path you get:
+        - Telegram / Discord: posts a placeholder immediately, edits it as tokens arrive.
+        - Everything else: buffers silently, sends a single reply on exit.
+
+        Example::
+
+            with message.stream() as s:
+                for chunk in llm(message.text):
+                    s.append(chunk)
+        """
+        from .stream import MessageStream
+        return MessageStream(self._client, self.id)
 
 
 @dataclass

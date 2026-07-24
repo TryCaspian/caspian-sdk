@@ -174,3 +174,25 @@ export interface ListenOptions {
    */
   ack?: string;
 }
+
+/**
+ * Returned by Message.stream(). Accumulate tokens with append(); the stream
+ * is finalized when close() is called (or in a try/finally block).
+ *
+ * On platforms that support it (Telegram, Discord), a placeholder message is
+ * posted immediately and edited as tokens arrive. On others, the full buffer
+ * is sent as a single reply when close() is called.
+ *
+ * Example:
+ *   const s = message.stream();
+ *   try {
+ *     for await (const chunk of llm(message.text)) await s.append(chunk);
+ *   } finally {
+ *     await s.close();
+ *   }
+ */
+export interface StreamHandle {
+  append(chunk: string): Promise<void>;
+  close(error?: unknown): Promise<void>;
+}
+

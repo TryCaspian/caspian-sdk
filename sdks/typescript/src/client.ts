@@ -15,6 +15,7 @@ import type {
   LoginOptions,
   Media,
   SpendLimitsOptions,
+  StreamHandle,
   WhatsappOnboarding,
 } from "./types.js";
 
@@ -91,6 +92,99 @@ export class Message {
    */
   typing(): Promise<Record<string, unknown>> {
     return this.client.typing(this.id);
+  }
+
+  /**
+   * Return a StreamHandle for streaming a response token by token.
+   *
+   * On platforms with stream_edit capability (Telegram, Discord): posts a
+   * placeholder immediately, edits it in place as tokens arrive.
+   * On all other platforms: buffers silently, sends a single reply on close().
+   *
+   * Always call close() in a finally block to guarantee the buffer is flushed,
+   * even when an error interrupts the stream.
+   *
+   * Example:
+   *   const s = message.stream();
+   *   try {
+   *     for await (const chunk of llm(message.text)) await s.append(chunk);
+   *   } finally {
+   *     await s.close();
+   *   }
+   */
+  stream(): StreamHandle {
+    const ERROR_MARKER = " [stream interrupted]";
+    let buf = "";
+    let streamId: string | null = null;
+    let mode: "edit" | "final" | null = null;
+    let opened = false;
+
+    // We do the capability check lazily on first append so we don't block the caller
+    const ensureStarted = async (): Promise<void> => {
+      if (opened) return;
+      opened = true;
+      try {
+        const chs = await this.client.channels();
+        const ch = chs.find((c: any) => c.channel === this.channel);
+        const capabilities = (ch as any)?.capabilities ?? [];
+        if (capabilities.includes("stream_edit")) {
+          const res = await (this.client as any).request(
+            "POST",
+            `/v1/messages/${this.id}/stream`,
+            { json: {} }
+          ) as any;
+          mode = res?.mode ?? "final";
+          if (mode === "edit") {
+            streamId = res?.stream_id ?? null;
+          }
+        } else {
+          mode = "final";
+        }
+      } catch (err: any) {
+        // If the gateway returns a 404 or 405 (endpoint not implemented), fall back
+        if (err?.statusCode === 404 || err?.statusCode === 405) {
+          mode = "final";
+        } else {
+          throw err;
+        }
+      }
+    };
+
+    return {
+      append: async (chunk: string): Promise<void> => {
+        buf += chunk;
+        await ensureStarted();
+        if (mode === "edit" && streamId) {
+          try {
+            await (this.client as any).request(
+              "PATCH",
+              `/v1/streams/${streamId}`,
+              { json: { text: buf } }
+            );
+          } catch (err) { /* best-effort */ }
+        }
+      },
+
+      close: async (error?: unknown): Promise<void> => {
+        const finalText = error !== undefined ? buf + ERROR_MARKER : buf;
+        await ensureStarted();
+        if (mode === "edit" && streamId) {
+          try {
+            await (this.client as any).request(
+              "POST",
+              `/v1/streams/${streamId}/finalize`,
+              { json: { text: finalText } }
+            );
+          } catch (err) { /* best-effort */ }
+        } else {
+          try {
+            if (finalText) {
+              await this.reply(finalText);
+            }
+          } catch (err) { /* best-effort */ }
+        }
+      }
+    };
   }
 }
 
