@@ -400,12 +400,13 @@ class CommClient:
             try:
                 payload = response.json()
                 # A proxy/gateway can return valid JSON that isn't an object
-                # (a bare list or string); only a dict can carry `detail`.
-                detail = (
-                    payload.get("detail", response.text)
-                    if isinstance(payload, dict)
-                    else response.text
-                )
+                # (a bare list or string); only a dict can carry `detail`. The
+                # explicit key check keeps `response.text` lazy - it is only
+                # decoded when there is no detail to use instead.
+                if isinstance(payload, dict) and "detail" in payload:
+                    detail = payload["detail"]
+                else:
+                    detail = response.text
             except ValueError:
                 detail = response.text
             # A paid channel needs a one-time developer sign-in first.
