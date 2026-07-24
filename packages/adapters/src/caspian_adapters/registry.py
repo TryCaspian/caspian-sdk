@@ -122,6 +122,20 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             token_url=settings.teams_token_url,
             openid_config_url=settings.teams_openid_config_url,
         )
+    if name == "fake-github":
+        from .fake_github import FakeGitHubProvider
+
+        return FakeGitHubProvider()
+    if name == "github":
+        from .github import GitHubProvider
+
+        return GitHubProvider(
+            app_id=settings.github_app_id,
+            app_slug=settings.github_app_slug,
+            private_key=settings.github_private_key,
+            webhook_secret=settings.github_webhook_secret,
+            base_url=settings.github_api_base,
+        )
     if name == "x":
         from .x import XProvider
 

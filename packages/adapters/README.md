@@ -1,8 +1,8 @@
 # caspian-adapters
 
-Channel adapters for AI-agent communication — **Slack, Discord, Telegram (bot + user-account), Instagram DM, Facebook Messenger, X, email (AWS SES), Google Meet, and GSM-modem SMS** — all behind one small provider interface: `provision` / `send` / `reply` / `parse_webhook`, with per-channel capability negotiation.
+Channel adapters for AI-agent communication — **Slack, Discord, GitHub issues/PRs, Telegram (bot + user-account), Instagram DM, Facebook Messenger, X, email (AWS SES), Google Meet, and GSM-modem SMS** — all behind one small provider interface: `provision` / `send` / `reply` / `parse_webhook`, with per-channel capability negotiation.
 
-Bring your own platform credentials; each adapter speaks the platform's official API and verifies its webhooks (Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES SNS signatures).
+Bring your own platform credentials; each adapter speaks the platform's official API and verifies its webhooks (Slack signing secret, GitHub/Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES SNS signatures).
 
 ```python
 from caspian_adapters import Settings, build_providers
