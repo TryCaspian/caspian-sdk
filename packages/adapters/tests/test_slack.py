@@ -171,6 +171,8 @@ def test_parse_event_reaction_added():
     assert isinstance(inbound[0], InboundReaction)
     assert inbound[0].emoji == "thumbsup"
     assert inbound[0].action == "added"
+    assert inbound[0].provider_thread_id == "C123"
+    assert inbound[0].provider_message_id == "C123:1752000000.0001"
     assert inbound[0].source_provider_message_id == "C123:1752000000.0001"
     assert inbound[0].sender_address == "U456"
     assert inbound[0].provider_inbox_id == "A1:T1"

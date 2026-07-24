@@ -223,6 +223,9 @@ def test_parse_reaction_added():
     assert isinstance(inbound[0], InboundReaction)
     assert inbound[0].emoji == "👍"
     assert inbound[0].action == "added"
+    assert inbound[0].provider_thread_id == "900"
+    assert inbound[0].provider_message_id == "900:55"
+    assert inbound[0].chat_type == "private"
     assert inbound[0].sender_address == "alice"
     assert inbound[0].provider_inbox_id == BOT_ID
 

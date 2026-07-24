@@ -30,6 +30,8 @@ def test_reaction_maps_to_reaction_received():
     event = InboundReaction(
         external_event_id="evt_2",
         provider_inbox_id="inbox_1",
+        provider_message_id="msg_1",
+        provider_thread_id="thread_1",
         source_provider_message_id="msg_1",
         emoji="thumbsup",
         action="added",

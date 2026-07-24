@@ -138,9 +138,12 @@ class InboundReaction:
 
     external_event_id: str
     provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
     emoji: str
     action: str  # "added" | "removed"
     source_provider_message_id: str
+    chat_type: str | None = None  # "private" | "group" | "channel" | "dm" | "guild" ...
     sender_address: str | None = None
     sender_name: str | None = None
 

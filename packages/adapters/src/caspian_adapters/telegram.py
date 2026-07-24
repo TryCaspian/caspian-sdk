@@ -119,9 +119,12 @@ def parse_update(data: dict, bot_id: str) -> list[InboundEvent]:
                 InboundReaction(
                     external_event_id=f"{bot_id}:{data['update_id']}:add:{emoji}",
                     provider_inbox_id=bot_id,
+                    provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    provider_thread_id=str(chat_id),
                     emoji=emoji,
                     action="added",
                     source_provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    chat_type=chat.get("type"),
                     sender_address=sender_address,
                 )
             )
@@ -130,9 +133,12 @@ def parse_update(data: dict, bot_id: str) -> list[InboundEvent]:
                 InboundReaction(
                     external_event_id=f"{bot_id}:{data['update_id']}:rm:{emoji}",
                     provider_inbox_id=bot_id,
+                    provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    provider_thread_id=str(chat_id),
                     emoji=emoji,
                     action="removed",
                     source_provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    chat_type=chat.get("type"),
                     sender_address=sender_address,
                 )
             )

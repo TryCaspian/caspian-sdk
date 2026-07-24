@@ -88,6 +88,9 @@ class FakeDiscordProvider:
     def react(self, provider_inbox_id, provider_message_id, emoji, credentials=None):
         pass  # fake: no-op
 
+    def defer_interaction(self, interaction_id, interaction_token, credentials=None):
+        pass  # fake: no-op
+
     def webhook_payload(self, *, channel_id="chan1", text="Hi there", author="customer"):
         self._seq += 1
         return {

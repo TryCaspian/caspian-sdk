@@ -62,8 +62,9 @@ def parse_gateway_message(
         channel_id = str(data.get("channel_id", ""))
         message_id = str(data.get("message_id", ""))
         user_id = data.get("user_id") or data.get("member", {}).get("user", {}).get("id", "")
+        guild_id = data.get("guild_id")
+        guild_id = data.get("guild_id")
         if route_by_guild:
-            guild_id = data.get("guild_id")
             if guild_id is None:
                 return []
             inbox_id = str(guild_id)
@@ -75,9 +76,12 @@ def parse_gateway_message(
                     f"reaction:{event_type}:{channel_id}:{message_id}:{user_id}:{emoji_name}"
                 ),
                 provider_inbox_id=inbox_id,
+                provider_message_id=f"{channel_id}:{message_id}",
+                provider_thread_id=channel_id,
                 emoji=emoji_name,
                 action="added" if event_type == "MESSAGE_REACTION_ADD" else "removed",
                 source_provider_message_id=f"{channel_id}:{message_id}",
+                chat_type="dm" if guild_id is None else "guild",
                 sender_address=str(user_id) if user_id else None,
             )
         ]
@@ -195,6 +199,23 @@ def webhook_id_from_url(url: str) -> str:
     return parts[parts.index("webhooks") + 1]
 
 
+def defer_interaction(
+    base_url: str, token: str, interaction_id: str, interaction_token: str
+) -> None:
+    """Send a type 6 (DEFERRED_CHANNEL_MESSAGE) ack within Discord's 3-second window.
+
+    Discord requires bots to respond to INTERACTION_CREATE within 3 seconds or
+    the user sees "This interaction failed." Call this immediately upon receiving
+    the event, before any processing that might exceed the window."""
+    r = httpx.post(
+        f"{base_url}/interactions/{interaction_id}/{interaction_token}/callback",
+        json={"type": 6},
+        headers={"Authorization": f"Bot {token}"},
+        timeout=5.0,
+    )
+    r.raise_for_status()
+
+
 class DiscordProvider:
     name = "discord"
     channel = "discord"
@@ -269,6 +290,17 @@ class DiscordProvider:
             headers={"Authorization": f"Bot {token}"},
         )
         r.raise_for_status()
+
+    def defer_interaction(
+        self, interaction_id: str, interaction_token: str, credentials=None,
+    ) -> None:
+        """Ack an INTERACTION_CREATE within Discord's 3s window (type 6 ack).
+
+        The gateway listener calls this immediately upon receiving the event
+        before passing it to the agent, so the user doesn't see 'interaction
+        failed' on slow agent responses."""
+        token = self._token(credentials)
+        defer_interaction(self._base, token, interaction_id, interaction_token)
 
     def _post_webhook(self, credentials: Mapping[str, str], text: str):
         """Post through a channel webhook with the agent's custom name/avatar."""

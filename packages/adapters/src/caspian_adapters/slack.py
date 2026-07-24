@@ -58,6 +58,8 @@ def parse_event(data: dict) -> list[InboundEvent]:
             InboundReaction(
                 external_event_id=data.get("event_id") or f"reaction:{inbox_id}:{event_type}:{ts}",
                 provider_inbox_id=inbox_id,
+                provider_message_id=f"{channel}:{ts}",
+                provider_thread_id=channel,
                 emoji=event.get("reaction", ""),
                 action="added" if event_type == "reaction_added" else "removed",
                 source_provider_message_id=f"{channel}:{ts}",
