@@ -347,6 +347,59 @@ def test_on_reaction_dispatches():
     assert seen[0].action == "added"
 
 
+def test_on_command_dispatches():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "command": "/deploy", "args": "staging", "text": "/deploy staging",
+                "source_message": {"id": "cmd_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = int(dict(request.url.params).get("after_seq", 0))
+        return httpx.Response(200, json=[] if after >= 1 else events)
+
+    client = _client(handler)
+    seen: list[Command] = []
+    client.on_command(seen.append)
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].command == "/deploy"
+    assert seen[0].args == "staging"
+    assert seen[0].text == "/deploy staging"
+
+
+def test_unknown_event_types_ignored():
+    events = [
+        {"seq": 1, "type": "billing.credited", "data": {"amount": 100}},
+        {"seq": 2, "type": "connection.active", "data": {"id": "conn_1"}},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        after = int(dict(request.url.params).get("after_seq", 0))
+        return httpx.Response(200, json=[] if after >= 2 else events)
+
+    client = _client(handler)
+    seen_messages = []
+    client.on_message(lambda m: seen_messages.append(m))
+    try:
+        last = client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert last == 2
+    assert seen_messages == []  # no messages dispatched
+
+
 def test_message_carries_media_to_handler():
     events = [
         {

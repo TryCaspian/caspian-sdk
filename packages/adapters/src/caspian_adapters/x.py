@@ -51,6 +51,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -96,7 +97,7 @@ def oauth1_header(
     return "OAuth " + ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(oauth.items()))
 
 
-def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[InboundMessage]:
+def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[InboundEvent]:
     """Turn an Account Activity DM-event payload into InboundMessages.
 
     Skips the agent's own outbound echoes (`sender_id == for_user_id`) so the
@@ -157,7 +158,7 @@ def _oauth1_auth(
     return "OAuth " + ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(oauth.items()))
 
 
-def parse_dm_events(data: dict, for_user_id: str) -> list[InboundMessage]:
+def parse_dm_events(data: dict, for_user_id: str) -> list[InboundEvent]:
     """Turn a GET /2/dm_events response into InboundMessages (polling path).
 
     Same normalized shape as the Account Activity webhook (parse_x_webhook), but
@@ -430,7 +431,7 @@ class XProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if self._webhook_secret:
             received = {k.lower(): v for k, v in headers.items()}.get(
                 "x-twitter-webhooks-signature", ""

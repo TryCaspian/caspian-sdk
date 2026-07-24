@@ -36,6 +36,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -234,7 +235,7 @@ class GoogleMeetProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         """Normalize a Google Workspace Events push (a Meet event) into our schema.
 
         Subscribe to Meet events via the Workspace Events API (Pub/Sub or HTTPS

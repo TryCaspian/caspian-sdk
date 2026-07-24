@@ -20,7 +20,10 @@ import httpx
 from .base import (
     Attachment,
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -34,8 +37,13 @@ API = "https://discord.com/api/v10"
 
 def parse_gateway_message(
     event: dict, application_id: str, route_by_guild: bool = False
-) -> list[InboundMessage]:
-    """Normalize a Discord MESSAGE_CREATE gateway event into our schema.
+) -> list[InboundEvent]:
+    """Normalize Discord Gateway events into our schema.
+
+    Handles MESSAGE_CREATE (text messages), MESSAGE_REACTION_ADD/REMOVE
+    (emoji reactions), and INTERACTION_CREATE type 2 (slash commands).
+    Returns a list of InboundEvent (a union of InboundMessage | InboundReaction |
+    InboundCommand).
 
     Routing key (provider_inbox_id) selects which connection the message belongs
     to. For a BYO bot (one bot = one connection) that's the application id. For
@@ -43,7 +51,71 @@ def parse_gateway_message(
     developer's server maps to their own connection. Shared-bot DMs have no guild
     to route by, so they're dropped (guild messages only)."""
     data = event.get("d") or event
-    if event.get("t") not in (None, "MESSAGE_CREATE"):
+    event_type = event.get("t")
+
+    # --- Reaction events ---
+    if event_type in ("MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE"):
+        emoji = data.get("emoji", {})
+        emoji_name = emoji.get("name", "")
+        if not emoji_name:
+            return []
+        channel_id = str(data.get("channel_id", ""))
+        message_id = str(data.get("message_id", ""))
+        user_id = data.get("user_id") or data.get("member", {}).get("user", {}).get("id", "")
+        if route_by_guild:
+            guild_id = data.get("guild_id")
+            if guild_id is None:
+                return []
+            inbox_id = str(guild_id)
+        else:
+            inbox_id = application_id
+        return [
+            InboundReaction(
+                external_event_id=f"reaction:{event_type}:{channel_id}:{message_id}:{emoji_name}",
+                provider_inbox_id=inbox_id,
+                emoji=emoji_name,
+                action="added" if event_type == "MESSAGE_REACTION_ADD" else "removed",
+                source_provider_message_id=f"{channel_id}:{message_id}",
+                sender_address=str(user_id) if user_id else None,
+            )
+        ]
+
+    # --- Slash command / interaction events ---
+    if event_type == "INTERACTION_CREATE" and data.get("type") == 2:
+        interaction_data = data.get("data", {})
+        command_name = interaction_data.get("name", "")
+        if not command_name:
+            return []
+        channel_id = str(data.get("channel_id", ""))
+        guild_id = data.get("guild_id")
+        user = data.get("member", {}).get("user") or data.get("user") or {}
+        if route_by_guild:
+            if guild_id is None:
+                return []
+            inbox_id = str(guild_id)
+        else:
+            inbox_id = application_id
+        options = interaction_data.get("options", [])
+        args_str = " ".join(
+            str(opt.get("value", "")) for opt in options
+        ) if options else None
+        return [
+            InboundCommand(
+                external_event_id=str(data.get("id", "")),
+                provider_inbox_id=inbox_id,
+                provider_message_id=f"{channel_id}:{data.get('id', '')}",
+                provider_thread_id=channel_id,
+                command=command_name,
+                args=args_str,
+                text=f"/{command_name} {args_str}".strip() if args_str else f"/{command_name}",
+                sender_address=user.get("username") or str(user.get("id", "")) or None,
+                sender_name=user.get("global_name") or user.get("username"),
+                chat_type="dm" if guild_id is None else "guild",
+            )
+        ]
+
+    # --- Normal text messages (MESSAGE_CREATE) ---
+    if event_type not in (None, "MESSAGE_CREATE"):
         return []
     if data.get("author", {}).get("bot"):
         return []  # ignore other bots (and our own echoes) by default
@@ -137,6 +209,8 @@ class DiscordProvider:
             Capability.GROUP_VISIBILITY,
             Capability.SEE_BOTS,
             Capability.ATTACHMENTS,
+            Capability.REACTIONS,
+            Capability.COMMANDS,
         }
     )
 
@@ -173,6 +247,23 @@ class DiscordProvider:
         token = self._token(credentials)
         r = self._client.post(
             f"/channels/{provider_thread_id}/typing",
+            headers={"Authorization": f"Bot {token}"},
+        )
+        r.raise_for_status()
+
+    def react(
+        self, provider_inbox_id: str, provider_message_id: str, emoji: str,
+        credentials=None,
+    ) -> None:
+        """Add an emoji reaction to a message. Best-effort; no-op on webhook-only
+        connections (no bot token)."""
+        token = self._token(credentials)
+        channel_id, message_id = split_composite_id(provider_message_id)
+        # Discord requires URL-encoded emoji for the reactions endpoint
+        from urllib.parse import quote
+        encoded_emoji = quote(emoji, safe="")
+        r = self._client.put(
+            f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me",
             headers={"Authorization": f"Bot {token}"},
         )
         r.raise_for_status()
@@ -253,7 +344,7 @@ class DiscordProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         # Normal Discord messages arrive over the Gateway listener, which bridges
         # each MESSAGE_CREATE to this connection's scoped webhook. The scoped route
         # supplies the connection's resource id (the application id) in credentials.

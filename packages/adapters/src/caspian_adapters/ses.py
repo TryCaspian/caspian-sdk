@@ -21,6 +21,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -268,7 +269,7 @@ class SESEmailProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         try:
             envelope = json.loads(payload)
         except ValueError as exc:

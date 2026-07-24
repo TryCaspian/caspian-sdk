@@ -6,8 +6,17 @@ import json
 import time
 
 import pytest
-from caspian_adapters.base import WebhookVerificationError
-from caspian_adapters.slack import MAX_TIMESTAMP_SKEW, SlackProvider, parse_event
+from caspian_adapters.base import (
+    InboundCommand,
+    InboundReaction,
+    WebhookVerificationError,
+)
+from caspian_adapters.slack import (
+    MAX_TIMESTAMP_SKEW,
+    SlackProvider,
+    parse_event,
+    parse_slash_command,
+)
 
 SIGNING_SECRET = "sign-me"
 
@@ -130,3 +139,103 @@ def test_pool_verifies_with_sending_apps_secret():
     payload = json.dumps(_event(app="A2")).encode()
     inbound = provider.parse_webhook(payload, _signed_headers(payload, secret="g2"))
     assert inbound[0].provider_inbox_id == "A2:T1"
+
+
+# --- Reactions ---
+
+
+def _reaction_event(emoji="thumbsup", action="reaction_added", user="U456",
+                    channel="C123", message_ts="1752000000.0001", team="T1", app="A1"):
+    return {
+        "team_id": team,
+        "api_app_id": app,
+        "event_id": "EvR1",
+        "event": {
+            "type": action,
+            "user": user,
+            "reaction": emoji,
+            "item": {"type": "message", "channel": channel, "ts": message_ts},
+        },
+    }
+
+
+def test_parse_event_reaction_added():
+    inbound = parse_event(_reaction_event(action="reaction_added"))
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].emoji == "thumbsup"
+    assert inbound[0].action == "added"
+    assert inbound[0].source_provider_message_id == "C123:1752000000.0001"
+    assert inbound[0].sender_address == "U456"
+    assert inbound[0].provider_inbox_id == "A1:T1"
+
+
+def test_parse_event_reaction_removed():
+    inbound = parse_event(_reaction_event(action="reaction_removed"))
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].action == "removed"
+
+
+def test_parse_webhook_reaction_with_signature():
+    provider = _provider()
+    payload = json.dumps(_reaction_event()).encode()
+    inbound = provider.parse_webhook(payload, _signed_headers(payload))
+    assert isinstance(inbound[0], InboundReaction)
+    assert inbound[0].emoji == "thumbsup"
+
+
+# --- Slash commands ---
+
+
+def _slash_command_payload(command="/deploy", text="staging", user="U456",
+                           channel="C123", team="T1", app="A1"):
+    return {
+        "team_id": team,
+        "api_app_id": app,
+        "command": command,
+        "text": text,
+        "user_id": user,
+        "channel_id": channel,
+        "channel_type": "channel",
+        "trigger_id": "trigger_123",
+    }
+
+
+def test_parse_slash_command_normalizes():
+    inbound = parse_slash_command(_slash_command_payload())
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].command == "/deploy"
+    assert inbound[0].args == "staging"
+    assert inbound[0].text == "/deploy staging"
+    assert inbound[0].sender_address == "U456"
+    assert inbound[0].provider_inbox_id == "A1:T1"
+    assert inbound[0].provider_thread_id == "C123"
+
+
+def test_parse_slash_command_no_args():
+    inbound = parse_slash_command(_slash_command_payload(command="/start", text=""))
+    assert inbound[0].command == "/start"
+    assert inbound[0].args is None
+    assert inbound[0].text == "/start"
+
+
+def test_parse_slash_command_empty():
+    assert parse_slash_command({}) == []
+
+
+def test_parse_webhook_slash_command():
+    provider = _provider()
+    payload = json.dumps(_slash_command_payload()).encode()
+    inbound = provider.parse_webhook(payload, _signed_headers(payload))
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].command == "/deploy"
+
+
+def test_parse_webhook_slash_command_bad_signature():
+    provider = _provider()
+    payload = json.dumps(_slash_command_payload()).encode()
+    with pytest.raises(WebhookVerificationError):
+        provider.parse_webhook(payload, _signed_headers(payload, secret="wrong"))
