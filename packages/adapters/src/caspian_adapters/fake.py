@@ -22,15 +22,12 @@ def _slug(value: str) -> str:
 
 
 class FakeEmailProvider:
-    """FakeEmailProvider implementation."""
-
     name = "fake"
     channel = "email"
     capabilities = frozenset({Capability.RECEIVE, Capability.REPLY})
     default_domain = "sandbox.comm.local"
 
     def __init__(self) -> None:
-        """Execute __init__."""
         self.inboxes: dict[str, dict] = {}
         self.sent: list[dict] = []
         self.replies: list[dict] = []
@@ -38,7 +35,6 @@ class FakeEmailProvider:
         self.inbound_domains: list[str] = []
 
     def create_domain(self, domain: str) -> list[dict]:
-        """Execute create_domain."""
         self.domains.append(domain)
         token = secrets.token_hex(16)
         return [
@@ -51,15 +47,12 @@ class FakeEmailProvider:
         ]
 
     def check_domain(self, domain: str) -> bool:
-        """Execute check_domain."""
         return domain in self.domains
 
     def enable_inbound(self, domain: str) -> None:
-        """Execute enable_inbound."""
         self.inbound_domains.append(domain)
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        """Execute provision."""
         inbox_id = f"inbox_{secrets.token_hex(6)}"
         local_part = request.username or (
             f"{_slug(request.display_name or request.agent_id)}-{secrets.token_hex(3)}"
@@ -75,7 +68,6 @@ class FakeEmailProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
-        """Execute send."""
         record = {
             "inbox_id": provider_inbox_id,
             "to": list(message.to),
@@ -96,7 +88,6 @@ class FakeEmailProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute reply."""
         record = {
             "inbox_id": provider_inbox_id,
             "in_reply_to": provider_message_id,
@@ -110,7 +101,6 @@ class FakeEmailProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
-        """Execute parse_webhook."""
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -137,7 +127,6 @@ class FakeEmailProvider:
     def send_test_email(
         self, provider_inbox_id: str, to_address: str, subject: str, text: str
     ) -> InboundMessage:
-        """Execute send_test_email."""
         return InboundMessage(
             external_event_id=f"test_evt_{secrets.token_hex(6)}",
             provider_inbox_id=provider_inbox_id,
@@ -162,7 +151,6 @@ class FakeEmailProvider:
         thread_id: str | None = None,
         message_id: str | None = None,
     ) -> dict:
-        """Execute webhook_payload."""
         return {
             "event_id": event_id or f"fake_evt_{secrets.token_hex(6)}",
             "type": "message.received",

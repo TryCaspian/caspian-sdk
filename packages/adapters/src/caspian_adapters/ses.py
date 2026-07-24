@@ -121,8 +121,6 @@ def _verify_sns_signature(envelope: dict) -> None:
 
 
 class SESEmailProvider:
-    """SESEmailProvider implementation."""
-
     name = "ses"
     channel = "email"
     capabilities = frozenset(
@@ -142,7 +140,6 @@ class SESEmailProvider:
         s3_client=None,
         sesv1_client=None,
     ) -> None:
-        """Execute __init__."""
         if not domain:
             raise ValueError("COMM_SES_DOMAIN is required for the ses provider")
         self._region = region
@@ -166,7 +163,6 @@ class SESEmailProvider:
     # Outbound
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        """Execute provision."""
         local = request.username or (
             f"{_slug(request.display_name or request.agent_id)}-{secrets.token_hex(3)}"
         )
@@ -202,7 +198,6 @@ class SESEmailProvider:
         return records
 
     def check_domain(self, domain: str) -> bool:
-        """Execute check_domain."""
         identity = self._ses.get_email_identity(EmailIdentity=domain)
         return identity["DkimAttributes"]["Status"] == "SUCCESS"
 
@@ -248,7 +243,6 @@ class SESEmailProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
-        """Execute send."""
         message_id = self._send_mime(
             provider_inbox_id, list(message.to), message.subject, message.text, message.html
         )
@@ -261,7 +255,6 @@ class SESEmailProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute reply."""
         message_id = self._send_mime(
             provider_inbox_id,
             list(message.to),
@@ -279,7 +272,6 @@ class SESEmailProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute initiate."""
         message_id = self._send_mime(
             provider_inbox_id, [recipient], message.subject, message.text, message.html
         )
@@ -288,7 +280,6 @@ class SESEmailProvider:
     def send_test_email(
         self, provider_inbox_id: str, to_address: str, subject: str, text: str
     ) -> None:
-        """Execute send_test_email."""
         self._send_mime(f"tester@{self._domain}", [to_address], subject, text, None)
         return None
 
@@ -297,7 +288,6 @@ class SESEmailProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
-        """Execute parse_webhook."""
         try:
             envelope = json.loads(payload)
         except ValueError as exc:

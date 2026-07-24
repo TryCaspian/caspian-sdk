@@ -32,7 +32,6 @@ from .base import (
 
 
 def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[InboundMessage]:
-    """Execute parse_messaging_webhook."""
     data = json.loads(payload)
     out: list[InboundMessage] = []
     for entry in data.get("entry", []):
@@ -71,7 +70,6 @@ class _MetaMessagingProvider:
         verify_token: str = "",
         base_url: str = "https://graph.facebook.com/v21.0",
     ) -> None:
-        """Execute __init__."""
         if not (page_id and access_token):
             raise ValueError(f"{self.name} requires a page id and access token")
         self._page_id = page_id
@@ -95,7 +93,6 @@ class _MetaMessagingProvider:
         )
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        """Execute provision."""
         return ProvisionResult(
             address=f"{self.channel}:{self._page_id}", provider_resource_id=self._page_id
         )
@@ -103,7 +100,6 @@ class _MetaMessagingProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
-        """Execute send."""
         return self._send(message.to[0], message.text or "")
 
     def reply(
@@ -113,12 +109,10 @@ class _MetaMessagingProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute reply."""
         recipient, _ = split_composite_id(provider_message_id)
         return self._send(recipient, message.text or "")
 
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
-        """Execute meta_verify."""
         received = params.get("hub.verify_token") or ""
         # An unset verify_token must never validate — otherwise an unconfigured
         # provider would echo the challenge for any (even empty) token.
@@ -133,7 +127,6 @@ class _MetaMessagingProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
-        """Execute parse_webhook."""
         if self._app_secret:
             received = lower_headers(headers).get("x-hub-signature-256", "")
             expected = (
@@ -145,14 +138,10 @@ class _MetaMessagingProvider:
 
 
 class InstagramProvider(_MetaMessagingProvider):
-    """InstagramProvider implementation."""
-
     name = "instagram"
     channel = "instagram"
 
 
 class FacebookProvider(_MetaMessagingProvider):
-    """FacebookProvider implementation."""
-
     name = "facebook"
     channel = "facebook"

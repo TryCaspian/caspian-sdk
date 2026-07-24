@@ -20,14 +20,15 @@ export interface StateAdapter {
   lock(conversationId: string): Promise<LockHandle>;
 }
 
-/** InMemoryStateAdapter implementation. */
+/**
+ * Default in-memory state adapter.
+ */
 export class InMemoryStateAdapter implements StateAdapter {
   private events = new Map<string, null>();
   private locks = new Map<string, Promise<void>>();
   
   constructor(private maxEvents: number = 1000) {}
 
-  /** Execute seen. */
   async seen(eventId: string): Promise<boolean> {
     if (this.events.has(eventId)) {
       return true;
@@ -45,7 +46,6 @@ export class InMemoryStateAdapter implements StateAdapter {
     return false;
   }
 
-  /** Execute lock. */
   async lock(conversationId: string): Promise<LockHandle> {
     // Simple Promise queue for in-memory locking
     const currentLock = this.locks.get(conversationId) || Promise.resolve();
@@ -71,7 +71,9 @@ export class InMemoryStateAdapter implements StateAdapter {
   }
 }
 
-/** RedisStateAdapter implementation. */
+/**
+ * Redis-backed state adapter for distributed locking.
+ */
 export class RedisStateAdapter implements StateAdapter {
   constructor(
     private client: Redis,
@@ -80,14 +82,12 @@ export class RedisStateAdapter implements StateAdapter {
     private lockTtlSeconds: number = 30
   ) {}
 
-  /** Execute seen. */
   async seen(eventId: string): Promise<boolean> {
     const key = `${this.keyPrefix}seen:${eventId}`;
     const result = await this.client.set(key, "1", "EX", this.dedupTtlSeconds, "NX");
     return result !== "OK";
   }
 
-  /** Execute lock. */
   async lock(conversationId: string): Promise<LockHandle> {
     const key = `${this.keyPrefix}lock:${conversationId}`;
     const token = randomUUID();

@@ -62,8 +62,6 @@ BASELINE_CAPABILITIES = frozenset({Capability.RECEIVE, Capability.REPLY})
 
 @dataclass(frozen=True)
 class ProvisionRequest:
-    """ProvisionRequest implementation."""
-
     connection_id: str
     customer_id: str
     agent_id: str
@@ -75,8 +73,6 @@ class ProvisionRequest:
 
 @dataclass(frozen=True)
 class ProvisionResult:
-    """ProvisionResult implementation."""
-
     address: str
     provider_resource_id: str
     provider_pod_id: str | None = None
@@ -102,8 +98,6 @@ class Attachment:
 
 @dataclass(frozen=True)
 class OutboundMessage:
-    """OutboundMessage implementation."""
-
     text: str | None = None
     html: str | None = None
     subject: str | None = None
@@ -113,16 +107,12 @@ class OutboundMessage:
 
 @dataclass(frozen=True)
 class SendResult:
-    """SendResult implementation."""
-
     provider_message_id: str
     provider_thread_id: str | None = None
 
 
 @dataclass(frozen=True)
 class InboundMessage:
-    """InboundMessage implementation."""
-
     external_event_id: str
     provider_inbox_id: str
     provider_message_id: str
@@ -139,7 +129,6 @@ class InboundMessage:
     attachments: list[Attachment] = field(default_factory=list)
 
     def to_payload(self) -> dict:
-        """Execute to_payload."""
         return asdict(self)
 
 
@@ -164,18 +153,14 @@ class ChannelProvider(Protocol):
     # bot token). Empty for transports we fully own, like email on our domain.
     connect_credentials: tuple[str, ...] = ()
 
-    def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        """Execute provision."""
-        ...
+    def provision(self, request: ProvisionRequest) -> ProvisionResult: ...
 
     def send(
         self,
         provider_inbox_id: str,
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
-    ) -> SendResult:
-        """Execute send."""
-        ...
+    ) -> SendResult: ...
 
     def reply(
         self,
@@ -183,15 +168,11 @@ class ChannelProvider(Protocol):
         provider_message_id: str,
         message: OutboundMessage,
         credentials: Mapping[str, str] | None = None,
-    ) -> SendResult:
-        """Execute reply."""
-        ...
+    ) -> SendResult: ...
 
     def parse_webhook(
         self,
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]:
-        """Execute parse_webhook."""
-        ...
+    ) -> list[InboundMessage]: ...

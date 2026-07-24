@@ -120,7 +120,6 @@ def _write_env(values: dict[str, str]) -> None:
 
 
 def cmd_init(args) -> None:
-    """Execute cmd_init."""
     if _resolve("CASPIAN_API_KEY", "COMM_API_KEY") and not args.force:
         print("CASPIAN_API_KEY already configured in .env (use --force to replace).")
         return
@@ -140,7 +139,6 @@ def cmd_init(args) -> None:
 
 
 def cmd_domains(args) -> None:
-    """Execute cmd_domains."""
     if args.action == "add":
         domain = _request("POST", "/v1/domains", json_body={"domain": args.domain})
         print(f"Domain {domain['domain']} registered ({domain['status']}).")
@@ -334,7 +332,6 @@ def _connect_one(channel: str, args) -> None:
 
 
 def cmd_connect(args) -> None:
-    """Execute cmd_connect."""
     _connect_one(_pick_channel(args.channel), args)
     while sys.stdin.isatty():
         again = _ask("Connect another channel?", "no").lower()
@@ -344,7 +341,6 @@ def cmd_connect(args) -> None:
 
 
 def cmd_status(args) -> None:
-    """Execute cmd_status."""
     connections = _request("GET", "/v1/connections")
     if not connections:
         print("No connections. Run: caspian connect email")
@@ -354,7 +350,6 @@ def cmd_status(args) -> None:
 
 
 def cmd_listen(args) -> None:
-    """Execute cmd_listen."""
     seq = 0
     batch = _request("GET", "/v1/events", params={"after_seq": 0, "limit": 500})
     while batch:
@@ -380,7 +375,6 @@ def cmd_listen(args) -> None:
 
 
 def cmd_test_email(args) -> None:
-    """Execute cmd_test_email."""
     result = _request(
         "POST",
         "/v1/test-emails",
@@ -424,7 +418,6 @@ def _fmt_cents(cents) -> str:
 
 
 def cmd_billing(args) -> None:
-    """Execute cmd_billing."""
     b = _request("GET", "/v1/billing")
     print(f"Balance:        {_fmt_cents(b['balance_cents'])}")
     print(f"Credit added:   {_fmt_cents(b['credit_cents'])}")
@@ -450,7 +443,6 @@ def cmd_billing(args) -> None:
 
 
 def cmd_topup(args) -> None:
-    """Execute cmd_topup."""
     cents = args.amount_cents if args.amount_cents is not None else int(round(args.amount * 100))
     result = _request("POST", "/v1/billing/topup", json_body={"amount_cents": cents})
     url = result["checkout_url"]
@@ -463,7 +455,6 @@ def cmd_topup(args) -> None:
 
 
 def main() -> None:
-    """Execute main."""
     parser = argparse.ArgumentParser(prog="caspian", description="Caspian communication CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 

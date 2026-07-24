@@ -58,8 +58,6 @@ def parse_event(data: dict) -> list[InboundMessage]:
 
 
 class SlackProvider:
-    """SlackProvider implementation."""
-
     name = "slack"
     channel = "slack"
     # Installed via OAuth, so the token is supplied by the callback, not the
@@ -85,8 +83,6 @@ class SlackProvider:
         # so we keep several interchangeable apps and hand each colliding developer
         # a different one. `apps` is the pool; the single client_id/... args are the
         # 1-app fallback (bring-your-own or a single shared app).
-
-        """Execute __init__."""
         if apps:
             self.apps = [dict(a) for a in apps]
         elif client_id:
@@ -109,7 +105,6 @@ class SlackProvider:
         return self.apps[0]["client_id"] if self.apps else ""
 
     def pool_size(self) -> int:
-        """Execute pool_size."""
         return len(self.apps)
 
     def app_at(self, index: int) -> dict:
@@ -156,7 +151,6 @@ class SlackProvider:
     def authorize_url(
         self, redirect_uri: str, state: str, app: Mapping[str, str] | None = None
     ) -> str:
-        """Execute authorize_url."""
         from urllib.parse import urlencode
 
         client_id, _, _ = self._app(app)
@@ -271,8 +265,6 @@ class SlackProvider:
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         # The OAuth callback already set the address/resource id; provision is a
         # no-op confirmation that keeps the worker flow uniform.
-
-        """Execute provision."""
         return ProvisionResult(
             address=(request.credentials or {}).get("address", "slack"),
             provider_resource_id=(request.credentials or {}).get("provider_resource_id", ""),
@@ -281,7 +273,6 @@ class SlackProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
-        """Execute send."""
         creds = credentials or {}
         channel = message.to[0]
         data = self._post(
@@ -301,7 +292,6 @@ class SlackProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute reply."""
         creds = credentials or {}
         channel, ts = split_composite_id(provider_message_id)
         data = self._post(
@@ -317,7 +307,6 @@ class SlackProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
-        """Execute parse_webhook."""
         try:
             data = json.loads(payload)
         except ValueError as exc:

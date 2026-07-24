@@ -111,7 +111,9 @@ export class Message {
   }
 }
 
-/** StreamSession implementation. */
+/**
+ * Represents a progressive streaming session for replying to a message.
+ */
 export class StreamSession {
   private chunks: string[] = [];
   private postedId?: string;
@@ -259,7 +261,6 @@ class MessageScheduler {
     }
   }
 
-  /** Execute conversationKey. */
   private conversationKey(event: EventRecord): string {
     const data = isRecord(event.data) ? event.data : {};
     const message = isRecord(data.message) ? data.message : {};
@@ -268,7 +269,6 @@ class MessageScheduler {
     );
   }
 
-  /** Execute submit. */
   async submit(event: EventRecord): Promise<void> {
     if (event.type !== "message.received") {
       await this.safeDispatch(event);
@@ -281,7 +281,6 @@ class MessageScheduler {
     else this.track(this.safeDispatch(event));
   }
 
-  /** Execute enqueue. */
   private enqueue(key: string, event: EventRecord): void {
     if (this.closed) return;
     const queue = this.queues.get(key) ?? [];
@@ -292,7 +291,6 @@ class MessageScheduler {
     this.track(this.drainQueue(key));
   }
 
-  /** Execute drainQueue. */
   private async drainQueue(key: string): Promise<void> {
     for (;;) {
       const event = this.queues.get(key)?.shift();
@@ -305,7 +303,6 @@ class MessageScheduler {
     }
   }
 
-  /** Execute debounce. */
   private debounce(key: string, event: EventRecord): void {
     if (this.closed) return;
     const previous = this.debounced.get(key);
@@ -314,7 +311,6 @@ class MessageScheduler {
     if (!this.running.has(key)) this.startDebounceTimer(key);
   }
 
-  /** Execute startDebounceTimer. */
   private startDebounceTimer(key: string): void {
     const pending = this.debounced.get(key);
     if (!pending) return;
@@ -327,7 +323,6 @@ class MessageScheduler {
     }, this.debounceMs);
   }
 
-  /** Execute runDebounce. */
   private async runDebounce(key: string, event: EventRecord): Promise<void> {
     await this.safeDispatch(event);
     this.running.delete(key);
@@ -343,7 +338,6 @@ class MessageScheduler {
     this.startDebounceTimer(key);
   }
 
-  /** Execute drop. */
   private drop(key: string, event: EventRecord): void {
     if (this.closed || this.running.has(key)) return;
     this.running.add(key);
@@ -354,13 +348,11 @@ class MessageScheduler {
     );
   }
 
-  /** Execute track. */
   private track(task: Promise<void>): void {
     this.active.add(task);
     void task.finally(() => this.active.delete(task));
   }
 
-  /** Execute safeDispatch. */
   private async safeDispatch(event: EventRecord): Promise<void> {
     try {
       await this.dispatch(event);
@@ -369,7 +361,6 @@ class MessageScheduler {
     }
   }
 
-  /** Execute close. */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -474,7 +465,6 @@ export class CommClient {
     return (await response.json()) as T;
   }
 
-  /** Execute getText. */
   private async getText(path: string): Promise<string> {
     const response = await this.fetchImpl(new URL(this.baseUrl + path), {
       method: "GET",
@@ -489,24 +479,20 @@ export class CommClient {
 
   // ---- Platform behaviour guides (opt-in) ----------------------------------
 
-  /** Execute behaviorPrompt. */
   behaviorPrompt(): Promise<string> {
     return this.getText("/v1/behavior-prompt");
   }
 
-  /** Execute channelGuide. */
   channelGuide(channel: string): Promise<string> {
     return this.getText(`/v1/channels/${channel}/guide`);
   }
 
   // ---- Resources -----------------------------------------------------------
 
-  /** Execute createCustomer. */
   createCustomer(name: string): Promise<Customer> {
     return this.request("POST", "/v1/customers", { json: { name } });
   }
 
-  /** Execute createAgent. */
   createAgent(name: string): Promise<Agent> {
     return this.request("POST", "/v1/agents", { json: { name } });
   }
@@ -549,34 +535,28 @@ export class CommClient {
     return this.connect("email", rest, { domain: domain ?? null, username: username ?? null });
   }
 
-  /** Execute connectTelegram. */
   connectTelegram(opts: ConnectOptions & { botToken: string }): Promise<Connection> {
     const { botToken, ...rest } = opts;
     return this.connect("telegram", rest, { bot_token: botToken });
   }
 
-  /** Execute addDomain. */
   addDomain(domain: string): Promise<Domain> {
     return this.request("POST", "/v1/domains", { json: { domain } });
   }
 
-  /** Execute listDomains. */
   listDomains(): Promise<Domain[]> {
     return this.request("GET", "/v1/domains");
   }
 
-  /** Execute getDomain. */
   getDomain(domainId: string): Promise<Domain> {
     return this.request("GET", `/v1/domains/${domainId}`);
   }
 
-  /** Execute connectPhone. */
   connectPhone(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("phone", rest, { provider: provider ?? null });
   }
 
-  /** Execute connectWhatsapp. */
   connectWhatsapp(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("whatsapp", rest, { provider: provider ?? null });
@@ -593,12 +573,10 @@ export class CommClient {
     return this.request("POST", "/v1/connections/whatsapp/onboarding-session", { json: body });
   }
 
-  /** Execute connectImessage. */
   connectImessage(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("imessage", opts);
   }
 
-  /** Execute connectRcs. */
   connectRcs(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("rcs", opts);
   }
@@ -686,36 +664,30 @@ export class CommClient {
     });
   }
 
-  /** Execute installX. */
   installX(opts: { customerId?: string; agentId?: string } = {}): Promise<Connection> {
     return this.request("POST", "/v1/connections/x/install", {
       json: { customer_id: opts.customerId ?? null, agent_id: opts.agentId ?? null },
     });
   }
 
-  /** Execute connectInstagram. */
   connectInstagram(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("instagram", { ...opts, wait: false });
   }
 
-  /** Execute connectFacebook. */
   connectFacebook(opts: ConnectOptions = {}): Promise<Connection> {
     return this.connect("facebook", { ...opts, wait: false });
   }
 
-  /** Execute getConnection. */
   getConnection(connectionId: string): Promise<Connection> {
     return this.request("GET", `/v1/connections/${connectionId}`);
   }
 
-  /** Execute listConversations. */
   listConversations(connectionId?: string): Promise<Conversation[]> {
     return this.request("GET", "/v1/conversations", {
       params: connectionId ? { connection_id: connectionId } : undefined,
     });
   }
 
-  /** Execute listMessages. */
   listMessages(conversationId: string): Promise<Record<string, unknown>[]> {
     return this.request("GET", `/v1/conversations/${conversationId}/messages`);
   }
@@ -732,12 +704,10 @@ export class CommClient {
     });
   }
 
-  /** Execute react. */
   react(messageId: string, emoji: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/react`, { json: { emoji } });
   }
 
-  /** Execute typing. */
   typing(messageId: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
   }
@@ -753,12 +723,10 @@ export class CommClient {
     });
   }
 
-  /** Execute invalidateStrategyCache. */
   invalidateStrategyCache(connectionId: string): void {
     this.strategyCache.delete(connectionId);
   }
 
-  /** Execute getStreamStrategy. */
   async getStreamStrategy(connectionId: string): Promise<StreamStrategy> {
     if (this.strategyCache.has(connectionId)) {
       return this.strategyCache.get(connectionId)!;
@@ -779,22 +747,18 @@ export class CommClient {
     return strategy;
   }
 
-  /** Execute setWebhook. */
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/webhook", { json: { url, secret: secret ?? null } });
   }
 
-  /** Execute getWebhook. */
   getWebhook(): Promise<Record<string, unknown>> {
     return this.request("GET", "/v1/webhook");
   }
 
-  /** Execute channels. */
   channels(): Promise<Record<string, unknown>[]> {
     return this.request("GET", "/v1/channels");
   }
 
-  /** Execute login. */
   async login(opts: LoginOptions = {}): Promise<Record<string, unknown>> {
     const start = await this.request<any>("POST", "/v1/auth/device/start", {
       json: { api_key: this.apiKey },
@@ -824,17 +788,14 @@ export class CommClient {
     throw new CommError(408, "device login timed out");
   }
 
-  /** Execute billing. */
   billing(): Promise<Record<string, unknown>> {
     return this.request("GET", "/v1/billing");
   }
 
-  /** Execute topUp. */
   topUp(amountCents = 2000): Promise<Record<string, unknown>> {
     return this.request("POST", "/v1/billing/topup", { json: { amount_cents: amountCents } });
   }
 
-  /** Execute setSpendLimits. */
   setSpendLimits(opts: SpendLimitsOptions = {}): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = {};
     if (opts.monthlyCapCents !== undefined) body.monthly_cap_cents = opts.monthlyCapCents;
@@ -842,7 +803,6 @@ export class CommClient {
     return this.request("PUT", "/v1/billing/limits", { json: body });
   }
 
-  /** Execute setAutopay. */
   setAutopay(opts: AutopayOptions = {}): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/billing/autopay", {
       json: {
@@ -866,14 +826,12 @@ export class CommClient {
     });
   }
 
-  /** Execute initiate. */
   initiate(connectionId: string, recipient: string, text: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/connections/${connectionId}/initiate`, {
       json: { recipient, text },
     });
   }
 
-  /** Execute backfill. */
   backfill(conversationId: string, limit = 50): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/conversations/${conversationId}/backfill`, { json: { limit } });
   }
@@ -889,7 +847,6 @@ export class CommClient {
     return this.request("POST", "/v1/test-emails", { json: body });
   }
 
-  /** Execute events. */
   events(opts: { afterSeq?: number; limit?: number; type?: string } = {}): Promise<EventRecord[]> {
     const params: Record<string, unknown> = {
       after_seq: opts.afterSeq ?? 0,
@@ -901,25 +858,21 @@ export class CommClient {
 
   // ---- Event handling ------------------------------------------------------
 
-  /** Execute onMessage. */
   onMessage(handler: MessageHandler): MessageHandler {
     this.handlers.push(handler);
     return handler;
   }
 
-  /** Execute onInteraction. */
   onInteraction(handler: InteractionHandler): InteractionHandler {
     this.interactionHandlers.push(handler);
     return handler;
   }
 
-  /** Execute onReaction. */
   onReaction(handler: ReactionHandler): ReactionHandler {
     this.reactionHandlers.push(handler);
     return handler;
   }
 
-  /** Execute buildMessage. */
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -938,7 +891,6 @@ export class CommClient {
     );
   }
 
-  /** Execute dispatchInteraction. */
   private async dispatchInteraction(data: any): Promise<void> {
     const interaction = new Interaction(
       data.connection_id ?? "",
@@ -961,7 +913,6 @@ export class CommClient {
     }
   }
 
-  /** Execute dispatchReaction. */
   private async dispatchReaction(data: any): Promise<void> {
     const reaction = new Reaction(
       data.connection_id ?? "",
@@ -982,7 +933,6 @@ export class CommClient {
     }
   }
 
-  /** Execute dispatchEvent. */
   private async dispatchEvent(event: EventRecord): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
@@ -1028,7 +978,6 @@ export class CommClient {
     }
   }
 
-  /** Execute warnAccountRequired. */
   private warnAccountRequired(err: AccountRequiredError): void {
     const now = Date.now();
     if (now - this.lastCreditWarning < 60_000) return;
@@ -1045,7 +994,6 @@ export class CommClient {
     process.stderr.write(lines.join("\n") + "\n");
   }
 
-  /** Execute warnOutOfCredit. */
   private warnOutOfCredit(err: InsufficientCreditError): void {
     const now = Date.now();
     if (now - this.lastCreditWarning < 60_000) return;
@@ -1073,6 +1021,9 @@ export class CommClient {
     process.stderr.write(lines.join("\n") + "\n");
   }
 
+  /**
+   * Processes an incoming webhook event from the Caspian gateway.
+   */
   async handleWebhook(
     body: string | Buffer,
     signature: string,
@@ -1111,7 +1062,6 @@ export class CommClient {
     }
   }
 
-  /** Execute dispatchPending. */
   async dispatchPending(afterSeq = 0): Promise<number> {
     let lastSeq = afterSeq;
     for (;;) {
@@ -1124,7 +1074,6 @@ export class CommClient {
     }
   }
 
-  /** Execute listen. */
   async listen(opts: ListenOptions = {}): Promise<void> {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
     const pollMs = (opts.pollInterval ?? 1) * 1000;
@@ -1163,7 +1112,6 @@ export class CommClient {
     }
   }
 
-  /** Execute latestSeq. */
   private async latestSeq(signal?: AbortSignal): Promise<number> {
     while (!signal?.aborted) {
       try {

@@ -100,8 +100,6 @@ def sign_sa_jwt(
 
 
 class GoogleMeetProvider:
-    """GoogleMeetProvider implementation."""
-
     name = "google-meet"
     channel = "gmeet"
     connect_credentials: tuple[str, ...] = ()
@@ -123,7 +121,6 @@ class GoogleMeetProvider:
         http: httpx.Client | None = None,
         clock=time.time,
     ) -> None:
-        """Execute __init__."""
         if not (sa_info and sa_info.get("client_email") and sa_info.get("private_key")):
             raise ValueError(
                 "COMM_GMEET_SA_JSON must be a service-account key with client_email "
@@ -207,8 +204,6 @@ class GoogleMeetProvider:
         # The agent's Meet identity is the impersonated Workspace user; spaces are
         # minted per meeting on send/initiate, not at connect time. Connectivity
         # to Google is intentionally not checked here so connect never blocks.
-
-        """Execute provision."""
         return ProvisionResult(address=self._impersonate, provider_resource_id=self._impersonate)
 
     def send(
@@ -216,8 +211,6 @@ class GoogleMeetProvider:
     ) -> SendResult:
         # A "message" on the meet channel is a meeting: create a space and send
         # the persona in to meet the recipient. The join link is meetingUri.
-
-        """Execute send."""
         space = self._create_space()
         self._dispatch_persona(space, None, message.to[0] if message.to else None)
         return self._result(space)
@@ -230,8 +223,6 @@ class GoogleMeetProvider:
         credentials=None,
     ) -> SendResult:
         # No in-meeting text reply; start a fresh meeting for the same thread.
-
-        """Execute reply."""
         space = self._create_space()
         self._dispatch_persona(space, None, None)
         return self._result(space)
@@ -243,7 +234,6 @@ class GoogleMeetProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute initiate."""
         space = self._create_space()
         self._dispatch_persona(space, None, recipient)
         return self._result(space)

@@ -55,14 +55,11 @@ USER_CAPABILITIES = frozenset(
 
 
 class TelegramUserProvider:
-    """TelegramUserProvider implementation."""
-
     name = "telegram-user"
     channel = "telegram"
     capabilities = USER_CAPABILITIES
 
     def __init__(self, session: str, api_id: int, api_hash: str) -> None:
-        """Execute __init__."""
         if not (session and api_id and api_hash):
             raise ValueError(
                 "telegram-user requires COMM_TELEGRAM_USER_SESSION, "
@@ -85,7 +82,6 @@ class TelegramUserProvider:
         return self._client
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        """Execute provision."""
         client = self._telethon()
         me = client.get_me()
         username = f"@{me.username}" if me.username else str(me.id)
@@ -107,7 +103,6 @@ class TelegramUserProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
-        """Execute send."""
         client = self._telethon()
         chat_id = message.to[0]
         sent = client.send_message(int(chat_id), message.text or "")
@@ -120,7 +115,6 @@ class TelegramUserProvider:
         message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
-        """Execute reply."""
         client = self._telethon()
         chat_id, target = split_composite_id(provider_message_id)
         sent = client.send_message(int(chat_id), message.text or "", reply_to=int(target))
@@ -162,6 +156,4 @@ class TelegramUserProvider:
     ) -> list[InboundMessage]:
         # User accounts receive over MTProto, not webhooks. A dedicated listener
         # (out of scope for this slice) feeds inbound; the webhook path is unused.
-
-        """Execute parse_webhook."""
         raise NotImplementedError("telegram-user delivers inbound over MTProto, not webhooks")
