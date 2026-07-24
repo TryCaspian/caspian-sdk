@@ -174,6 +174,12 @@ export class StreamSession {
   async finalize(): Promise<Record<string, unknown> | null> {
     if (this.finalized) return null;
     this.finalized = true;
+
+    // Settle any in-flight initial post before deciding the finalize path
+    if (this.postingPromise) {
+      await this.postingPromise;
+    }
+
     const fullText = this.text;
     if (!fullText) return null;
 

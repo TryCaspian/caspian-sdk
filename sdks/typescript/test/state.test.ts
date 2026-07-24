@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { InMemoryStateAdapter, RedisStateAdapter } from "../src/state.js";
 import Redis from "ioredis-mock";
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 describe("InMemoryStateAdapter", () => {
   it("should track seen events with max limits", async () => {
     const adapter = new InMemoryStateAdapter(2);
@@ -21,10 +19,14 @@ describe("InMemoryStateAdapter", () => {
     const adapter = new InMemoryStateAdapter();
     const result: string[] = [];
 
+    let signalReady!: () => void;
+    const ready = new Promise<void>((r) => { signalReady = r; });
+
     const worker1 = async () => {
       const lock = await adapter.lock("conv_1");
+      signalReady(); // signal that lock is held
       result.push("w1_start");
-      await sleep(50);
+      await new Promise((r) => setTimeout(r, 50));
       result.push("w1_end");
       lock.release();
     };
@@ -37,7 +39,7 @@ describe("InMemoryStateAdapter", () => {
     };
 
     const p1 = worker1();
-    await sleep(5); // ensure worker1 grabs lock first
+    await ready; // wait until worker1 holds the lock
     const p2 = worker2();
     
     await Promise.all([p1, p2]);
@@ -68,10 +70,14 @@ describe("RedisStateAdapter", () => {
     
     const result: string[] = [];
 
+    let signalReady!: () => void;
+    const ready = new Promise<void>((r) => { signalReady = r; });
+
     const worker1 = async () => {
       const lock = await adapter.lock("conv_2");
+      signalReady(); // signal that lock is held
       result.push("w1_start");
-      await sleep(50);
+      await new Promise((r) => setTimeout(r, 50));
       result.push("w1_end");
       await lock.release();
     };
@@ -84,7 +90,7 @@ describe("RedisStateAdapter", () => {
     };
 
     const p1 = worker1();
-    await sleep(5); // ensure worker1 grabs lock first
+    await ready; // wait until worker1 holds the lock
     const p2 = worker2();
     
     await Promise.all([p1, p2]);

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Redis } from "ioredis";
+import { CommError } from "./errors.js";
 
 export interface LockHandle {
   release(): void | Promise<void>;
@@ -81,7 +82,9 @@ export class RedisStateAdapter implements StateAdapter {
     private client: Redis,
     private keyPrefix: string = "caspian:",
     private dedupTtlSeconds: number = 86400,
-    private lockTtlSeconds: number = 30
+    private lockTtlSeconds: number = 30,
+    private acquireTimeoutMs: number = 10_000,
+    private pollIntervalMs: number = 50,
   ) {}
 
   /** Execute seen. */
@@ -103,10 +106,10 @@ export class RedisStateAdapter implements StateAdapter {
       if (result === "OK") {
         break;
       }
-      if (Date.now() - start > 10000) {
-        throw new Error(`Timeout acquiring lock for ${conversationId}`);
+      if (Date.now() - start > this.acquireTimeoutMs) {
+        throw new CommError(408, `Timeout acquiring lock for ${conversationId}`);
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, this.pollIntervalMs));
     }
     
     // Heartbeat to renew lock while held

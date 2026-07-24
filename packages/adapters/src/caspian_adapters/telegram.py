@@ -134,6 +134,7 @@ class TelegramProvider:
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
             Capability.ATTACHMENTS,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
