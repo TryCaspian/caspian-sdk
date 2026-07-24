@@ -296,6 +296,9 @@ class SlackProvider:
             headers={"Authorization": f"Bearer {creds['bot_token']}"},
         )
         r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Slack chat.update failed: {data.get('error')}")
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
