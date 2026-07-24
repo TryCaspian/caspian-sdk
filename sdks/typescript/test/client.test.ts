@@ -7,6 +7,7 @@ import {
   Interaction,
   Message,
   Reaction,
+  Command,
 } from "../src/index.js";
 
 /** Build a client whose fetch is driven by a route table. */
@@ -490,5 +491,48 @@ describe("CommClient", () => {
     expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
+  });
+
+  it("onCommand dispatches and replies", async () => {
+    const replies: Array<{ path: string; body: unknown }> = [];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              command: "weather",
+              text: "Chicago",
+              provider_message_id: "chan_1:cmd:trig_1",
+              provider_thread_id: "chan_1",
+              sender: { address: "u1" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/messages/chan_1:cmd:trig_1/reply": async (req) => {
+        replies.push({ path: new URL(req.url).pathname, body: await req.json() });
+        return json({ delivered: true });
+      },
+    });
+
+    const seen: Command[] = [];
+    client.onCommand(async (cmd) => {
+      seen.push(cmd);
+      await cmd.reply(`Weather for ${cmd.text} is sunny`);
+    });
+
+    await client.dispatchPending(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].command).toBe("weather");
+    expect(seen[0].text).toBe("Chicago");
+    expect(replies[0].path).toBe("/v1/messages/chan_1:cmd:trig_1/reply");
+    expect((replies[0].body as any).text).toBe("Weather for Chicago is sunny");
   });
 });

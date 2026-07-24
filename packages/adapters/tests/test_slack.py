@@ -106,3 +106,90 @@ def test_pool_verifies_with_sending_apps_secret():
     payload = json.dumps(_event(app="A2")).encode()
     inbound = provider.parse_webhook(payload, _signed_headers(payload, secret="g2"))
     assert inbound[0].provider_inbox_id == "A2:T1"
+
+
+def test_parse_event_normalizes_reaction_added_and_removed():
+    from caspian_adapters.base import InboundReaction
+
+    add_payload = {
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "event_id": "EvReaction1",
+        "event": {
+            "type": "reaction_added",
+            "user": "U456",
+            "reaction": "thumbsup",
+            "item": {
+                "type": "message",
+                "channel": "C123",
+                "ts": "1752000000.0001",
+            },
+        },
+    }
+    inbound_add = parse_event(add_payload)
+    assert len(inbound_add) == 1
+    assert isinstance(inbound_add[0], InboundReaction)
+    assert inbound_add[0].emoji == "thumbsup"
+    assert inbound_add[0].action == "added"
+    assert inbound_add[0].provider_message_id == "C123:1752000000.0001"
+    assert inbound_add[0].sender_address == "U456"
+
+    remove_payload = {
+        "team_id": "T1",
+        "api_app_id": "A1",
+        "event_id": "EvReaction2",
+        "event": {
+            "type": "reaction_removed",
+            "user": "U456",
+            "reaction": "thumbsup",
+            "item": {
+                "type": "message",
+                "channel": "C123",
+                "ts": "1752000000.0001",
+            },
+        },
+    }
+    inbound_remove = parse_event(remove_payload)
+    assert len(inbound_remove) == 1
+    assert isinstance(inbound_remove[0], InboundReaction)
+    assert inbound_remove[0].action == "removed"
+
+
+def test_parse_webhook_normalizes_slash_command():
+    from caspian_adapters.base import InboundCommand
+
+    provider = _provider()
+    payload = b"command=%2Fweather&text=Chicago&user_id=U123&user_name=tester&channel_id=C456&team_id=T1&api_app_id=A1&trigger_id=trig_1"
+    inbound = provider.parse_webhook(payload, _signed_headers(payload))
+    assert len(inbound) == 1
+    assert isinstance(inbound[0], InboundCommand)
+    assert inbound[0].command == "weather"
+    assert inbound[0].text == "Chicago"
+    assert inbound[0].sender_address == "U123"
+    assert inbound[0].sender_name == "tester"
+    assert inbound[0].provider_thread_id == "C456"
+
+
+def test_slack_react_calls_api(monkeypatch):
+    import httpx
+
+    provider = _provider()
+    called = []
+
+    def mock_post(url, json, headers):
+        called.append((url, json, headers))
+        req = httpx.Request("POST", url)
+        return httpx.Response(200, json={"ok": True}, request=req)
+
+    monkeypatch.setattr(provider._client, "post", mock_post)
+    provider.react(
+        provider_inbox_id="A1:T1",
+        provider_message_id="C123:1752000000.0001",
+        emoji=":thumbsup:",
+        credentials={"bot_token": "token-1"},
+    )
+    assert len(called) == 1
+    assert called[0][0] == "/reactions.add"
+    assert called[0][1] == {"channel": "C123", "timestamp": "1752000000.0001", "name": "thumbsup"}
+    assert called[0][2] == {"Authorization": "Bearer token-1"}
+

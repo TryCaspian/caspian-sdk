@@ -282,3 +282,52 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_on_command_dispatches_and_replies():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "command": "weather",
+                "text": "Chicago",
+                "provider_message_id": "chan_1:cmd:trig_1",
+                "provider_thread_id": "chan_1",
+                "sender": {"address": "u1"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Command] = []
+
+    @client.on_command
+    def handle_cmd(cmd: Command) -> None:
+        seen.append(cmd)
+        cmd.reply(f"Weather for {cmd.text} is sunny")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+    assert seen[0].command == "weather"
+    assert seen[0].text == "Chicago"
+    assert replies[0][0] == "/v1/messages/chan_1:cmd:trig_1/reply"
+    assert replies[0][1]["text"] == "Weather for Chicago is sunny"
+

@@ -196,6 +196,32 @@ class Reaction:
     _client: "CommClient" = field(repr=False)
 
 
+@dataclass
+class Command:
+    """A slash command (or bot-command) invocation delivered to an on_command handler."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    command: str
+    text: str | None
+    provider_message_id: str
+    provider_thread_id: str
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        return self._client.reply(
+            self.provider_message_id, text=text, html=html, blocks=blocks, media=media
+        )
+
+
 class CommClient:
     def __init__(
         self,
@@ -213,6 +239,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._command_handlers: list[Callable[[Command], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -736,6 +763,13 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def on_command(
+        self, handler: Callable[["Command"], None]
+    ) -> Callable[["Command"], None]:
+        """Register a handler for slash commands (command.received)."""
+        self._command_handlers.append(handler)
+        return handler
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
@@ -745,6 +779,9 @@ class CommClient:
             return
         if event_type == "reaction.received":
             self._dispatch_reaction(event["data"])
+            return
+        if event_type == "command.received":
+            self._dispatch_command(event["data"])
             return
         if event_type != "message.received":
             return
@@ -933,6 +970,28 @@ class CommClient:
                 handler(reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+
+    def _dispatch_command(self, data: dict) -> None:
+        command = Command(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            command=data.get("command", ""),
+            text=data.get("text"),
+            provider_message_id=data.get("provider_message_id", ""),
+            provider_thread_id=data.get("provider_thread_id", ""),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._command_handlers:
+            try:
+                handler(command)
+            except InsufficientCreditError as exc:
+                self._warn_out_of_credit(exc)
+            except AccountRequiredError as exc:
+                self._warn_account_required(exc)
+            except Exception:
+                logger.exception("on_command handler failed; continuing")
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]

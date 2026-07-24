@@ -9,7 +9,10 @@ import secrets
 from collections.abc import Mapping
 
 from .base import (
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
+    InboundCommand,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -111,6 +114,7 @@ class FakeSlackProvider:
         self.app_id = f"A{secrets.token_hex(4).upper()}"
         self.sent: list[dict] = []
         self.replies: list[dict] = []
+        self.reactions: list[dict] = []
         self.refreshes = 0
         self._seq = 0
         self._rotating = rotating
@@ -123,7 +127,12 @@ class FakeSlackProvider:
         try:
             data = json.loads(payload)
         except ValueError:
-            return None
+            from urllib.parse import parse_qs
+            try:
+                parsed = parse_qs(payload.decode())
+                data = {k: v[0] for k, v in parsed.items()}
+            except Exception:
+                return None
         team = data.get("team_id", "")
         app_id = data.get("api_app_id", "")
         if not (team or app_id):
@@ -186,21 +195,55 @@ class FakeSlackProvider:
         self, provider_inbox_id, provider_message_id, message, credentials=None
     ) -> SendResult:
         ch, _, ts = provider_message_id.partition(":")
-        self.replies.append({"channel": ch, "thread_ts": ts, "text": message.text})
+        thread_ts = ts if (ts and not ts.startswith("cmd:")) else None
+        self.replies.append({"channel": ch, "thread_ts": thread_ts, "text": message.text})
         return SendResult(provider_message_id=f"{ch}:{self._next()}.0002", provider_thread_id=ch)
 
     def _next(self):
         self._seq += 1
         return 1_752_000_000 + self._seq
 
-    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+    def react(self, provider_inbox_id, provider_message_id, emoji, credentials=None) -> None:
+        self.reactions.append({"message_id": provider_message_id, "emoji": emoji})
+
+    def parse_webhook(self, payload, headers, credentials=None) -> list[InboundEvent]:
+        is_json = True
         try:
             data = json.loads(payload)
-        except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON") from exc
-        if data.get("type") == "url_verification":
-            return []
-        return parse_event(data)
+        except ValueError:
+            is_json = False
+            from urllib.parse import parse_qs
+            try:
+                parsed = parse_qs(payload.decode())
+                data = {k: v[0] for k, v in parsed.items()}
+            except Exception as exc:
+                raise WebhookVerificationError("invalid payload format") from exc
+        
+        if is_json:
+            if data.get("type") == "url_verification":
+                return []
+            return parse_event(data)
+        else:
+            # Handle Slack slash command form payload
+            import time as _t
+            command_raw = data.get("command", "")
+            command_name = command_raw[1:] if command_raw.startswith("/") else command_raw
+            if not command_name:
+                return []
+            channel_id = data.get("channel_id", "")
+            trigger_id = data.get("trigger_id", "")
+            return [
+                InboundCommand(
+                    external_event_id=trigger_id or f"{channel_id}:{command_name}:{_t.time()}",
+                    provider_inbox_id=f"{self.app_id}:{data.get('team_id', '')}",
+                    provider_message_id=f"{channel_id}:cmd:{trigger_id}",
+                    provider_thread_id=channel_id,
+                    command=command_name,
+                    text=data.get("text") or None,
+                    sender_address=data.get("user_id"),
+                    sender_name=data.get("user_name"),
+                )
+            ]
 
     def webhook_payload(self, *, channel="C123", text="Hi there", user="U456"):
         self._seq += 1

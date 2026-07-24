@@ -17,7 +17,10 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
+    InboundCommand,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -30,27 +33,51 @@ from .base import (
 API = "https://slack.com/api"
 
 
-def parse_event(data: dict) -> list[InboundMessage]:
-    """Normalize a Slack Events API callback into our schema (user messages only)."""
+def parse_event(data: dict) -> list[InboundEvent]:
+    """Normalize a Slack Events API callback into our schema (user messages & reactions)."""
     event = data.get("event", {})
-    if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
-        return []
-    channel = event["channel"]
-    ts = event["ts"]
-    return [
-        InboundMessage(
-            external_event_id=data.get("event_id") or f"{channel}:{ts}",
-            # Route by (app, workspace) = api_app_id:team_id. The pool means several
-            # apps can live in one workspace, so the app id disambiguates which
-            # developer's connection this event belongs to.
-            provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
-            provider_message_id=f"{channel}:{ts}",
-            provider_thread_id=channel,
-            sender_address=event.get("user"),
-            text=event.get("text"),
-            chat_type=event.get("channel_type") or "channel",
-        )
-    ]
+    event_type = event.get("type")
+
+    if event_type == "message":
+        if event.get("bot_id") or event.get("subtype"):
+            return []
+        channel = event["channel"]
+        ts = event["ts"]
+        return [
+            InboundMessage(
+                external_event_id=data.get("event_id") or f"{channel}:{ts}",
+                # Route by (app, workspace) = api_app_id:team_id. The pool means several
+                # apps can live in one workspace, so the app id disambiguates which
+                # developer's connection this event belongs to.
+                provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+                provider_message_id=f"{channel}:{ts}",
+                provider_thread_id=channel,
+                sender_address=event.get("user"),
+                text=event.get("text"),
+                chat_type=event.get("channel_type") or "channel",
+            )
+        ]
+
+    elif event_type in ("reaction_added", "reaction_removed"):
+        item = event.get("item", {})
+        if item.get("type") != "message":
+            return []
+        channel = item["channel"]
+        ts = item["ts"]
+        action = "added" if event_type == "reaction_added" else "removed"
+        return [
+            InboundReaction(
+                external_event_id=data.get("event_id") or f"{channel}:{ts}:{event.get('reaction')}:{action}",
+                provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+                provider_message_id=f"{channel}:{ts}",
+                provider_thread_id=channel,
+                emoji=event.get("reaction", ""),
+                action=action,
+                sender_address=event.get("user"),
+            )
+        ]
+
+    return []
 
 
 class SlackProvider:
@@ -62,7 +89,13 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {
+            Capability.RECEIVE,
+            Capability.REPLY,
+            Capability.SEND,
+            Capability.REACTIONS,
+            Capability.COMMANDS,
+        }
     )
 
     def __init__(
@@ -132,7 +165,12 @@ class SlackProvider:
         try:
             data = json.loads(payload)
         except ValueError:
-            return None
+            from urllib.parse import parse_qs
+            try:
+                parsed = parse_qs(payload.decode())
+                data = {k: v[0] for k, v in parsed.items()}
+            except Exception:
+                return None
         team = data.get("team_id", "")
         app_id = data.get("api_app_id", "")
         if not (team or app_id):
@@ -271,19 +309,52 @@ class SlackProvider:
     ) -> SendResult:
         creds = credentials or {}
         channel, ts = split_composite_id(provider_message_id)
-        data = self._post(creds["bot_token"], channel, message.text or "", ts,
+        # Avoid thread_ts formatting error if this is a command message reply
+        thread_ts = ts if (ts and not ts.startswith("cmd:")) else None
+        data = self._post(creds["bot_token"], channel, message.text or "", thread_ts,
                           username=creds.get("display_name"), icon_url=creds.get("icon_url"))
         return SendResult(
             provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
         )
 
+    def react(
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        emoji: str,
+        credentials=None,
+    ) -> None:
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        # Slack emoji names shouldn't have colons
+        emoji_name = emoji.strip(":")
+        r = self._client.post(
+            "/reactions.add",
+            json={"channel": channel, "timestamp": ts, "name": emoji_name},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok") and data.get("error") != "already_reacted":
+            raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")
+
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
+        # Try JSON parsing first
+        is_json = True
         try:
             data = json.loads(payload)
-        except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON payload") from exc
+        except ValueError:
+            is_json = False
+            # Try urlencoded form parsing
+            from urllib.parse import parse_qs
+            try:
+                parsed = parse_qs(payload.decode())
+                data = {k: v[0] for k, v in parsed.items()}
+            except Exception as exc:
+                raise WebhookVerificationError("invalid payload format") from exc
+
         # Verify with the signing secret of the app that SENT this event (identified
         # by api_app_id in the pool), else the connection's stored secret.
         api_app_id = data.get("api_app_id", "")
@@ -300,7 +371,28 @@ class SlackProvider:
             ).hexdigest()
             if not hmac.compare_digest(expected, sig):
                 raise WebhookVerificationError("Slack signature mismatch")
-        if data.get("type") == "url_verification":
-            # handled in the route (returns the challenge); no messages here
-            return []
-        return parse_event(data)
+
+        if is_json:
+            if data.get("type") == "url_verification":
+                return []
+            return parse_event(data)
+        else:
+            # Handle Slack slash command (urlencoded payload)
+            command_raw = data.get("command", "")
+            command_name = command_raw[1:] if command_raw.startswith("/") else command_raw
+            if not command_name:
+                return []
+            channel_id = data.get("channel_id", "")
+            trigger_id = data.get("trigger_id", "")
+            return [
+                InboundCommand(
+                    external_event_id=trigger_id or f"{channel_id}:{command_name}:{time.time()}",
+                    provider_inbox_id=f"{api_app_id}:{data.get('team_id', '')}",
+                    provider_message_id=f"{channel_id}:cmd:{trigger_id}",
+                    provider_thread_id=channel_id,
+                    command=command_name,
+                    text=data.get("text") or None,
+                    sender_address=data.get("user_id"),
+                    sender_name=data.get("user_name"),
+                )
+            ]

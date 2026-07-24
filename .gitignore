@@ -7,6 +7,7 @@ __pycache__/
 .coverage
 htmlcov/
 *.db
+node_modules/
 dist/
 build/
 *.egg-info/

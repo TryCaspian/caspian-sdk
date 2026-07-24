@@ -45,6 +45,8 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    REACTIONS = "reactions"  # add, remove, and receive reactions
+    COMMANDS = "commands"  # receive bot / slash commands
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -55,6 +57,17 @@ ALL_CAPABILITIES = frozenset(
 # Always granted; a connection never has to ask for the basics and they are
 # never the risky operations a manifest exists to gate.
 BASELINE_CAPABILITIES = frozenset({Capability.RECEIVE, Capability.REPLY})
+
+
+class InboundEvent:
+    """Base class for all inbound gateway events."""
+
+    @property
+    def event_type(self) -> str:
+        raise NotImplementedError
+
+    def to_payload(self) -> dict:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -90,7 +103,7 @@ class SendResult:
 
 
 @dataclass(frozen=True)
-class InboundMessage:
+class InboundMessage(InboundEvent):
     external_event_id: str
     provider_inbox_id: str
     provider_message_id: str
@@ -104,6 +117,48 @@ class InboundMessage:
     chat_type: str | None = None  # "private" | "group" | "channel" | ...
     edited: bool = False
     auto_generated: bool = False  # auto-responder/bounce/no-reply; never auto-reply to these
+
+    @property
+    def event_type(self) -> str:
+        return "message.received"
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundReaction(InboundEvent):
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    emoji: str
+    action: str  # "added" or "removed"
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    @property
+    def event_type(self) -> str:
+        return "reaction.received"
+
+    def to_payload(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InboundCommand(InboundEvent):
+    external_event_id: str
+    provider_inbox_id: str
+    provider_message_id: str
+    provider_thread_id: str
+    command: str
+    text: str | None = None
+    sender_address: str | None = None
+    sender_name: str | None = None
+
+    @property
+    def event_type(self) -> str:
+        return "command.received"
 
     def to_payload(self) -> dict:
         return asdict(self)
@@ -121,6 +176,7 @@ class ChannelProvider(Protocol):
         backfill(provider_inbox_id, thread_id, limit)   -> list[InboundMessage]
         send_test_email(provider_inbox_id, to, subject, text) -> InboundMessage | None
         release(provider_resource_id, provider_pod_id)  -> None  # deprovision a number
+        react(provider_inbox_id, provider_message_id, emoji, credentials) -> None
     """
 
     name: str
@@ -152,4 +208,5 @@ class ChannelProvider(Protocol):
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]: ...
+    ) -> list[InboundEvent]: ...
+
