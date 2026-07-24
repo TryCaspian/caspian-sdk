@@ -15,12 +15,12 @@ Usage:
     client.listen()
 """
 
+import collections
 import logging
 import os
 import sys
 import threading
 import time
-import collections
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field

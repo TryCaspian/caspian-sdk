@@ -6,7 +6,6 @@ import httpx
 import pytest
 from caspian_sdk import CommClient, CommError
 
-
 API_KEY = "comm_test_key"
 
 
@@ -561,7 +560,6 @@ def test_cross_conversation_queue_runs_concurrently():
         return httpx.Response(200, json=[])
 
     client = _client(handler)
-    done = threading.Event()
     seen = []
 
     def handle(m):
@@ -596,7 +594,6 @@ def test_shutdown_drains_pending_debounce():
     """When close() is called while a debounce timer is pending, the scheduler
     must flush (dispatch) the pending debounced events before returning, rather
     than silently dropping them."""
-    import time
 
     def handler(request):
         return httpx.Response(200, json=[])
