@@ -22,7 +22,7 @@ from .base import (
     lower_headers,
 )
 
-CONNECTOR_BASE = "https://smba.trafficmanager.net/amer"
+CONNECTOR_BASE = "https://smba.trafficmanager.net/teams"
 TOKEN_URL = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
 OPENID_CONFIG_URL = "https://login.botframework.com/v1/.well-known/openidconfiguration"
 ISSUER = "https://api.botframework.com"
@@ -123,7 +123,7 @@ class BotFrameworkJwtVerifier:
         now = int(time.time())
         if int(claims.get("nbf", 0)) > now or int(claims.get("exp", 0)) <= now:
             raise WebhookVerificationError("Bot Framework JWT expired or not yet valid")
-        key = self._key(header.get("kid", ""))
+        key = self._key(header.get("kid", ""), channel_id)
         digest = Hash(SHA256())
         digest.update(signing_input)
         hashed = digest.finalize()
@@ -144,26 +144,44 @@ class BotFrameworkJwtVerifier:
             raise WebhookVerificationError("invalid Bot Framework JWT") from exc
         return header, claims, signing_input, signature
 
-    def _key(self, kid: str):
-        for key in self._load_jwks().get("keys", []):
-            if key.get("kid") != kid:
-                continue
-            if key.get("kty") != "RSA":
-                raise WebhookVerificationError("Bot Framework JWT key type mismatch")
-            numbers = rsa.RSAPublicNumbers(
-                e=int.from_bytes(_b64url_decode(key["e"]), "big"),
-                n=int.from_bytes(_b64url_decode(key["n"]), "big"),
-            )
-            return numbers.public_key()
+    def _key(self, kid: str, channel_id: str | None = None):
+        key, endorsement_mismatch = self._find_key(kid, channel_id, self._jwks_doc())
+        if key is not None:
+            return key
+        key, forced_mismatch = self._find_key(kid, channel_id, self._jwks_doc(force=True))
+        if key is not None:
+            return key
+        if endorsement_mismatch or forced_mismatch:
+            raise WebhookVerificationError("Bot Framework JWT channel endorsement mismatch")
         raise WebhookVerificationError("Bot Framework JWT key not found")
 
-    def _load_jwks(self) -> dict:
+    def _find_key(self, kid: str, channel_id: str | None, jwks_doc: dict):
+        endorsement_mismatch = False
+        for jwk in jwks_doc.get("keys", []):
+            if jwk.get("kid") == kid and jwk.get("kty") == "RSA":
+                endorsements = jwk.get("endorsements") or []
+                if channel_id and endorsements and channel_id not in endorsements:
+                    endorsement_mismatch = True
+                    continue
+                public_numbers = rsa.RSAPublicNumbers(
+                    e=int.from_bytes(_b64url_decode(jwk["e"]), "big"),
+                    n=int.from_bytes(_b64url_decode(jwk["n"]), "big"),
+                )
+                return public_numbers.public_key(), False
+        return None, endorsement_mismatch
+
+    def _jwks_doc(self, force: bool = False) -> dict:
         now = time.time()
-        if self._jwks is not None and now - self._jwks_loaded_at < self._jwks_refresh_interval:
+        if (
+            not force
+            and self._jwks is not None
+            and (not self._jwks_url or now - self._jwks_loaded_at < self._jwks_refresh_interval)
+        ):
             return self._jwks
-        config = self._client.get(self._openid_config_url)
-        config.raise_for_status()
-        self._jwks_url = config.json()["jwks_uri"]
+        if not self._jwks_url or force:
+            config = self._client.get(self._openid_config_url)
+            config.raise_for_status()
+            self._jwks_url = config.json()["jwks_uri"]
         jwks = self._client.get(self._jwks_url)
         jwks.raise_for_status()
         self._jwks = jwks.json()
@@ -190,8 +208,8 @@ class TeamsProvider:
         self._token_url = token_url
         self._client = httpx.Client(timeout=30.0)
         self._verifier = verifier or BotFrameworkJwtVerifier(openid_config_url)
-        self._token_cache: dict[tuple[str, str], tuple[str, float]] = {}
         self._conversation_service_urls: dict[str, str] = {}
+        self._token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         app_id = request.credentials["app_id"]
@@ -230,23 +248,31 @@ class TeamsProvider:
         app_id = (credentials or {}).get("app_id")
         if not app_id:
             raise WebhookVerificationError("teams webhooks require app_id credentials")
-        self._verify_authorization(headers, app_id)
         try:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
+        header_map = lower_headers(headers)
+        channel_id = data.get("channelId") or header_map.get("channelid") or header_map.get("channel-id")
+        self._verify_authorization(headers, app_id, channel_id)
+        messages = parse_activity(data, app_id)
         service_url = data.get("serviceUrl")
-        conversation_id = (data.get("conversation") or {}).get("id")
-        if service_url and conversation_id:
-            self._conversation_service_urls[conversation_id] = service_url.rstrip("/")
-        return parse_activity(data, app_id)
+        if service_url:
+            for inbound in messages:
+                self._conversation_service_urls[inbound.provider_thread_id] = service_url.rstrip("/")
+        return messages
 
-    def _verify_authorization(self, headers: Mapping[str, str], app_id: str) -> None:
+    def _verify_authorization(
+        self, headers: Mapping[str, str], app_id: str, channel_id: str | None = None
+    ) -> None:
         auth = lower_headers(headers).get("authorization", "")
         scheme, _, token = auth.partition(" ")
         if scheme.lower() != "bearer" or not token:
             raise WebhookVerificationError("missing Bot Framework bearer token")
-        self._verifier.verify(token, app_id, "msteams")
+        try:
+            self._verifier.verify(token, app_id, channel_id)
+        except TypeError:
+            self._verifier.verify(token, app_id)
 
     def _post_activity(
         self,
