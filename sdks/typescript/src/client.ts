@@ -16,6 +16,8 @@ import type {
   LoginOptions,
   Media,
   SpendLimitsOptions,
+  StreamOptions,
+  StreamStrategy,
   WhatsappOnboarding,
 } from "./types.js";
 
@@ -92,6 +94,81 @@ export class Message {
    */
   typing(): Promise<Record<string, unknown>> {
     return this.client.typing(this.id);
+  }
+
+  /**
+   * Start a streaming response. Returns a session that accepts token chunks and
+   * progressively updates the reply on channels that support message editing
+   * (Slack/Discord/Telegram). On channels that don't support editing, the final
+   * concatenated text is sent as a single reply when finalized.
+   */
+  async stream(options: StreamOptions = {}): Promise<StreamSession> {
+    const strategy = await this.client.getStreamStrategy(this.connectionId);
+    return new StreamSession(this.id, this.client, strategy, options.editIntervalMs);
+  }
+}
+
+export class StreamSession {
+  private chunks: string[] = [];
+  private postedId?: string;
+  private lastEdit = 0;
+  private finalized = false;
+
+  constructor(
+    private readonly messageId: string,
+    private readonly client: CommClient,
+    private readonly strategy: StreamStrategy = "final_only",
+    private readonly editIntervalMs = 500,
+  ) {}
+
+  /** The full accumulated text so far. */
+  get text(): string {
+    return this.chunks.join("");
+  }
+
+  /** Append a token/chunk to the stream. May trigger a throttled network edit. */
+  async append(chunk: string): Promise<void> {
+    if (this.finalized) {
+      throw new CommError(400, "stream already finalized");
+    }
+    this.chunks.push(chunk);
+
+    if (this.strategy !== "post_edit") return;
+
+    const now = Date.now();
+    if (!this.postedId) {
+      // First chunk: post initial reply
+      const res = await this.client.reply(this.messageId, this.text);
+      this.postedId = (res.id as string) || (res.message_id as string);
+      this.lastEdit = now;
+    } else if (now - this.lastEdit >= this.editIntervalMs) {
+      // Throttled edit
+      try {
+        await this.client.editMessage(this.postedId, this.text);
+      } catch (err) {
+        logger.warn("stream edit failed; will retry on next chunk", err);
+      }
+      this.lastEdit = now;
+    }
+  }
+
+  /** Send the final version with all accumulated text. */
+  async finalize(): Promise<Record<string, unknown> | null> {
+    if (this.finalized) return null;
+    this.finalized = true;
+    const fullText = this.text;
+    if (!fullText) return null;
+
+    if (this.strategy === "post_edit" && this.postedId) {
+      try {
+        return await this.client.editMessage(this.postedId, fullText);
+      } catch (err) {
+        logger.warn("final stream edit failed; sending as new reply", err);
+        return await this.client.reply(this.messageId, fullText);
+      }
+    }
+    // final_only or post_edit where initial post failed
+    return await this.client.reply(this.messageId, fullText);
   }
 }
 
@@ -706,6 +783,35 @@ export class CommClient {
    */
   typing(messageId: string): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
+  }
+
+  /**
+   * Edit an outbound message previously sent by this agent.
+   * Only works on channels with Capability.EDIT_OUTBOUND (Slack, Discord, Telegram).
+   */
+  editMessage(
+    messageId: string,
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+  ): Promise<Record<string, unknown>> {
+    return this.request("PATCH", `/v1/messages/${messageId}`, {
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null },
+    });
+  }
+
+  /** Determine streaming strategy for a connection based on capabilities. */
+  async getStreamStrategy(connectionId: string): Promise<StreamStrategy> {
+    try {
+      const conn = await this.getConnection(connectionId);
+      const caps = (conn.capabilities as string[]) || [];
+      if (caps.includes("edit_outbound")) {
+        return "post_edit";
+      }
+    } catch (err) {
+      // Default to final_only if we can't look up the connection
+    }
+    return "final_only";
   }
 
   /** Receive events by push instead of (or alongside) polling. */

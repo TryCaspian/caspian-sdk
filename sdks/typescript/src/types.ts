@@ -61,6 +61,13 @@ export interface ClientOptions {
   fetch?: typeof fetch;
 }
 
+export type StreamStrategy = "post_edit" | "final_only";
+
+export interface StreamOptions {
+  /** How often to update the message on supported platforms, in ms (default 500). */
+  editIntervalMs?: number;
+}
+
 /** Shared options for every connect_* call. */
 export interface ConnectOptions {
   customerId?: string;

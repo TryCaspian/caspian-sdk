@@ -137,6 +137,7 @@ class DiscordProvider:
             Capability.GROUP_VISIBILITY,
             Capability.SEE_BOTS,
             Capability.ATTACHMENTS,
+            Capability.EDIT_OUTBOUND,
         }
     )
 

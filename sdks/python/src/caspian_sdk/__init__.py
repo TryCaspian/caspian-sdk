@@ -8,6 +8,7 @@ from .client import (
     Interaction,
     Message,
     Reaction,
+    StreamSession,
 )
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "Interaction",
     "Message",
     "Reaction",
+    "StreamSession",
     "blocks",
 ]

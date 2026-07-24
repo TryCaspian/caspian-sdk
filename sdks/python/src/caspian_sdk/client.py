@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 
@@ -157,6 +157,29 @@ class Message:
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
 
+    def stream(self, edit_interval: float = 0.5) -> "StreamSession":
+        """Start a streaming response. Returns a context manager that accepts
+        token chunks and progressively updates the reply on channels that
+        support message editing (Slack/Discord/Telegram). On channels that
+        don't support editing (email/SMS/X), the final concatenated text is
+        sent as a single reply when the context manager exits.
+
+        Usage::
+
+            @client.on_message
+            def handle(msg):
+                with msg.stream() as s:
+                    for chunk in llm(msg.text):
+                        s.append(chunk)
+        """
+        strategy = self._client._stream_strategy(self.connection_id)
+        return StreamSession(
+            message_id=self.id,
+            client=self._client,
+            strategy=strategy,
+            edit_interval=edit_interval,
+        )
+
 
 @dataclass
 class Interaction:
@@ -200,6 +223,103 @@ class Reaction:
     source_message: dict | None
     sender: dict | None
     _client: "CommClient" = field(repr=False)
+
+
+StreamStrategy = Literal["post_edit", "final_only"]
+
+
+class StreamSession:
+    """Context manager for streaming a response token-by-token.
+
+    On channels that support editing own messages (``Capability.EDIT_OUTBOUND`` —
+    Slack, Discord, Telegram), the session posts an initial reply and
+    progressively edits it as chunks arrive (throttled to ``edit_interval``
+    seconds to respect platform rate limits).
+
+    On channels that cannot edit sent messages (email, SMS, X), the session
+    silently accumulates all chunks and sends them as a single reply when the
+    context manager exits.
+
+    The finalizer always runs, even on exception, so partial content is never
+    lost.
+    """
+
+    def __init__(
+        self,
+        message_id: str,
+        client: "CommClient",
+        strategy: StreamStrategy = "final_only",
+        edit_interval: float = 0.5,
+    ) -> None:
+        self._message_id = message_id
+        self._client = client
+        self._strategy: StreamStrategy = strategy
+        self._edit_interval = edit_interval
+        self._chunks: list[str] = []
+        self._posted_id: str | None = None
+        self._last_edit: float = 0.0
+        self._finalized = False
+
+    @property
+    def text(self) -> str:
+        """The full accumulated text so far."""
+        return "".join(self._chunks)
+
+    def append(self, chunk: str) -> None:
+        """Append a token/chunk to the stream.
+
+        On ``post_edit`` channels this may trigger an intermediate edit (rate-
+        limited by ``edit_interval``). On ``final_only`` channels this is a
+        no-op beyond accumulation.
+        """
+        if self._finalized:
+            raise CommError(400, "stream already finalized")
+        self._chunks.append(chunk)
+
+        if self._strategy != "post_edit":
+            return
+
+        now = time.monotonic()
+        if self._posted_id is None:
+            # First chunk: post the initial reply
+            result = self._client.reply(self._message_id, text=self.text)
+            self._posted_id = result.get("id") or result.get("message_id")
+            self._last_edit = now
+        elif now - self._last_edit >= self._edit_interval:
+            # Throttled edit
+            if self._posted_id:
+                try:
+                    self._client.edit_message(self._posted_id, text=self.text)
+                except Exception:
+                    logger.warning("stream edit failed; will retry on next chunk")
+                self._last_edit = now
+
+    def finalize(self) -> dict | None:
+        """Send the final version. Called automatically by ``__exit__``."""
+        if self._finalized:
+            return None
+        self._finalized = True
+        full_text = self.text
+        if not full_text:
+            return None
+
+        if self._strategy == "post_edit" and self._posted_id:
+            # Final edit with the complete text
+            try:
+                return self._client.edit_message(self._posted_id, text=full_text)
+            except Exception:
+                logger.warning("final stream edit failed; sending as new reply")
+                return self._client.reply(self._message_id, text=full_text)
+        else:
+            # final_only or post_edit where initial post somehow failed
+            return self._client.reply(self._message_id, text=full_text)
+
+    def __enter__(self) -> "StreamSession":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.finalize()
+        return None  # don't suppress exceptions
 
 
 class _MessageScheduler:
@@ -729,6 +849,38 @@ class CommClient:
         """Show a 'thinking…' indicator on the channel a message arrived on
         (Discord/Telegram; no-op where unsupported). Best-effort."""
         return self._request("POST", f"/v1/messages/{message_id}/typing")
+
+    def edit_message(
+        self,
+        message_id: str,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+    ) -> dict:
+        """Edit an outbound message previously sent by this agent.
+
+        Only works on channels with ``Capability.EDIT_OUTBOUND`` (Slack, Discord,
+        Telegram). Used internally by ``StreamSession`` for post+edit streaming;
+        also available for manual edits/corrections.
+        """
+        return self._request(
+            "PATCH",
+            f"/v1/messages/{message_id}",
+            json={"text": text, "html": html, "blocks": blocks},
+        )
+
+    def _stream_strategy(self, connection_id: str) -> "StreamStrategy":
+        """Determine the streaming strategy for a connection by checking its
+        channel capabilities. Returns ``post_edit`` if the channel supports
+        editing own messages, ``final_only`` otherwise."""
+        try:
+            conn = self.get_connection(connection_id)
+            capabilities = conn.get("capabilities") or []
+            if "edit_outbound" in capabilities:
+                return "post_edit"
+        except Exception:
+            logger.debug("could not resolve streaming strategy; defaulting to final_only")
+        return "final_only"
 
     def set_webhook(self, url: str, secret: str | None = None) -> dict:
         """Receive events by push instead of (or alongside) polling."""

@@ -66,7 +66,7 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {Capability.RECEIVE, Capability.REPLY, Capability.SEND, Capability.EDIT_OUTBOUND}
     )
 
     def __init__(
