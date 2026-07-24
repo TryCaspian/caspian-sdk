@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    # LinkedIn organization posts/comments (Community Management REST APIs).
+    linkedin_access_token: str = ""
+    linkedin_organization_urn: str = ""
+    linkedin_tracked_posts: str = ""  # comma-separated post/share/ugcPost URNs
+    linkedin_webhook_secret: str = ""
+    linkedin_base_url: str = "https://api.linkedin.com"
+    linkedin_version: str = "202605"
+
     # Instagram DM / Facebook Messenger via the developer's own Meta app + Page
     # (Graph API). Page id + access token identify the Page the agent answers as.
     instagram_page_id: str = ""
