@@ -36,6 +36,21 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function messageEvent(seq: number, conversationId: string, text: string) {
+  return {
+    seq,
+    type: "message.received",
+    data: {
+      message: {
+        id: `m${seq}`,
+        conversation_id: conversationId,
+        connection_id: "cn",
+        text,
+      },
+    },
+  };
+}
+
 describe("CommClient", () => {
   it("requires an API key", () => {
     delete process.env.CASPIAN_API_KEY;
@@ -239,6 +254,190 @@ describe("CommClient", () => {
     await client.dispatchPending(0); // now dispatches with the ack configured
     expect(replies[0]).toBe("On it, one moment…"); // ack fired first
     expect(seen).toEqual(["hi"]); // handler still ran
+  });
+
+  it("listen queues each conversation without blocking the others", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_2", "other"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") await firstBlocked;
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({ fromSeq: 0, pollInterval: 0.001, signal: ac.signal });
+
+    expect(seen).toEqual(["other", "first", "second"]);
+  });
+
+  it("listen debounce keeps the latest message without overlapping handlers", async () => {
+    const ac = new AbortController();
+    let latestStarted = false;
+    let followupSent = false;
+    let stopScheduled = false;
+    let releaseLatest!: () => void;
+    const latestBlocked = new Promise<void>((resolve) => {
+      releaseLatest = resolve;
+    });
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_1", "latest"),
+          ]);
+        }
+        if (after === 3 && latestStarted && !followupSent) {
+          followupSent = true;
+          return json([messageEvent(4, "conv_1", "after")]);
+        }
+        if (after >= 4 && !stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseLatest, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "latest") {
+        latestStarted = true;
+        await latestBlocked;
+      }
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "debounce",
+      debounceMs: 10,
+    });
+
+    expect(seen).toEqual(["latest", "after"]);
+  });
+
+  it("listen drop ignores messages while a conversation is busy", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+            messageEvent(3, "conv_1", "third"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") await firstBlocked;
+      seen.push(message.text ?? "");
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "drop",
+    });
+
+    expect(seen).toEqual(["first"]);
+  });
+
+  it("listen parallel allows handlers in one conversation to overlap", async () => {
+    const ac = new AbortController();
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted = false;
+    let secondFinished = false;
+    let stopScheduled = false;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0) {
+          return json([
+            messageEvent(1, "conv_1", "first"),
+            messageEvent(2, "conv_1", "second"),
+          ]);
+        }
+        if (!stopScheduled) {
+          stopScheduled = true;
+          setTimeout(releaseFirst, 20);
+          setTimeout(() => ac.abort(), 60);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (message) => {
+      if (message.text === "first") {
+        firstStarted = true;
+        await firstBlocked;
+      }
+      seen.push(message.text ?? "");
+      if (message.text === "second") secondFinished = true;
+    });
+
+    await client.listen({
+      fromSeq: 0,
+      pollInterval: 0.001,
+      signal: ac.signal,
+      concurrency: "parallel",
+    });
+
+    expect(firstStarted).toBe(true);
+    expect(secondFinished).toBe(true);
+    expect(seen).toEqual(["second", "first"]);
+  });
+
+  it("listen validates overlap options", async () => {
+    const { client } = makeClient({});
+    await expect(
+      client.listen({ fromSeq: 0, concurrency: "invalid" as any }),
+    ).rejects.toThrow("concurrency");
+    await expect(client.listen({ fromSeq: 0, debounceMs: -1 })).rejects.toThrow("debounceMs");
   });
 
   it("raises AccountRequiredError on a 401 account_required body", async () => {

@@ -19,13 +19,19 @@ import logging
 import os
 import sys
 import time
+from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock, Timer
+from typing import Literal
 
 import httpx
 
 logger = logging.getLogger("caspian_sdk")
+
+ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
 
 
 def _dotenv() -> dict[str, str]:
@@ -194,6 +200,167 @@ class Reaction:
     source_message: dict | None
     sender: dict | None
     _client: "CommClient" = field(repr=False)
+
+
+class _MessageScheduler:
+    """Process message events according to a per-conversation overlap policy."""
+
+    def __init__(
+        self,
+        dispatch: Callable[[dict], None],
+        strategy: ConcurrencyStrategy,
+        debounce_ms: int,
+    ) -> None:
+        if strategy not in {"queue", "debounce", "drop", "parallel"}:
+            raise ValueError(
+                "concurrency must be one of: queue, debounce, drop, parallel"
+            )
+        if debounce_ms < 0:
+            raise ValueError("debounce_ms must be non-negative")
+        self._dispatch = dispatch
+        self._strategy = strategy
+        self._debounce_seconds = debounce_ms / 1000
+        self._executor = ThreadPoolExecutor(thread_name_prefix="caspian-listener")
+        self._lock = Lock()
+        self._queues: dict[str, deque[dict]] = {}
+        self._running: set[str] = set()
+        self._timers: dict[str, Timer] = {}
+        self._pending: dict[str, dict] = {}
+        self._closed = False
+
+    @staticmethod
+    def _conversation_key(event: dict) -> str:
+        data = event.get("data") or {}
+        message = data.get("message") or {}
+        return str(
+            message.get("conversation_id")
+            or data.get("conversation_id")
+            or message.get("id")
+            or event.get("seq")
+            or "unknown"
+        )
+
+    def submit(self, event: dict) -> None:
+        if event.get("type") != "message.received":
+            self._dispatch(event)
+            return
+        key = self._conversation_key(event)
+        if self._strategy == "queue":
+            self._submit_queue(key, event)
+        elif self._strategy == "debounce":
+            self._submit_debounce(key, event)
+        elif self._strategy == "drop":
+            self._submit_drop(key, event)
+        else:
+            self._submit_parallel(event)
+
+    def _submit_parallel(self, event: dict) -> None:
+        with self._lock:
+            if not self._closed:
+                self._executor.submit(self._safe_dispatch, event)
+
+    def _submit_queue(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._queues.setdefault(key, deque()).append(event)
+            if key not in self._running:
+                self._running.add(key)
+                self._executor.submit(self._drain_queue, key)
+
+    def _drain_queue(self, key: str) -> None:
+        while True:
+            with self._lock:
+                queue = self._queues.get(key)
+                if not queue:
+                    self._queues.pop(key, None)
+                    self._running.discard(key)
+                    return
+                event = queue.popleft()
+            self._safe_dispatch(event)
+
+    def _submit_debounce(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if timer := self._timers.get(key):
+                timer.cancel()
+            self._pending[key] = event
+            self._timers.pop(key, None)
+            if key not in self._running:
+                self._start_debounce_timer(key)
+
+    def _start_debounce_timer(self, key: str) -> None:
+        event = self._pending[key]
+        timer = Timer(self._debounce_seconds, self._fire_debounce, args=(key, event))
+        timer.daemon = True
+        self._timers[key] = timer
+        timer.start()
+
+    def _fire_debounce(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed or self._pending.get(key) is not event:
+                return
+            self._pending.pop(key)
+            self._timers.pop(key, None)
+            self._running.add(key)
+            self._executor.submit(self._run_debounce, key, event)
+
+    def _run_debounce(self, key: str, event: dict) -> None:
+        while True:
+            self._safe_dispatch(event)
+            with self._lock:
+                self._running.discard(key)
+                next_event = None
+                if self._closed:
+                    next_event = self._pending.pop(key, None)
+                    if timer := self._timers.pop(key, None):
+                        timer.cancel()
+                    if next_event is not None:
+                        self._running.add(key)
+                elif key in self._pending:
+                    self._start_debounce_timer(key)
+                if next_event is None:
+                    return
+                event = next_event
+
+    def _submit_drop(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed or key in self._running:
+                return
+            self._running.add(key)
+            self._executor.submit(self._run_drop, key, event)
+
+    def _run_drop(self, key: str, event: dict) -> None:
+        try:
+            self._safe_dispatch(event)
+        finally:
+            with self._lock:
+                self._running.discard(key)
+
+    def _safe_dispatch(self, event: dict) -> None:
+        try:
+            self._dispatch(event)
+        except Exception:
+            logger.exception("event dispatch failed; continuing")
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            # ponytail: overlap state stays in this process. A shared state adapter
+            # is the upgrade path if listen() later coordinates multiple workers.
+            for timer in self._timers.values():
+                timer.cancel()
+            self._timers.clear()
+            for key, event in list(self._pending.items()):
+                if key in self._running:
+                    continue
+                self._pending.pop(key)
+                self._running.add(key)
+                self._executor.submit(self._run_debounce, key, event)
+            self._closed = True
+        self._executor.shutdown(wait=True)
 
 
 class CommClient:
@@ -843,6 +1010,8 @@ class CommClient:
         poll_interval: float = 1.0,
         max_backoff: float = 30.0,
         ack: str | None = None,
+        concurrency: ConcurrencyStrategy = "queue",
+        debounce_ms: int = 500,
     ) -> None:
         """Poll the event stream forever, dispatching inbound messages to handlers.
 
@@ -855,30 +1024,40 @@ class CommClient:
         moment…") the moment a message arrives, before your handler runs. Useful
         on channels with no typing indicator (X, SMS, email) so the human knows
         the agent is working while it thinks; the real answer follows.
+
+        ``concurrency`` controls messages that overlap in one conversation:
+        ``queue`` preserves order, ``debounce`` keeps the latest message,
+        ``drop`` ignores new messages while a handler runs, and ``parallel`` runs
+        every message immediately. Different conversations can run at the same
+        time. ``queue`` is the default.
         """
         if ack is not None:
             self._ack = ack
-        seq = self._latest_seq() if from_seq is None else from_seq
-        backoff = poll_interval
-        while True:
-            try:
-                batch = self.events(after_seq=seq)
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                logger.warning(
-                    "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
-                )
-                time.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
-                continue
+        scheduler = _MessageScheduler(self._dispatch_event, concurrency, debounce_ms)
+        try:
+            seq = self._latest_seq() if from_seq is None else from_seq
             backoff = poll_interval
-            if not batch:
-                time.sleep(poll_interval)
-                continue
-            for event in batch:
-                self._dispatch_event(event)
-                seq = event["seq"]  # advance only after the dispatch attempt
+            while True:
+                try:
+                    batch = self.events(after_seq=seq)
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
+                    continue
+                backoff = poll_interval
+                if not batch:
+                    time.sleep(poll_interval)
+                    continue
+                for event in batch:
+                    scheduler.submit(event)
+                    seq = event["seq"]  # advance after the scheduler accepts the event
+        finally:
+            scheduler.close()
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

@@ -71,6 +71,33 @@ Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 - **`message.typing()`** shows a "typing…" indicator while your agent thinks (where the platform supports it).
 - **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop.
 
+## Overlapping messages
+
+`listen()` uses a separate queue for each conversation, so a slow reply in one
+conversation does not block everyone else. The default is `queue`:
+
+```python
+client.listen(concurrency="queue")
+```
+
+Choose a different policy when the handler does not need every message:
+
+| Policy | Behavior | Use when |
+|---|---|---|
+| `queue` | Run every message in order for that conversation | The agent must handle every message |
+| `debounce` | Wait for a pause, then run only the latest message | Several quick messages should become one turn |
+| `drop` | Ignore new messages while that conversation is busy | Skipping interruptions is acceptable |
+| `parallel` | Run every message immediately | Handlers are independent; replies may finish out of order |
+
+Set the debounce window in milliseconds:
+
+```python
+client.listen(concurrency="debounce", debounce_ms=500)
+```
+
+The queues live in the client process. Multiple agent processes need their own
+shared coordination layer.
+
 ## Docs
 
 Point your coding agent at the setup guide and it does the whole integration for you. Full docs and your API key: **[trycaspianai.com](https://trycaspianai.com)**.

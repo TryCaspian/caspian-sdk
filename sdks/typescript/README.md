@@ -99,6 +99,33 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
+## Overlapping messages
+
+`listen()` uses a separate queue for each conversation, so a slow reply in one
+conversation does not block everyone else. The default is `queue`:
+
+```ts
+await client.listen({ concurrency: "queue" });
+```
+
+Choose a different policy when the handler does not need every message:
+
+| Policy | Behavior | Use when |
+|---|---|---|
+| `queue` | Run every message in order for that conversation | The agent must handle every message |
+| `debounce` | Wait for a pause, then run only the latest message | Several quick messages should become one turn |
+| `drop` | Ignore new messages while that conversation is busy | Skipping interruptions is acceptable |
+| `parallel` | Run every message immediately | Handlers are independent; replies may finish out of order |
+
+Set the debounce window in milliseconds:
+
+```ts
+await client.listen({ concurrency: "debounce", debounceMs: 500 });
+```
+
+The queues live in the client process. Multiple agent processes need their own
+shared coordination layer.
+
 ## Errors
 
 Non-2xx responses throw a `CommError` with `statusCode` and `detail`:

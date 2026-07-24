@@ -9,6 +9,7 @@ export type {
   BlockField,
   ClientOptions,
   Connection,
+  ConcurrencyStrategy,
   ConnectOptions,
   Conversation,
   Customer,
