@@ -14,17 +14,16 @@ def test_provider_metadata():
 
 def test_parse_event_stream_message():
     events = parse_event(
-        {
-            "id": 123,
-            "message_type": "stream",
-            "stream_id": 42,
-            "sender_email": "alice@example.com",
-            "sender_full_name": "Alice",
-            "content": "hello",
-            "type": "message",
-        },
-        "bot@example.com",
-    )
+    {
+        "id": 123,
+        "type": "stream",
+        "stream_id": 42,
+        "sender_email": "alice@example.com",
+        "sender_full_name": "Alice",
+        "content": "hello",
+    },
+    "bot@example.com",
+)
 
     assert len(events) == 1
     assert events[0].provider_inbox_id == "bot@example.com"
@@ -34,17 +33,16 @@ def test_parse_event_stream_message():
 
 def test_parse_event_private_message():
     events = parse_event(
-        {
-            "id": 456,
-            "message_type": "private",
-            "recipient_id": 99,
-            "sender_email": "bob@example.com",
-            "sender_full_name": "Bob",
-            "content": "hi",
-            "type": "message",
-        },
-        "bot@example.com",
-    )
+    {
+        "id": 456,
+        "type": "private",
+        "recipient_id": 99,
+        "sender_email": "bob@example.com",
+        "sender_full_name": "Bob",
+        "content": "hi",
+    },
+    "bot@example.com",
+)
 
     assert len(events) == 1
     assert events[0].provider_thread_id == "99"
@@ -54,16 +52,19 @@ def test_parse_webhook_accepts_valid_secret():
 
     events = provider.parse_webhook(
         payload=json.dumps(
-            {
+        {
+            "token": "secret",
+            "message": {
                 "id": 1,
-                "type": "message",
-                "message_type": "private",
+                "type": "private",
                 "recipient_id": 10,
                 "sender_email": "alice@example.com",
                 "sender_full_name": "Alice",
                 "content": "hello",
-            }
+            },
+        }
         ).encode(),
+
         headers={"x-zulip-webhook-secret": "secret"},
         credentials={
             "email": "bot@example.com",

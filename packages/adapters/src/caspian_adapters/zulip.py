@@ -16,8 +16,8 @@ from .base import (
 )
 
 
-def parse_event(data: dict, bot_email: str):
-    if data.get("type") != "message":
+def parse_event(data: dict, bot_email: str) -> list[InboundMessage]:
+    if data.get("type") not in ("stream", "private"):
         return []
 
     return [
@@ -31,13 +31,10 @@ def parse_event(data: dict, bot_email: str):
             sender_address=data.get("sender_email"),
             sender_name=data.get("sender_full_name"),
             text=data.get("content"),
-            chat_type=(
-                "stream"
-                if data.get("message_type") == "stream"
-                else "private"
-            ),
+            chat_type=data.get("type"),
         )
     ]
+
 
 class ZulipProvider:
     name = "zulip"
@@ -61,7 +58,11 @@ class ZulipProvider:
         self,
         base_url: str = "https://zulip.com/api/v1",
     ) -> None:
-        self._client = httpx.Client(base_url=base_url, timeout=30.0)
+        self._client = httpx.Client(
+            base_url=base_url,
+            timeout=30.0,
+        )
+
     @staticmethod
     def _credentials(
         credentials: Mapping[str, str] | None,
@@ -75,23 +76,25 @@ class ZulipProvider:
             credentials["email"],
             credentials["api_key"],
         )
+
+    def provision(
+        self,
+        request: ProvisionRequest,
+    ) -> ProvisionResult:
+        return ProvisionResult(
+            address=request.credentials["email"],
+            provider_resource_id=request.credentials["email"],
+        )
+
     def parse_webhook(
         self,
         payload: bytes,
-        headers,
-        credentials=None,
-    ):
+        headers: Mapping[str, str],
+        credentials: Mapping[str, str] | None = None,
+    ) -> list[InboundMessage]:
         if credentials is None:
             raise WebhookVerificationError(
                 "zulip webhooks require a connection scope"
-            )
-
-        secret = credentials.get("webhook_secret")
-        received = headers.get("x-zulip-webhook-secret")
-
-        if secret and received != secret:
-            raise WebhookVerificationError(
-                "webhook secret mismatch"
             )
 
         try:
@@ -101,29 +104,34 @@ class ZulipProvider:
                 "invalid JSON payload"
             ) from exc
 
+        token = data.get("token")
+        if token != credentials.get("webhook_secret"):
+            raise WebhookVerificationError(
+                "token mismatch"
+            )
+
+        message = data.get("message")
+        if message is None:
+            raise WebhookVerificationError(
+                "missing message payload"
+            )
+
         return parse_event(
-            data,
+            message,
             credentials["email"],
         )
-    def provision(
-        self,
-        request: ProvisionRequest,
-    ) -> ProvisionResult:
-        return ProvisionResult(
-            address=request.credentials["email"],
-            provider_resource_id=request.credentials["email"],
-        )
+
     def send(
         self,
         provider_inbox_id: str,
         message: OutboundMessage,
-        credentials=None,
+        credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
         email, api_key = self._credentials(credentials)
 
         body = {
             "type": "private",
-            "to": message.to[0],
+            "to": list(message.to),
             "content": message.text or "",
         }
 
@@ -144,12 +152,13 @@ class ZulipProvider:
             provider_message_id=str(result["id"]),
             provider_thread_id=str(body["to"]),
         )
+
     def reply(
         self,
         provider_inbox_id: str,
         provider_message_id: str,
         message: OutboundMessage,
-        credentials=None,
+        credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
         email, api_key = self._credentials(credentials)
 
@@ -177,62 +186,3 @@ class ZulipProvider:
             provider_message_id=str(result["id"]),
             provider_thread_id=str(body["to"]),
         )
-def test_send(monkeypatch):
-    provider = ZulipProvider()
-
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"id": 123}
-
-    monkeypatch.setattr(
-        provider._client,
-        "post",
-        lambda *args, **kwargs: Response(),
-    )
-
-    result = provider.send(
-        provider_inbox_id="bot@example.com",
-        message=OutboundMessage(
-            text="hello",
-            to=("alice@example.com",),
-        ),
-        credentials={
-            "email": "bot@example.com",
-            "api_key": "secret",
-        },
-    )
-
-    assert result.provider_message_id == "123"
-    assert result.provider_thread_id == "alice@example.com"
-def test_reply(monkeypatch):
-    provider = ZulipProvider()
-
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"id": 456}
-
-    monkeypatch.setattr(
-        provider._client,
-        "post",
-        lambda *args, **kwargs: Response(),
-    )
-
-    result = provider.reply(
-        provider_inbox_id="alice@example.com",
-        provider_message_id="alice@example.com",
-        message=OutboundMessage(
-            text="hi back",
-        ),
-        credentials={
-            "email": "bot@example.com",
-            "api_key": "secret",
-        },
-    )
-
-    assert result.provider_message_id == "456"

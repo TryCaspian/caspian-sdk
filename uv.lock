@@ -92,7 +92,7 @@ provides-extras = ["telegram-user", "modem"]
 
 [[package]]
 name = "caspian-cli"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "httpx" },
@@ -103,7 +103,7 @@ requires-dist = [{ name = "httpx", specifier = ">=0.28,<1" }]
 
 [[package]]
 name = "caspian-sdk"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
