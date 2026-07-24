@@ -45,6 +45,38 @@ def test_dm_chat_type_without_guild():
     assert inbound[0].chat_type == "dm"
 
 
+def test_parse_extracts_attachments():
+    event = _event(
+        text="see file",
+        attachments=[
+            {"id": "a1", "filename": "photo.png", "size": 2048,
+             "url": "https://cdn.discord/photo.png", "content_type": "image/png"},
+        ],
+    )
+    [inbound] = parse_gateway_message(event, APP_ID)
+    assert inbound.text == "see file"
+    assert len(inbound.attachments) == 1
+    att = inbound.attachments[0]
+    assert att.url == "https://cdn.discord/photo.png"
+    assert att.mime_type == "image/png"
+    assert att.filename == "photo.png"
+    assert att.size_bytes == 2048
+
+
+def test_parse_keeps_attachment_only_message():
+    # No text, but an attachment is present — must not be dropped.
+    event = _event(
+        text="",
+        attachments=[
+            {"id": "a1", "filename": "doc.pdf", "size": 10,
+             "url": "https://cdn/doc.pdf", "content_type": "application/pdf"},
+        ],
+    )
+    [inbound] = parse_gateway_message(event, APP_ID)
+    assert inbound.text is None
+    assert inbound.attachments[0].filename == "doc.pdf"
+
+
 def test_webhook_id_from_url():
     url = "https://discord.com/api/webhooks/123456/tok-en"
     assert webhook_id_from_url(url) == "123456"
