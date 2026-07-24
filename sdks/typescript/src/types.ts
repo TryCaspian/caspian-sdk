@@ -158,6 +158,8 @@ export interface Media {
   [key: string]: unknown;
 }
 
+import type { ConcurrencyMode } from "./client.js";
+
 export interface ListenOptions {
   /** Start from this event seq instead of "newest at startup". */
   fromSeq?: number;
@@ -173,6 +175,6 @@ export interface ListenOptions {
    * typing indicator (X, SMS, email); the real answer follows from the handler.
    */
   ack?: string;
-  concurrency?: "queue" | "parallel" | "debounce" | "drop";
+  concurrency?: ConcurrencyMode;
   debounceMs?: number;
 }

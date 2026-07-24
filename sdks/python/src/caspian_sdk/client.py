@@ -1157,6 +1157,7 @@ class CommClient:
             # Graceful shutdown: flush pending debounce work and wait for
             # in-flight tasks so KeyboardInterrupt doesn't silently drop work.
             self._scheduler.close()
+            self._scheduler = _MessageScheduler()
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

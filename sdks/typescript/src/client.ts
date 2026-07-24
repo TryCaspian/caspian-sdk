@@ -154,8 +154,8 @@ export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
  * ./.env when not passed explicitly.
  */
 
-const VALID_CONCURRENCY_MODES = ["queue", "parallel", "debounce", "drop"] as const;
-type ConcurrencyMode = typeof VALID_CONCURRENCY_MODES[number];
+export const VALID_CONCURRENCY_MODES = ["queue", "parallel", "debounce", "drop"] as const;
+export type ConcurrencyMode = typeof VALID_CONCURRENCY_MODES[number];
 
 function validateConcurrencyOptions(concurrency: string, debounceMs: number): void {
   if (!VALID_CONCURRENCY_MODES.includes(concurrency as any)) {
@@ -1062,7 +1062,7 @@ export class CommClient {
 
   private async handleConcurrency(
     event: EventRecord,
-    concurrency: "queue" | "parallel" | "debounce" | "drop",
+    concurrency: ConcurrencyMode,
     debounceMs: number
   ): Promise<void> {
     this.scheduler.submit(event, concurrency, debounceMs, (evt) => this.dispatchEvent(evt));
@@ -1080,7 +1080,7 @@ export class CommClient {
    * Process all currently available events once. Returns the last seen sequence.
    * Handler exceptions are caught per message, so this always drains the queue.
    */
-  async dispatchPending(afterSeq = 0, concurrency: "queue" | "parallel" | "debounce" | "drop" = "queue", debounceMs = 500): Promise<number> {
+  async dispatchPending(afterSeq = 0, concurrency: ConcurrencyMode = "queue", debounceMs = 500): Promise<number> {
     validateConcurrencyOptions(concurrency, debounceMs);
     let lastSeq = afterSeq;
     for (;;) {
@@ -1131,6 +1131,7 @@ export class CommClient {
       }
     } finally {
       await this.scheduler.close();
+      this.scheduler = new MessageScheduler();
     }
   }
 

@@ -84,7 +84,7 @@ client.listen(concurrency="queue") # the default
 - `"queue"` (default): Runs handlers sequentially per conversation. Ensures your agent doesn't double-reply or run concurrently for the same user.
 - `"debounce"`: Waits briefly (`debounce_ms=500` by default) for a burst to settle. Your handler runs once with the latest message. Dropped messages are preserved in `message.coalesced_messages` if you need the full context.
 - `"drop"`: If your agent is actively handling a message for a conversation, any new messages that arrive for that conversation are immediately dropped/ignored.
-- `"parallel"`: Spawns a background thread for every message, letting them run entirely concurrently. Use with caution as this allows duplicate replies if the human sends overlapping messages.
+- `"parallel"`: Dispatches every message to a shared thread pool (16 workers), letting them run concurrently up to that limit. Use with caution as this allows duplicate replies if the human sends overlapping messages.
 
 **Graceful Shutdown:** Stopping the `listen()` loop (e.g. via KeyboardInterrupt) cleanly flushes any pending `debounce` windows and waits for in-flight tasks to finish before exiting, ensuring no events are silently dropped.
 
