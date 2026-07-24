@@ -33,6 +33,8 @@ logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
 
+_EDIT_CHANNELS = frozenset({"telegram", "discord", "slack"})
+
 
 def _dotenv() -> dict[str, str]:
     values: dict[str, str] = {}
@@ -156,6 +158,20 @@ class Message:
         no-op where the platform has none). Fired automatically before your
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
+
+    def stream(self, throttle: float = 0.5) -> "StreamResponse":
+        """Stream a response with live edits on channels that support it.
+
+        Returns a context manager. Call ``s.append(chunk)`` inside the block to
+        accumulate text. On Telegram, Discord and Slack the first chunk posts
+        the message and subsequent chunks edit it in place (throttled to at most
+        one edit per ``throttle`` seconds). On channels without edit support
+        (email, SMS, WhatsApp, X, …) all chunks buffer and a single reply is
+        sent when the block exits.
+
+        If no non-empty text was appended, closing the stream sends nothing.
+        """
+        return StreamResponse(self._client, self.id, self.channel, throttle=throttle)
 
 
 @dataclass
@@ -361,6 +377,81 @@ class _MessageScheduler:
                 self._executor.submit(self._run_debounce, key, event)
             self._closed = True
         self._executor.shutdown(wait=True)
+
+
+class StreamResponse:
+    """Accumulates streamed chunks and delivers them as a single message.
+
+    On channels that support outbound editing (Telegram, Discord, Slack) the
+    first non-empty append posts the message and subsequent appends edit it in
+    place, throttled to avoid API rate limits. On all other channels the text
+    buffers silently and a single reply fires when the context manager exits.
+
+    If no non-empty text was appended, close sends nothing.
+    """
+
+    def __init__(
+        self,
+        client: "CommClient",
+        message_id: str,
+        channel: str,
+        throttle: float = 0.5,
+    ) -> None:
+        self._client = client
+        self._message_id = message_id
+        self._channel = channel
+        self._throttle = throttle
+        self._buffer = ""
+        self._outbound_id: str | None = None
+        self._last_edit = 0.0
+        self._last_sent_text = ""
+        self._reply_attempted = False
+
+    @property
+    def text(self) -> str:
+        return self._buffer
+
+    @property
+    def supports_edit(self) -> bool:
+        return self._channel in _EDIT_CHANNELS
+
+    def __enter__(self) -> "StreamResponse":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._flush()
+        return False
+
+    def append(self, chunk: str) -> None:
+        self._buffer += chunk
+        if not self.supports_edit or not self._buffer:
+            return
+        now = time.monotonic()
+        if self._outbound_id is None:
+            if self._reply_attempted:
+                return
+            self._reply_attempted = True
+            result = self._client.reply(self._message_id, text=self._buffer)
+            self._outbound_id = result.get("id")
+            self._last_edit = now
+            self._last_sent_text = self._buffer
+        elif now - self._last_edit >= self._throttle:
+            self._client.edit(self._outbound_id, text=self._buffer)
+            self._last_edit = now
+            self._last_sent_text = self._buffer
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        if self._outbound_id is None:
+            if self._reply_attempted:
+                return
+            self._client.reply(self._message_id, text=self._buffer)
+        elif self._buffer != self._last_sent_text:
+            remaining = self._throttle - (time.monotonic() - self._last_edit)
+            if remaining > 0:
+                time.sleep(remaining)
+            self._client.edit(self._outbound_id, text=self._buffer)
 
 
 class CommClient:
@@ -729,6 +820,12 @@ class CommClient:
         """Show a 'thinking…' indicator on the channel a message arrived on
         (Discord/Telegram; no-op where unsupported). Best-effort."""
         return self._request("POST", f"/v1/messages/{message_id}/typing")
+
+    def edit(self, outbound_message_id: str, text: str) -> dict:
+        """Edit a message the agent previously sent (used by streaming)."""
+        return self._request(
+            "POST", f"/v1/messages/{outbound_message_id}/edit", json={"text": text}
+        )
 
     def set_webhook(self, url: str, secret: str | None = None) -> dict:
         """Receive events by push instead of (or alongside) polling."""

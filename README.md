@@ -210,7 +210,7 @@ Adapters declare what the channel can physically do; an agent can never be grant
 <td valign="top">
 
 **🧪 Offline fakes for every channel**<br/>
-Fakes consume each platform's *real* payload shapes — 131 tests across Python + TS, zero network.
+Fakes consume each platform's *real* payload shapes — 171 tests across Python + TS, zero network.
 
 </td>
 </tr>
@@ -432,9 +432,9 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 100 Python tests, all offline
+uv run pytest        # 126 Python tests, all offline
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 31 vitest tests
+cd sdks/typescript && npm ci && npm test   # 45 vitest tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).

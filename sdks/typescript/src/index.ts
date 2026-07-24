@@ -1,4 +1,4 @@
-export { CommClient, Message, Interaction, Reaction } from "./client.js";
+export { CommClient, Message, Interaction, Reaction, StreamResponse } from "./client.js";
 export type { MessageHandler, InteractionHandler, ReactionHandler } from "./client.js";
 export { CommError, AccountRequiredError, InsufficientCreditError } from "./errors.js";
 export type {
