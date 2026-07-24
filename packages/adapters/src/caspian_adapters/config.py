@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     telegram_webhook_base: str = ""
     telegram_base_url: str = "https://api.telegram.org"
+    
+    zulip_base_url: str = "https://zulip.com/api/v1"
+
     telegram_user_session: str = ""
     telegram_api_id: int = 0
     telegram_api_hash: str = ""

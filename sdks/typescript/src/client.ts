@@ -6,7 +6,6 @@ import type {
   Block,
   ClientOptions,
   Connection,
-  ConcurrencyStrategy,
   ConnectOptions,
   Conversation,
   Customer,
@@ -146,145 +145,6 @@ export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 
-class MessageScheduler {
-  private readonly queues = new Map<string, EventRecord[]>();
-  private readonly running = new Set<string>();
-  private readonly debounced = new Map<
-    string,
-    { event: EventRecord; timer?: ReturnType<typeof setTimeout> }
-  >();
-  private readonly active = new Set<Promise<void>>();
-  private closed = false;
-
-  constructor(
-    private readonly dispatch: (event: EventRecord) => Promise<void>,
-    private readonly strategy: ConcurrencyStrategy,
-    private readonly debounceMs: number,
-  ) {
-    if (!["queue", "debounce", "drop", "parallel"].includes(strategy)) {
-      throw new TypeError("concurrency must be one of: queue, debounce, drop, parallel");
-    }
-    if (!Number.isFinite(debounceMs) || debounceMs < 0) {
-      throw new TypeError("debounceMs must be a non-negative number");
-    }
-  }
-
-  private conversationKey(event: EventRecord): string {
-    const data = isRecord(event.data) ? event.data : {};
-    const message = isRecord(data.message) ? data.message : {};
-    return String(
-      message.conversation_id ?? data.conversation_id ?? message.id ?? event.seq ?? "unknown",
-    );
-  }
-
-  async submit(event: EventRecord): Promise<void> {
-    if (event.type !== "message.received") {
-      await this.safeDispatch(event);
-      return;
-    }
-    const key = this.conversationKey(event);
-    if (this.strategy === "queue") this.enqueue(key, event);
-    else if (this.strategy === "debounce") this.debounce(key, event);
-    else if (this.strategy === "drop") this.drop(key, event);
-    else this.track(this.safeDispatch(event));
-  }
-
-  private enqueue(key: string, event: EventRecord): void {
-    if (this.closed) return;
-    const queue = this.queues.get(key) ?? [];
-    queue.push(event);
-    this.queues.set(key, queue);
-    if (this.running.has(key)) return;
-    this.running.add(key);
-    this.track(this.drainQueue(key));
-  }
-
-  private async drainQueue(key: string): Promise<void> {
-    for (;;) {
-      const event = this.queues.get(key)?.shift();
-      if (!event) {
-        this.queues.delete(key);
-        this.running.delete(key);
-        return;
-      }
-      await this.safeDispatch(event);
-    }
-  }
-
-  private debounce(key: string, event: EventRecord): void {
-    if (this.closed) return;
-    const previous = this.debounced.get(key);
-    if (previous?.timer) clearTimeout(previous.timer);
-    this.debounced.set(key, { event });
-    if (!this.running.has(key)) this.startDebounceTimer(key);
-  }
-
-  private startDebounceTimer(key: string): void {
-    const pending = this.debounced.get(key);
-    if (!pending) return;
-    pending.timer = setTimeout(() => {
-      const current = this.debounced.get(key);
-      if (current !== pending || this.closed || this.running.has(key)) return;
-      this.debounced.delete(key);
-      this.running.add(key);
-      this.track(this.runDebounce(key, current.event));
-    }, this.debounceMs);
-  }
-
-  private async runDebounce(key: string, event: EventRecord): Promise<void> {
-    await this.safeDispatch(event);
-    this.running.delete(key);
-    const pending = this.debounced.get(key);
-    if (!pending) return;
-    if (this.closed) {
-      if (pending.timer) clearTimeout(pending.timer);
-      this.debounced.delete(key);
-      this.running.add(key);
-      await this.runDebounce(key, pending.event);
-      return;
-    }
-    this.startDebounceTimer(key);
-  }
-
-  private drop(key: string, event: EventRecord): void {
-    if (this.closed || this.running.has(key)) return;
-    this.running.add(key);
-    this.track(
-      this.safeDispatch(event).finally(() => {
-        this.running.delete(key);
-      }),
-    );
-  }
-
-  private track(task: Promise<void>): void {
-    this.active.add(task);
-    void task.finally(() => this.active.delete(task));
-  }
-
-  private async safeDispatch(event: EventRecord): Promise<void> {
-    try {
-      await this.dispatch(event);
-    } catch (err) {
-      logger.error("event dispatch failed; continuing", err);
-    }
-  }
-
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    // ponytail: overlap state stays in this process. A shared state adapter is
-    // the upgrade path if listen() later coordinates multiple workers.
-    for (const [key, item] of this.debounced) {
-      if (item.timer) clearTimeout(item.timer);
-      if (this.running.has(key)) continue;
-      this.debounced.delete(key);
-      this.running.add(key);
-      this.track(this.runDebounce(key, item.event));
-    }
-    await Promise.all([...this.active]);
-  }
-}
-
 /**
  * One identity for your AI agent across every channel — behind a single
  * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
@@ -300,6 +160,9 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private conversationQueues = new Map<string, EventRecord[]>();
+  private conversationRunning = new Set<string>();
+  private concurrency = "queue";
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -998,6 +861,57 @@ export class CommClient {
     }
   }
 
+  private async routeEvent(event: EventRecord): Promise<void> {
+    if (event.type !== "message.received") {
+      await this.dispatchEvent(event);
+      return;
+    }
+
+    const data = event.data as {
+      message: {
+        conversation_id: string;
+      };
+    };
+
+    const conversationId = data.message.conversation_id;
+
+    if (!this.conversationQueues.has(conversationId)) {
+      this.conversationQueues.set(conversationId, []);
+    }
+
+    if (this.conversationRunning.has(conversationId)) {
+      if (this.concurrency === "drop") {
+        return;
+      }
+
+      if (this.concurrency === "parallel") {
+        void this.dispatchEvent(event);
+        return;
+      }
+
+      this.conversationQueues.get(conversationId)!.push(event);
+      return;
+    }
+
+    this.conversationQueues.get(conversationId)!.push(event);
+
+    this.conversationRunning.add(conversationId);
+
+    void this.processConversation(conversationId);
+  }
+
+  private async processConversation(conversationId: string): Promise<void> {
+    try {
+      while (this.conversationQueues.get(conversationId)!.length > 0) {
+        const event = this.conversationQueues.get(conversationId)!.shift()!;
+        await this.dispatchEvent(event);
+      }
+    } finally {
+      this.conversationRunning.delete(conversationId);
+      this.conversationQueues.delete(conversationId);
+    }
+  }
+  
   /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
   private warnAccountRequired(err: AccountRequiredError): void {
     const now = Date.now();
@@ -1054,7 +968,7 @@ export class CommClient {
       if (!batch.length) return lastSeq;
       for (const event of batch) {
         lastSeq = event.seq;
-        await this.dispatchEvent(event);
+        await this.routeEvent(event);
       }
     }
   }
@@ -1062,44 +976,35 @@ export class CommClient {
   /**
    * Poll the event stream forever, dispatching inbound messages to handlers.
    * Resilient by design: a handler that throws is logged and skipped, and a
-   * failed poll is retried with exponential backoff. Messages use a per-conversation
-   * queue by default. Pass an AbortSignal to stop.
+   * failed poll is retried with exponential backoff. Pass an AbortSignal to stop.
    */
   async listen(opts: ListenOptions = {}): Promise<void> {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
+    this.concurrency = opts.concurrency ?? "queue";
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
-    const scheduler = new MessageScheduler(
-      (event) => this.dispatchEvent(event),
-      opts.concurrency ?? "queue",
-      opts.debounceMs ?? 500,
-    );
-    try {
-      let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
-      let backoff = pollMs;
-      while (!opts.signal?.aborted) {
-        let batch: EventRecord[];
-        try {
-          batch = await this.events({ afterSeq: seq });
-        } catch (err) {
-          if (opts.signal?.aborted) return;
-          logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
-          await sleep(backoff, opts.signal);
-          backoff = Math.min(backoff * 2, maxBackoffMs);
-          continue;
-        }
-        backoff = pollMs;
-        if (!batch.length) {
-          await sleep(pollMs, opts.signal);
-          continue;
-        }
-        for (const event of batch) {
-          await scheduler.submit(event);
-          seq = event.seq; // advance after the scheduler accepts the event
-        }
+    let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
+    let backoff = pollMs;
+    while (!opts.signal?.aborted) {
+      let batch: EventRecord[];
+      try {
+        batch = await this.events({ afterSeq: seq });
+      } catch (err) {
+        if (opts.signal?.aborted) return;
+        logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
+        await sleep(backoff, opts.signal);
+        backoff = Math.min(backoff * 2, maxBackoffMs);
+        continue;
       }
-    } finally {
-      await scheduler.close();
+      backoff = pollMs;
+      if (!batch.length) {
+        await sleep(pollMs, opts.signal);
+        continue;
+      }
+      for (const event of batch) {
+        await this.routeEvent(event);
+        seq = event.seq; // advance only after the dispatch attempt
+      }
     }
   }
 
