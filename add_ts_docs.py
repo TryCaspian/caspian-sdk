@@ -8,9 +8,9 @@ def process_file(filepath):
     lines = content.split('\n')
     new_lines = []
     
-    # Very naive regex for TS class/methods
-    class_re = re.compile(r'^(\s*)export\s+class\s+([A-Za-z0-9_]+)\s*(?:implements|extends|\{)')
-    method_re = re.compile(r'^(\s*)(?:public\s+|private\s+|protected\s+|async\s+)*([A-Za-z0-9_]+)\s*\(.*\)\s*(?::\s*.*)?\s*\{')
+    # Broaden regex for TS class/methods to handle modifiers, generics, etc.
+    class_re = re.compile(r'^(\s*)(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z0-9_]+)')
+    method_re = re.compile(r'^(\s*)(?:public\s+|private\s+|protected\s+|static\s+|async\s+|get\s+|set\s+)*([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(.*\)\s*(?::\s*.*)?\s*\{')
     
     i = 0
     while i < len(lines):

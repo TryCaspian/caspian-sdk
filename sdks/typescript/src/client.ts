@@ -241,6 +241,7 @@ export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 
+/** MessageScheduler implementation. */
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
   private readonly running = new Set<string>();
