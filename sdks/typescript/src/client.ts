@@ -314,6 +314,9 @@ export class StreamResponse {
   private buffer = "";
   private outboundId: string | null = null;
   private lastEdit = 0;
+  private lastSentText = "";
+  private replyAttempted = false;
+  private pending: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly client: CommClient,
@@ -330,25 +333,41 @@ export class StreamResponse {
     return EDIT_CHANNELS.has(this.channel);
   }
 
-  async append(chunk: string): Promise<void> {
+  append(chunk: string): Promise<void> {
     this.buffer += chunk;
+    this.pending = this.pending.then(() => this.sendIfNeeded());
+    return this.pending;
+  }
+
+  close(): Promise<void> {
+    this.pending = this.pending.then(() => this.flush());
+    return this.pending;
+  }
+
+  private async sendIfNeeded(): Promise<void> {
     if (!this.supportsEdit || !this.buffer) return;
     const now = Date.now();
     if (this.outboundId === null) {
+      this.replyAttempted = true;
       const result = await this.client.reply(this.messageId, this.buffer);
       this.outboundId = (result as Record<string, unknown>).id as string ?? null;
       this.lastEdit = now;
+      this.lastSentText = this.buffer;
     } else if (now - this.lastEdit >= this.throttleMs) {
       await this.client.edit(this.outboundId, this.buffer);
       this.lastEdit = now;
+      this.lastSentText = this.buffer;
     }
   }
 
-  async close(): Promise<void> {
+  private async flush(): Promise<void> {
     if (!this.buffer) return;
     if (this.outboundId === null) {
+      if (this.replyAttempted) return;
       await this.client.reply(this.messageId, this.buffer);
-    } else {
+    } else if (this.buffer !== this.lastSentText) {
+      const remaining = this.throttleMs - (Date.now() - this.lastEdit);
+      if (remaining > 0) await sleep(remaining);
       await this.client.edit(this.outboundId, this.buffer);
     }
   }

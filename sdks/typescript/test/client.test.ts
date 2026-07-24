@@ -862,4 +862,44 @@ describe("CommClient", () => {
     await s.close();
     expect(bodies).toHaveLength(0);
   });
+
+  it("final flush skips edit when content unchanged since last send", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ id: "out_1" }))),
+      "POST /v1/messages/out_1/edit": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/edit", ...b }), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    await s.append("Hello");
+    await s.append(" world");
+    await s.close();
+    const edits = bodies.filter((b) => b.path === "/edit");
+    const lastEdit = edits[edits.length - 1];
+    expect(lastEdit.text).toBe("Hello world");
+    const allTexts = bodies.map((b) => b.text);
+    const last = allTexts[allTexts.length - 1];
+    const secondLast = allTexts[allTexts.length - 2];
+    expect(last !== secondLast || edits.length === 1).toBe(true);
+  });
+
+  it("concurrent append calls do not duplicate the initial reply", async () => {
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ id: "out_1" }))),
+      "POST /v1/messages/out_1/edit": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/edit", ...b }), json({ id: "out_1" }))),
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    const p1 = s.append("a");
+    const p2 = s.append("b");
+    await Promise.all([p1, p2]);
+    await s.close();
+    const replies = bodies.filter((b) => b.path === "/reply");
+    expect(replies).toHaveLength(1);
+  });
 });
