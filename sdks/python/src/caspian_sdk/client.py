@@ -242,7 +242,9 @@ class _MessageScheduler:
 
     def submit(self, event: dict) -> None:
         if event.get("type") != "message.received":
-            self._dispatch(event)
+            # Contain dispatch errors here too (the TypeScript scheduler routes
+            # these through safeDispatch) so one bad event can't stop listen().
+            self._safe_dispatch(event)
             return
         key = self._conversation_key(event)
         if self._strategy == "queue":
@@ -955,15 +957,31 @@ class CommClient:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
         event_type = event.get("type")
+        if event_type not in ("message.received", "interaction.received", "reaction.received"):
+            return
+        # ``data`` is optional in the event schema; a record without a usable
+        # payload is logged and skipped so it can never stop the listener.
+        data = event.get("data")
+        if not isinstance(data, dict):
+            logger.warning(
+                "skipping malformed %s event (seq %s): no event data",
+                event_type,
+                event.get("seq"),
+            )
+            return
         if event_type == "interaction.received":
-            self._dispatch_interaction(event["data"])
+            self._dispatch_interaction(data)
             return
         if event_type == "reaction.received":
-            self._dispatch_reaction(event["data"])
+            self._dispatch_reaction(data)
             return
-        if event_type != "message.received":
+        if not isinstance(data.get("message"), dict):
+            logger.warning(
+                "skipping malformed message.received event (seq %s): no message payload",
+                event.get("seq"),
+            )
             return
-        message = self._build_message(event["data"])
+        message = self._build_message(data)
         if self._handlers:
             # Show a 'thinking…' indicator up front so the human sees the agent is
             # working while the handler runs. Best-effort; never blocks dispatch.

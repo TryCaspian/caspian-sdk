@@ -261,6 +261,39 @@ describe("CommClient", () => {
     expect(replies[0]).toEqual({ text: "echo: hi", html: null, blocks: null, media: null });
   });
 
+  it("dispatchPending skips malformed events and keeps draining", async () => {
+    // data is optional in the event schema: a record without a usable payload
+    // must be skipped, not crash the drain and strand the rest of the batch.
+    const events = [
+      { seq: 1, type: "message.received", data: {} },
+      { seq: 2, type: "interaction.received" },
+      { seq: 3, type: "reaction.received", data: null },
+      messageEvent(4, "conv_1", "still alive"),
+    ];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        return json(after >= 4 ? [] : events);
+      },
+      "POST /v1/messages/m4/typing": () => json({ ok: true }),
+    });
+
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => {
+      seen.push(m.text);
+    });
+    client.onInteraction(() => {
+      seen.push("interaction");
+    });
+    client.onReaction(() => {
+      seen.push("reaction");
+    });
+    const last = await client.dispatchPending(0);
+
+    expect(last).toBe(4);
+    expect(seen).toEqual(["still alive"]);
+  });
+
   it("reply and sendMessage forward blocks in the request body", async () => {
     const bodies: any[] = [];
     const { client } = makeClient({

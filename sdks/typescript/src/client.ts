@@ -996,16 +996,35 @@ export class CommClient {
   }
 
   private async dispatchEvent(event: EventRecord): Promise<void> {
+    if (
+      event.type !== "message.received" &&
+      event.type !== "interaction.received" &&
+      event.type !== "reaction.received"
+    ) {
+      return;
+    }
+    // `data` is optional in the event schema; a record without a usable
+    // payload is logged and skipped so it can never stop the listener.
+    const data = event.data;
+    if (!isRecord(data)) {
+      logger.warn(`skipping malformed ${event.type} event (seq ${event.seq}): no event data`);
+      return;
+    }
     if (event.type === "interaction.received") {
-      await this.dispatchInteraction(event.data);
+      await this.dispatchInteraction(data);
       return;
     }
     if (event.type === "reaction.received") {
-      await this.dispatchReaction(event.data);
+      await this.dispatchReaction(data);
       return;
     }
-    if (event.type !== "message.received") return;
-    const message = this.buildMessage(event.data);
+    if (!isRecord(data.message)) {
+      logger.warn(
+        `skipping malformed message.received event (seq ${event.seq}): no message payload`,
+      );
+      return;
+    }
+    const message = this.buildMessage(data);
     if (this.handlers.length) {
       // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
       try {

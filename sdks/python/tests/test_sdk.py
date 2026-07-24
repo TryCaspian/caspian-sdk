@@ -455,6 +455,49 @@ def test_message_carries_media_to_handler():
     assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
 
 
+def test_dispatch_pending_skips_malformed_events_and_keeps_draining():
+    """A record without a usable payload is skipped; the rest of the batch
+    still dispatches and the cursor advances (data is optional in the schema)."""
+    events = [
+        {"seq": 1, "type": "message.received", "data": {}},
+        {"seq": 2, "type": "interaction.received"},
+        {"seq": 3, "type": "reaction.received", "data": None},
+        _message_event(4, "conv_1", "still alive"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 4 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m.text))
+    client.on_interaction(lambda i: seen.append("interaction"))
+    client.on_reaction(lambda r: seen.append("reaction"))
+    try:
+        last = client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert last == 4
+    assert seen == ["still alive"]
+
+
+def test_scheduler_contains_dispatch_errors_for_non_message_events():
+    """listen() hands non-message events straight to dispatch; an error there
+    must be swallowed so it cannot kill the polling loop."""
+
+    def boom(event: dict) -> None:
+        raise RuntimeError("boom")
+
+    scheduler = _MessageScheduler(boom, "queue", 500)
+    try:
+        scheduler.submit({"seq": 1, "type": "interaction.received"})
+    finally:
+        scheduler.close()
+
+
 def test_queue_serializes_each_conversation_and_keeps_others_moving():
     client = _client(lambda request: httpx.Response(200, json={}))
     first_started = threading.Event()
