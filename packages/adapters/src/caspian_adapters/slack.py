@@ -16,6 +16,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -39,20 +40,34 @@ def parse_event(data: dict) -> list[InboundMessage]:
     event = data.get("event", {})
     if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
         return []
+
     channel = event["channel"]
     ts = event["ts"]
+    text = event.get("text")
+
+    attachments = [
+        Attachment(
+            url=file.get("url_private_download") or file.get("url_private"),
+            filename=file.get("name"),
+            mime_type=file.get("mimetype"),
+            size_bytes=file.get("size"),
+        )
+        for file in event.get("files", [])
+    ]
+
+    if not text and not attachments:
+        return []
+
     return [
         InboundMessage(
             external_event_id=data.get("event_id") or f"{channel}:{ts}",
-            # Route by (app, workspace) = api_app_id:team_id. The pool means several
-            # apps can live in one workspace, so the app id disambiguates which
-            # developer's connection this event belongs to.
             provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,
             sender_address=event.get("user"),
-            text=event.get("text"),
+            text=text,
             chat_type=event.get("channel_type") or "channel",
+            attachments=attachments,
         )
     ]
 
