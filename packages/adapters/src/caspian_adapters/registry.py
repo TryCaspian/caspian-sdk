@@ -163,6 +163,19 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             verify_token=settings.facebook_verify_token,
             base_url=f"https://graph.facebook.com/{settings.graph_version}",
         )
+    if name == "fake-zulip":
+        from .fake_zulip import FakeZulipProvider
+
+        return FakeZulipProvider()
+    if name == "zulip":
+        from .zulip import ZulipProvider
+
+        return ZulipProvider(
+            site=settings.zulip_site,
+            bot_email=settings.zulip_bot_email,
+            api_key=settings.zulip_api_key,
+            webhook_token=settings.zulip_webhook_token,
+        )
     plugin = _build_plugin(name, settings)
     if plugin is not None:
         return plugin
