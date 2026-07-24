@@ -10,7 +10,10 @@ from caspian_sdk import (
     CommClient,
     CommError,
     InsufficientCreditError,
+    WebhookResult,
+    WebhookVerificationError,
 )
+
 from caspian_sdk.client import _MessageScheduler
 
 API_KEY = "comm_test_key"
@@ -952,4 +955,92 @@ def test_non_json_error_body_hits_value_error_fallback():
     assert excinfo.value.status_code == 500
     assert excinfo.value.detail == "Internal Server Error"
     assert "Internal Server Error" in str(excinfo.value)
+
+
+def test_handle_webhook_dispatches_message():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    payload = json.dumps(_message_event(1, "conv_1", "hello from webhook")).encode("utf-8")
+    signature = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    # Missing signature raises error
+    with pytest.raises(WebhookVerificationError, match="missing"):
+        client.handle_webhook(payload, {}, secret)
+
+    # Bad signature raises error
+    with pytest.raises(WebhookVerificationError, match="mismatch"):
+        client.handle_webhook(payload, {"x-caspian-signature": "sha256=invalid"}, secret)
+
+    # Valid signature dispatches event
+    res = client.handle_webhook(payload, {"x-caspian-signature": signature}, secret)
+    assert res == WebhookResult(status="ok", event_id="1", event_type="message.received")
+    assert len(seen) == 1
+    assert seen[0].text == "hello from webhook"
+    client.close()
+
+
+def test_handle_webhook_dispatches_interaction_and_reaction():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen_interactions = []
+    seen_reactions = []
+
+    client.on_interaction(seen_interactions.append)
+    client.on_reaction(seen_reactions.append)
+
+    secret = "whsec_test123"
+    event = {
+        "id": "evt_interaction_1",
+        "type": "interaction.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "value": "btn_click",
+        },
+    }
+    payload = json.dumps(event).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res.status == "ok"
+    assert res.event_id == "evt_interaction_1"
+    assert len(seen_interactions) == 1
+    assert seen_interactions[0].value == "btn_click"
+    client.close()
+
+
+def test_handle_webhook_idempotent_same_event_id():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    evt = _message_event(1, "conv_1", "duplicate test")
+    evt["id"] = "same_event_id"
+    payload = json.dumps([evt, evt]).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"X-Caspian-Signature": sig}, secret)
+    assert res.status == "ok"
+    assert len(seen) == 1
+    client.close()
 
