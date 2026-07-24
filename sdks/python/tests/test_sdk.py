@@ -580,5 +580,67 @@ def test_behavior_prompt_returns_text():
         client.close()
     assert "Slack" in guide
 
+# --- Tests for Typed Auth & Billing Errors (Issue #3) ---
+
+def test_account_required_error(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.trycaspianai.com/v1/connect/email",
+        status_code=401,
+        json={
+            "error": {
+                "message": "Account login required",
+                "type": "authentication_error",
+                "reason": "account_required",
+                "login_url": "https://trycaspianai.com/login",
+            }
+        },
+    )
+    client = CommClient(api_key="test_key")
+    import pytest
+    with pytest.raises(AccountRequiredError) as exc_info:
+        client.connect_email("test")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.reason == "account_required"
+
+
+def test_insufficient_credit_error(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.trycaspianai.com/v1/connect/email",
+        status_code=402,
+        json={
+            "error": {
+                "message": "Insufficient credit balance",
+                "type": "billing_error",
+                "reason": "insufficient_credit",
+                "balance": 0.00,
+            }
+        },
+    )
+    client = CommClient(api_key="test_key")
+    import pytest
+    with pytest.raises(InsufficientCreditError) as exc_info:
+        client.connect_email("test")
+    assert exc_info.value.status_code == 402
+    assert exc_info.value.reason == "insufficient_credit"
+
+
+def test_monthly_cap_reached_error(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.trycaspianai.com/v1/connect/email",
+        status_code=429,
+        json={
+            "error": {
+                "message": "Monthly usage cap reached",
+                "type": "rate_limit_error",
+                "reason": "monthly_cap_reached",
+            }
+        },
+    )
+    client = CommClient(api_key="test_key")
+    import pytest
+    with pytest.raises(Exception) as exc_info:
+        client.connect_email("test")
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.reason == "monthly_cap_reached"
 
 
