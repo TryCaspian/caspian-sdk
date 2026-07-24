@@ -104,6 +104,14 @@ def test_parse_skips_empty_and_own_messages():
     assert parse_message({}) == []
 
 
+def test_parse_skips_unknown_message_types():
+    # A future Zulip type (or partial payload) must be dropped, not guessed at
+    # as a DM shape.
+    unknown = _stream_payload()
+    unknown["message"]["type"] = "channel_event"
+    assert parse_message(unknown) == []
+
+
 def test_topic_with_colon_round_trips():
     # Free-form topics may contain ':'; url-quoting keeps the composite id splittable.
     routing = encode_stream(7, "deploy: prod")
@@ -116,8 +124,18 @@ def test_topic_with_colon_round_trips():
 def test_destination_decodes_dm_and_rejects_garbage():
     assert _destination("dm:55,88:777")[1] == {"type": "direct", "to": json.dumps([55, 88])}
     assert _destination(encode_dm([88, 55]))[0] == "dm:55,88"
+    assert _destination("dm:88,55")[0] == "dm:55,88"  # canonicalized on decode too
     with pytest.raises(ValueError, match="unroutable"):
         _destination("carrier-pigeon:nope")
+
+
+def test_destination_rejects_extra_segments():
+    # One trailing message id is allowed; anything beyond that is malformed and
+    # must error instead of silently mis-routing.
+    with pytest.raises(ValueError, match="unroutable"):
+        _destination("stream:7:topic:501:extra")
+    with pytest.raises(ValueError, match="unroutable"):
+        _destination("dm:55,88:777:extra")
 
 
 # --- webhook verification --------------------------------------------------
@@ -143,6 +161,15 @@ def test_parse_webhook_rejects_bad_json_and_missing_scope():
         provider.parse_webhook(b"not json", {}, credentials=CREDS)
     with pytest.raises(WebhookVerificationError, match="connection scope"):
         provider.parse_webhook(b"{}", {}, credentials=None)
+
+
+def test_parse_webhook_fails_closed_without_a_token_credential():
+    # Zulip always stamps its POSTs with the bot's token, so a connection with
+    # no stored token can never verify inbound - reject, don't skip the check.
+    provider = ZulipProvider()
+    payload = json.dumps(_stream_payload()).encode()
+    with pytest.raises(WebhookVerificationError, match="webhook_token"):
+        provider.parse_webhook(payload, {}, credentials={**CREDS, "webhook_token": ""})
 
 
 # --- send / reply (mocked Zulip REST API) ----------------------------------

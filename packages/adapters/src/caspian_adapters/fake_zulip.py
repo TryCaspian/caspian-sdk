@@ -25,7 +25,10 @@ class FakeZulipProvider:
     name = "fake-zulip"
     channel = "zulip"
     capabilities = ZulipProvider.capabilities
-    connect_credentials = ZulipProvider.connect_credentials
+    # Zero-config like the other fakes; real credentials may be supplied to
+    # exercise the multi-tenant path, but nothing is required to connect.
+    connect_credentials = ()
+    optional_connect_credentials = ZulipProvider.connect_credentials
 
     def __init__(self, bot_email: str = BOT_EMAIL, webhook_token: str = WEBHOOK_TOKEN) -> None:
         self.bot_email = bot_email

@@ -57,21 +57,24 @@ def _destination(routing: str) -> tuple[str, dict]:
     thread id plus the Zulip ``/messages`` fields that address it.
 
     Accepts either a bare prefix (``stream:2:quoted`` / ``dm:5,9``) or a prefix
-    with a trailing message id (``…:12345``) — the trailing id is ignored for
-    routing, since Zulip replies target the conversation, not a message.
+    with exactly one trailing message id (``…:12345``) — the trailing id is
+    ignored for routing, since Zulip replies target the conversation, not a
+    message. Anything with extra segments is malformed and rejected rather than
+    silently mis-routed (the topic segment is url-quoted, so it never carries a
+    raw ``:`` of its own).
     """
     parts = routing.split(":")
     kind = parts[0]
-    if kind == "stream" and len(parts) >= 3:
+    if kind == "stream" and len(parts) in (3, 4):
         stream_id, quoted_topic = parts[1], parts[2]
         # Zulip's `to` accepts a numeric stream id or a channel name; keep whichever
         # we were handed so callers can also address a stream by name.
         to = int(stream_id) if stream_id.isdigit() else stream_id
         fields = {"type": "stream", "to": to, "topic": unquote(quoted_topic)}
         return f"stream:{stream_id}:{quoted_topic}", fields
-    if kind == "dm" and len(parts) >= 2 and parts[1]:
+    if kind == "dm" and len(parts) in (2, 3) and parts[1]:
         ids = [int(x) for x in parts[1].split(",") if x]
-        return f"dm:{parts[1]}", {"type": "direct", "to": json.dumps(ids)}
+        return encode_dm(ids), {"type": "direct", "to": json.dumps(sorted(ids))}
     raise ValueError(f"unroutable Zulip destination: {routing!r}")
 
 
@@ -93,10 +96,11 @@ def parse_message(data: dict) -> list[InboundMessage]:
         return []
 
     recipients: list[dict] = []
-    if message.get("type") == "stream":
+    message_type = message.get("type")
+    if message_type == "stream":
         thread = encode_stream(message["stream_id"], message.get("subject", ""))
         chat_type = "channel"
-    else:
+    elif message_type == "private":
         # display_recipient lists every participant including the bot itself; the
         # conversation from the agent's side is the set of *other* humans.
         others = [
@@ -108,6 +112,10 @@ def parse_message(data: dict) -> list[InboundMessage]:
         ]
         thread = encode_dm([u["id"] for u in others])
         chat_type = "group" if len(others) > 1 else "private"
+    else:
+        # Not a message shape we understand (future Zulip types, partial
+        # payloads); drop it rather than guess at a DM structure.
+        return []
 
     return [
         InboundMessage(
@@ -231,11 +239,13 @@ class ZulipProvider:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
-        # Zulip stamps every outgoing-webhook POST with the bot's token; reject any
-        # payload whose token doesn't match the connection's.
+        # Zulip stamps every outgoing-webhook POST with the bot's token, so a
+        # connection without one can never verify inbound - fail closed rather
+        # than accept unverified payloads from a misconfigured connection.
         expected = creds.get("webhook_token", "")
-        if expected:
-            received = str(data.get("token", ""))
-            if not hmac.compare_digest(received, str(expected)):
-                raise WebhookVerificationError("Zulip token mismatch")
+        if not expected:
+            raise WebhookVerificationError("connection is missing a webhook_token credential")
+        received = str(data.get("token", ""))
+        if not hmac.compare_digest(received, str(expected)):
+            raise WebhookVerificationError("Zulip token mismatch")
         return parse_message(data)
