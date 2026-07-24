@@ -389,6 +389,12 @@ Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
 `sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
 that can't render blocks; omit it and a clean text fallback is generated for you.
 
+## Streaming
+
+Caspian supports streaming responses natively. When you stream a message to a channel, the SDK automatically determines the best strategy based on the platform's capabilities:
+- **`post_edit` (Native Streaming)**: On platforms that support rapid message edits (like Discord, Slack, and Telegram), the SDK will post an initial message and continuously edit it as new chunks arrive, giving a true typing-like experience.
+- **`final_only` (Fallback)**: On immutable platforms (like Email, SMS, or X/Twitter), the SDK automatically buffers the stream and sends only the final complete message once the stream finishes, preventing fragmented or spammy messages.
+
 ## What's in this repo
 
 | Package | |
