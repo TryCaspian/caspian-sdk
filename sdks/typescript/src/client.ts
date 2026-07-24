@@ -1026,9 +1026,9 @@ export class CommClient {
       this.processedEvents.add(eventId);
     }
 
+    // Discard oldest event to bound memory on warm serverless containers
     if (this.processedEvents.size > 1000) {
-      this.processedEvents.clear();
-      if (eventId) this.processedEvents.add(eventId);
+      this.processedEvents.delete(this.processedEvents.values().next().value);
     }
 
     await this.dispatchEvent(event as EventRecord);

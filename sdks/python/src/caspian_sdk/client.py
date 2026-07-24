@@ -509,7 +509,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
-        self._processed_events: set[str] = set()
+        self._processed_events: dict[str, None] = {}
 
     def close(self) -> None:
         self._http.close()
@@ -1296,13 +1296,12 @@ class CommClient:
         if event_id:
             if event_id in self._processed_events:
                 return  # already handled in this invocation
-            self._processed_events.add(event_id)
+            self._processed_events[event_id] = None
 
-        # Discard old events to bound memory on warm serverless containers
+        # Discard oldest event to bound memory on warm serverless containers
         if len(self._processed_events) > 1000:
-            self._processed_events.clear()
-            if event_id:
-                self._processed_events.add(event_id)
+            # Python dicts are insertion-ordered. pop the first (oldest) key.
+            self._processed_events.pop(next(iter(self._processed_events)))
 
         self._dispatch_event(event)
 
