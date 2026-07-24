@@ -15,6 +15,8 @@
   <a href="./llms.txt">面向 AI 编程助手的 llms.txt</a>
   ·
   <a href="./CONTRIBUTING.md">参与贡献</a>
+  ·
+  <a href="https://discord.gg/A28qnkvgCM">Discord</a>
 </p>
 
 <p align="center">
@@ -28,6 +30,7 @@
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
+  <a href="https://discord.gg/A28qnkvgCM"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
