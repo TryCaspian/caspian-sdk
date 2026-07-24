@@ -68,8 +68,13 @@ def _pct(value: str) -> str:
 
 
 def oauth1_header(
-    method: str, url: str, consumer_key: str, consumer_secret: str,
-    token: str, token_secret: str, params: Mapping[str, str] | None = None,
+    method: str,
+    url: str,
+    consumer_key: str,
+    consumer_secret: str,
+    token: str,
+    token_secret: str,
+    params: Mapping[str, str] | None = None,
 ) -> str:
     """Build an OAuth 1.0a HMAC-SHA1 Authorization header for a request.
 
@@ -89,9 +94,7 @@ def oauth1_header(
     base_str = "&".join(f"{_pct(k)}={_pct(allp[k])}" for k in sorted(allp))
     base = f"{method.upper()}&{_pct(url)}&{_pct(base_str)}"
     key = f"{_pct(consumer_secret)}&{_pct(token_secret)}"
-    sig = base64.b64encode(
-        hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()
-    ).decode()
+    sig = base64.b64encode(hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()).decode()
     oauth["oauth_signature"] = sig
     return "OAuth " + ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(oauth.items()))
 
@@ -134,8 +137,12 @@ def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[Inbound
 
 
 def _oauth1_auth(
-    method: str, url: str, consumer_key: str, consumer_secret: str,
-    extra: Mapping[str, str], token_secret: str = "",
+    method: str,
+    url: str,
+    consumer_key: str,
+    consumer_secret: str,
+    extra: Mapping[str, str],
+    token_secret: str = "",
 ) -> str:
     """Sign a 2-/3-legged OAuth 1.0a request (no user token, or a temp request
     token). `extra` carries the leg-specific oauth params (oauth_callback for the
@@ -255,8 +262,12 @@ class XProvider:
             token = creds.get("access_token") or self._default_access_token
             token_secret = creds.get("access_secret") or self._default_access_secret
             header = oauth1_header(
-                method, f"{self._base_url}{path}", self._consumer_key,
-                self._consumer_secret, token, token_secret,
+                method,
+                f"{self._base_url}{path}",
+                self._consumer_key,
+                self._consumer_secret,
+                token,
+                token_secret,
             )
             return {"Authorization": header}
         return {"Authorization": f"Bearer {self._token(credentials)}"}
@@ -279,7 +290,9 @@ class XProvider:
     ) -> SendResult:
         path = f"/2/dm_conversations/with/{user_id}/messages"
         r = self._client.post(
-            path, headers=self._auth(credentials, "POST", path), json={"text": text},
+            path,
+            headers=self._auth(credentials, "POST", path),
+            json={"text": text},
         )
         r.raise_for_status()
         data = r.json()["data"]
@@ -296,7 +309,10 @@ class XProvider:
         developer to. Signed with the shared Caspian app's consumer key/secret."""
         url = f"{self._base_url}/oauth/request_token"
         header = _oauth1_auth(
-            "POST", url, self._consumer_key, self._consumer_secret,
+            "POST",
+            url,
+            self._consumer_key,
+            self._consumer_secret,
             {"oauth_callback": callback_url},
         )
         r = self._client.post("/oauth/request_token", headers={"Authorization": header})
@@ -318,7 +334,10 @@ class XProvider:
         NON-EXPIRING access token/secret + its numeric id and @handle."""
         url = f"{self._base_url}/oauth/access_token"
         header = _oauth1_auth(
-            "POST", url, self._consumer_key, self._consumer_secret,
+            "POST",
+            url,
+            self._consumer_key,
+            self._consumer_secret,
             {"oauth_token": oauth_token, "oauth_verifier": oauth_verifier},
             token_secret=request_token_secret,
         )
@@ -360,10 +379,17 @@ class XProvider:
         if headers["Authorization"].startswith("OAuth "):
             token = creds.get("access_token") or self._default_access_token
             token_secret = creds.get("access_secret") or self._default_access_secret
-            headers = {"Authorization": oauth1_header(
-                "GET", f"{self._base_url}/2/dm_events", self._consumer_key,
-                self._consumer_secret, token, token_secret, params=params,
-            )}
+            headers = {
+                "Authorization": oauth1_header(
+                    "GET",
+                    f"{self._base_url}/2/dm_events",
+                    self._consumer_key,
+                    self._consumer_secret,
+                    token,
+                    token_secret,
+                    params=params,
+                )
+            }
         r = self._client.get("/2/dm_events", params=params, headers=headers)
         r.raise_for_status()
         data = r.json()
@@ -375,8 +401,7 @@ class XProvider:
         if cursor is None:
             return [], newest or "0"
         fresh = [
-            m for m in parse_dm_events(data, user_id)
-            if int(m.external_event_id) > int(cursor)
+            m for m in parse_dm_events(data, user_id) if int(m.external_event_id) > int(cursor)
         ]
         fresh.sort(key=lambda m: int(m.external_event_id))
         return fresh, newest or cursor
@@ -396,7 +421,7 @@ class XProvider:
     ) -> SendResult:
         target = message.to[0] if message.to else ""
         if target.startswith("dm:"):
-            return self._send_dm(credentials, target[len("dm:"):], message.text or "")
+            return self._send_dm(credentials, target[len("dm:") :], message.text or "")
         return self._post_tweet(credentials, message.text or "")
 
     def reply(
@@ -435,9 +460,12 @@ class XProvider:
             received = {k.lower(): v for k, v in headers.items()}.get(
                 "x-twitter-webhooks-signature", ""
             )
-            expected = "sha256=" + base64.b64encode(
-                hmac.new(self._webhook_secret.encode(), payload, hashlib.sha256).digest()
-            ).decode()
+            expected = (
+                "sha256="
+                + base64.b64encode(
+                    hmac.new(self._webhook_secret.encode(), payload, hashlib.sha256).digest()
+                ).decode()
+            )
             if not hmac.compare_digest(received, expected):
                 raise WebhookVerificationError("X webhook signature mismatch")
         # One X app fans every subscribed account's inbound into this one route;

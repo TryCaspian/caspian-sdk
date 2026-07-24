@@ -65,12 +65,14 @@ def _dm_webhook_body(sender_id: str, text: str, event_id: str = "9001") -> bytes
 
 
 def _sign(secret: str, payload: bytes) -> str:
-    return "sha256=" + base64.b64encode(
-        hmac.new(secret.encode(), payload, hashlib.sha256).digest()
-    ).decode()
+    return (
+        "sha256="
+        + base64.b64encode(hmac.new(secret.encode(), payload, hashlib.sha256).digest()).decode()
+    )
 
 
 # --- send: post a tweet ------------------------------------------------------
+
 
 def test_send_posts_a_tweet():
     calls = []
@@ -100,9 +102,13 @@ def test_oauth1_signing_when_app_keys_configured():
         seen["auth"] = request.headers["authorization"]
         return httpx.Response(201, json={"data": {"id": "t1", "text": "hi"}})
 
-    provider = _provider(handler, consumer_key="CKEY",
-                         access_token="ATOKEN", access_secret="ASECRET",
-                         user_id=AGENT_USER_ID)
+    provider = _provider(
+        handler,
+        consumer_key="CKEY",
+        access_token="ATOKEN",
+        access_secret="ASECRET",
+        user_id=AGENT_USER_ID,
+    )
     provider.send(AGENT_USER_ID, OutboundMessage(text="hi", to=()), credentials=None)
     auth = seen["auth"]
     assert auth.startswith("OAuth ")
@@ -145,6 +151,7 @@ def test_send_with_dm_prefix_hits_dm_endpoint():
 
 # --- reply: reactive DM back -------------------------------------------------
 
+
 def test_reply_to_dm_hits_dm_endpoint():
     calls = []
 
@@ -184,16 +191,21 @@ def test_reply_to_tweet_threads_the_reply():
 
 # --- poll_dms (no-webhook inbound) -------------------------------------------
 
+
 def _dm_events_page(*events):
     """A GET /2/dm_events response body from (id, sender_id, text) tuples."""
     return {
         "data": [
-            {"id": eid, "sender_id": sid, "text": txt, "event_type": "MessageCreate",
-             "created_at": "2026-07-16T00:00:00.000Z"}
+            {
+                "id": eid,
+                "sender_id": sid,
+                "text": txt,
+                "event_type": "MessageCreate",
+                "created_at": "2026-07-16T00:00:00.000Z",
+            }
             for eid, sid, txt in events
         ],
-        "includes": {"users": [{"id": HUMAN_USER_ID, "name": "A Human",
-                                "username": "ahuman"}]},
+        "includes": {"users": [{"id": HUMAN_USER_ID, "name": "A Human", "username": "ahuman"}]},
     }
 
 
@@ -232,6 +244,7 @@ def test_poll_dms_skips_own_echoes():
 
 # --- one-click OAuth 1.0a 3-legged -------------------------------------------
 
+
 def test_oauth_request_token_returns_authorize_url():
     def handler(request):
         assert request.url.path == "/oauth/request_token"
@@ -266,11 +279,16 @@ def test_oauth_access_token_returns_account_tokens():
 
     provider = _provider(handler, consumer_key="CK")
     res = provider.oauth_access_token("REQTOK", "VERIF", "REQSECRET")
-    assert res == {"access_token": "AT1", "access_secret": "AS1",
-                   "user_id": "999", "username": "acmebot"}
+    assert res == {
+        "access_token": "AT1",
+        "access_secret": "AS1",
+        "user_id": "999",
+        "username": "acmebot",
+    }
 
 
 # --- parse_webhook -----------------------------------------------------------
+
 
 def test_parse_webhook_turns_dm_into_inbound():
     provider = _provider(lambda r: httpx.Response(404))
@@ -298,6 +316,7 @@ def test_parse_webhook_skips_own_echo():
 
 # --- webhook signature verification -----------------------------------------
 
+
 def test_parse_webhook_good_signature_passes():
     provider = _provider(lambda r: httpx.Response(404))
     body = _dm_webhook_body(HUMAN_USER_ID, "verified")
@@ -322,12 +341,16 @@ def test_parse_webhook_no_secret_skips_verification():
 
 # --- CRC challenge -----------------------------------------------------------
 
+
 def test_verify_challenge_signs_crc_token():
     provider = XProvider(consumer_secret=CONSUMER_SECRET)
     token = provider.verify_challenge({"crc_token": "abc123"})
-    expected = "sha256=" + base64.b64encode(
-        hmac.new(CONSUMER_SECRET.encode(), b"abc123", hashlib.sha256).digest()
-    ).decode()
+    expected = (
+        "sha256="
+        + base64.b64encode(
+            hmac.new(CONSUMER_SECRET.encode(), b"abc123", hashlib.sha256).digest()
+        ).decode()
+    )
     assert token == {"response_token": expected}
 
 
@@ -338,11 +361,10 @@ def test_verify_challenge_none_without_token():
 
 # --- provision ---------------------------------------------------------------
 
+
 def test_provision_returns_user_id_as_resource_id():
     provider = _provider(lambda r: httpx.Response(404))
-    result = provider.provision(
-        ProvisionRequest("c", "cust", "agt", credentials=_creds())
-    )
+    result = provider.provision(ProvisionRequest("c", "cust", "agt", credentials=_creds()))
     assert result.provider_resource_id == AGENT_USER_ID
     assert result.address == "agentbot"
 

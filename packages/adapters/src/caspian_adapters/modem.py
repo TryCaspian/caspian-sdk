@@ -79,20 +79,28 @@ class GsmModemProvider:
         return self._send_sms(message.to[0], message.text or "")
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         remote_number, _ = split_composite_id(provider_message_id)
         return self._send_sms(remote_number, message.text or "")
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         return self._send_sms(recipient, message.text or "")
 
     def parse_webhook(
-        self, payload: bytes, headers: Mapping[str, str],
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
         credentials=None,
     ) -> list[InboundMessage]:
         # A modem has no webhook; inbound comes from the AT poll listener.

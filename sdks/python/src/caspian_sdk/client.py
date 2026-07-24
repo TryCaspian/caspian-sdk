@@ -15,6 +15,9 @@ Usage:
     client.listen()
 """
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
@@ -23,12 +26,9 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-import hashlib
-import hmac
-import json
 from pathlib import Path
 from threading import Lock, Timer
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import httpx
 
@@ -55,9 +55,8 @@ def _config(explicit: str | None, env_key: str, default: str | None = None) -> s
     dotenv = _dotenv()
     keys = [env_key]
     if env_key.startswith("CASPIAN_"):
-        keys.append("COMM_" + env_key[len("CASPIAN_"):])  # legacy alias
-    for source in (lambda k: explicit if k == env_key else None,
-                   os.environ.get, dotenv.get):
+        keys.append("COMM_" + env_key[len("CASPIAN_") :])  # legacy alias
+    for source in (lambda k: explicit if k == env_key else None, os.environ.get, dotenv.get):
         for key in keys:
             value = source(key)
             if value:
@@ -74,6 +73,7 @@ class CommError(Exception):
 
 class WebhookVerificationError(CommError):
     """Raised when an inbound webhook fails signature verification."""
+
     def __init__(self, detail: str = "Webhook signature mismatch") -> None:
         super().__init__(401, detail)
 
@@ -341,9 +341,7 @@ class _MessageScheduler:
         debounce_ms: int,
     ) -> None:
         if strategy not in {"queue", "debounce", "drop", "parallel"}:
-            raise ValueError(
-                "concurrency must be one of: queue, debounce, drop, parallel"
-            )
+            raise ValueError("concurrency must be one of: queue, debounce, drop, parallel")
         if debounce_ms < 0:
             raise ValueError("debounce_ms must be non-negative")
         self._dispatch = dispatch
@@ -532,15 +530,20 @@ class CommClient:
             except ValueError:
                 detail = response.text
             # A paid channel needs a one-time developer sign-in first.
-            if response.status_code == 401 and isinstance(detail, dict) and detail.get(
-                "reason"
-            ) == "account_required":
+            if (
+                response.status_code == 401
+                and isinstance(detail, dict)
+                and detail.get("reason") == "account_required"
+            ):
                 raise AccountRequiredError(response.status_code, detail, self)
             # A billing block (out of credit / spend cap) carries a structured
             # body; raise the typed error so callers can react in code.
-            if response.status_code in (402, 429) and isinstance(detail, dict) and detail.get(
-                "reason"
-            ) in {"insufficient_credit", "monthly_cap_reached", "channel_cap_reached"}:
+            if (
+                response.status_code in (402, 429)
+                and isinstance(detail, dict)
+                and detail.get("reason")
+                in {"insufficient_credit", "monthly_cap_reached", "channel_cap_reached"}
+            ):
                 raise InsufficientCreditError(response.status_code, detail, self)
             raise CommError(response.status_code, str(detail))
         if response.status_code == 204:
@@ -548,9 +551,7 @@ class CommClient:
         return response.json()
 
     def _get_text(self, path: str) -> str:
-        response = self._http.get(
-            path, headers={"Authorization": f"Bearer {self._api_key}"}
-        )
+        response = self._http.get(path, headers={"Authorization": f"Bearer {self._api_key}"})
         if response.status_code >= 400:
             raise CommError(response.status_code, response.text)
         return response.text
@@ -652,8 +653,11 @@ class CommClient:
         return self._request("GET", f"/v1/domains/{domain_id}")
 
     def connect_phone(
-        self, customer_id: str | None = None, agent_id: str | None = None,
-        provider=None, **kwargs,
+        self,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        provider=None,
+        **kwargs,
     ) -> dict:
         """Connect an SMS/voice phone line. `provider` picks the backend when more
         than one is configured (e.g. gsm-modem, or a hosted provider); omit for
@@ -667,7 +671,11 @@ class CommClient:
         return self._connect("whatsapp", customer_id, agent_id, provider=provider, **kwargs)
 
     def start_whatsapp_onboarding(
-        self, customer_id=None, agent_id=None, display_name=None, capabilities=None,
+        self,
+        customer_id=None,
+        agent_id=None,
+        display_name=None,
+        capabilities=None,
     ) -> dict:
         """Begin WhatsApp onboarding for one of your customers (Caspian hosted).
 
@@ -690,9 +698,7 @@ class CommClient:
             body["display_name"] = display_name
         if capabilities is not None:
             body["capabilities"] = capabilities
-        return self._request(
-            "POST", "/v1/connections/whatsapp/onboarding-session", json=body
-        )
+        return self._request("POST", "/v1/connections/whatsapp/onboarding-session", json=body)
 
     def connect_imessage(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """Connect an iMessage line (Caspian hosted)."""
@@ -703,20 +709,30 @@ class CommClient:
         return self._connect("rcs", customer_id, agent_id, **kwargs)
 
     def connect_discord(
-        self, bot_token: str | None = None, webhook_url: str | None = None,
-        username: str | None = None, avatar_url: str | None = None,
-        customer_id=None, agent_id=None, **kwargs,
+        self,
+        bot_token: str | None = None,
+        webhook_url: str | None = None,
+        username: str | None = None,
+        avatar_url: str | None = None,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
     ) -> dict:
         """Connect a Discord identity. Either a bot (`bot_token` from
         discord.com/developers) OR a channel `webhook_url` for a per-agent
         identity with a custom `username`/`avatar_url` (no bot needed)."""
         return self._connect(
-            "discord", customer_id, agent_id, bot_token=bot_token,
-            webhook_url=webhook_url, username=username, avatar_url=avatar_url, **kwargs,
+            "discord",
+            customer_id,
+            agent_id,
+            bot_token=bot_token,
+            webhook_url=webhook_url,
+            username=username,
+            avatar_url=avatar_url,
+            **kwargs,
         )
 
-    def install_discord(self, customer_id=None, agent_id=None, display_name=None,
-                        **kwargs) -> dict:
+    def install_discord(self, customer_id=None, agent_id=None, display_name=None, **kwargs) -> dict:
         """One-click install of the gateway's shared Discord bot (no bot token).
 
         Returns a connection with an ``authorize_url``. Open it (or hand it to the
@@ -727,8 +743,12 @@ class CommClient:
         "Acme Support") - it appears under that name instead of the shared bot's
         name. Use connect_discord(bot_token=...) instead if you want a fully
         separate bot (your own name AND avatar, member-list included)."""
-        body = {"customer_id": customer_id, "agent_id": agent_id,
-                "display_name": display_name, **kwargs}
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            **kwargs,
+        }
         return self._request("POST", "/v1/connections/discord/install", json=body)
 
     def connect_slack(
@@ -745,15 +765,19 @@ class CommClient:
         bot carries your brand. Returns a connection with an `authorize_url`; the
         workspace owner clicks it to approve, then the connection goes active."""
         return self._connect(
-            "slack", customer_id, agent_id, wait=False,
+            "slack",
+            customer_id,
+            agent_id,
+            wait=False,
             slack_client_id=slack_client_id,
             slack_client_secret=slack_client_secret,
             slack_signing_secret=slack_signing_secret,
             **kwargs,
         )
 
-    def install_slack(self, customer_id=None, agent_id=None, display_name=None,
-                      icon_url=None, **kwargs) -> dict:
+    def install_slack(
+        self, customer_id=None, agent_id=None, display_name=None, icon_url=None, **kwargs
+    ) -> dict:
         """One-click install of the gateway's shared Slack app (no app to create).
 
         Returns a connection with an ``authorize_url`` ("Add to Slack"). Open it
@@ -762,8 +786,13 @@ class CommClient:
         - no Slack app to build. Pass ``display_name`` and ``icon_url`` to post
         under YOUR own name + icon (the plumbing stays invisible). Use
         connect_slack(slack_client_id=...) instead to bring your own Slack app."""
-        body = {"customer_id": customer_id, "agent_id": agent_id,
-                "display_name": display_name, "icon_url": icon_url, **kwargs}
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "icon_url": icon_url,
+            **kwargs,
+        }
         return self._request("POST", "/v1/connections/slack/install", json=body)
 
     def update_branding(self, connection_id: str, display_name=None, icon_url=None) -> dict:
@@ -771,13 +800,20 @@ class CommClient:
         re-install. Slack: takes effect on the next message; Discord shared bot:
         re-sets the per-server nickname. Pass either or both."""
         return self._request(
-            "PATCH", f"/v1/connections/{connection_id}",
+            "PATCH",
+            f"/v1/connections/{connection_id}",
             json={"display_name": display_name, "icon_url": icon_url},
         )
 
     def connect_x(
-        self, access_token: str, user_id: str, access_secret: str | None = None,
-        username: str | None = None, customer_id=None, agent_id=None, **kwargs,
+        self,
+        access_token: str,
+        user_id: str,
+        access_secret: str | None = None,
+        username: str | None = None,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
     ) -> dict:
         """Connect an X (Twitter) account as a reactive DM bot.
 
@@ -788,8 +824,14 @@ class CommClient:
         up). Reactive only - it never cold-DMs. The account must be labelled
         "Automated" in X settings."""
         return self._connect(
-            "x", customer_id, agent_id, access_token=access_token, user_id=user_id,
-            access_secret=access_secret, username=username, **kwargs,
+            "x",
+            customer_id,
+            agent_id,
+            access_token=access_token,
+            user_id=user_id,
+            access_secret=access_secret,
+            username=username,
+            **kwargs,
         )
 
     def install_x(self, customer_id=None, agent_id=None, **kwargs) -> dict:
@@ -851,9 +893,7 @@ class CommClient:
         """Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS
         — Slack/Telegram/Discord). Best-effort; a channel with no reaction API
         returns ``reacted=false`` rather than erroring."""
-        return self._request(
-            "POST", f"/v1/messages/{message_id}/react", json={"emoji": emoji}
-        )
+        return self._request("POST", f"/v1/messages/{message_id}/react", json={"emoji": emoji})
 
     def typing(self, message_id: str) -> dict:
         """Show a 'thinking…' indicator on the channel a message arrived on
@@ -922,7 +962,8 @@ class CommClient:
             "\n  Sign in to Caspian to enable paid channels (one-time):\n"
             f"    {url}\n"
             "  Waiting for the developer to approve in the browser...\n",
-            file=sys.stderr, flush=True,
+            file=sys.stderr,
+            flush=True,
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -931,8 +972,11 @@ class CommClient:
             )
             status = result.get("status")
             if status == "approved":
-                print("  Signed in. Add credit to start using paid channels.",
-                      file=sys.stderr, flush=True)
+                print(
+                    "  Signed in. Add credit to start using paid channels.",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return result
             if status in ("expired", "not_found"):
                 raise CommError(408, f"device login {status}")
@@ -984,12 +1028,16 @@ class CommClient:
         (complete one ``top_up()`` checkout first) and a ``monthly_cap_cents`` -
         an uncapped auto-replenishing budget is not allowed. Pass
         ``enabled=False`` to turn it off."""
-        return self._request("PUT", "/v1/billing/autopay", json={
-            "enabled": enabled,
-            "threshold_cents": threshold_cents,
-            "topup_cents": topup_cents,
-            "monthly_cap_cents": monthly_cap_cents,
-        })
+        return self._request(
+            "PUT",
+            "/v1/billing/autopay",
+            json={
+                "enabled": enabled,
+                "threshold_cents": threshold_cents,
+                "topup_cents": topup_cents,
+                "monthly_cap_cents": monthly_cap_cents,
+            },
+        )
 
     def send_message(
         self,
@@ -1058,9 +1106,7 @@ class CommClient:
         self._interaction_handlers.append(handler)
         return handler
 
-    def on_reaction(
-        self, handler: Callable[["Reaction"], None]
-    ) -> Callable[["Reaction"], None]:
+    def on_reaction(self, handler: Callable[["Reaction"], None]) -> Callable[["Reaction"], None]:
         """Register a handler for emoji reactions (reaction.received)."""
         self._reaction_handlers.append(handler)
         return handler
@@ -1108,9 +1154,7 @@ class CommClient:
                 # (e.g. running this in Claude Code) sees it and can top up.
                 self._warn_out_of_credit(exc)
             except Exception:
-                logger.exception(
-                    "on_message handler failed for message %s; continuing", message.id
-                )
+                logger.exception("on_message handler failed for message %s; continuing", message.id)
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
@@ -1137,8 +1181,10 @@ class CommClient:
         self._last_credit_warning = now
         balance = exc.balance_cents
         bal = f"${balance / 100:.2f}" if isinstance(balance, int) else "unknown"
-        dash = next((o.get("url") for o in exc.payment_options if o.get("url")),
-                    "https://dashboard.trycaspianai.com")
+        dash = next(
+            (o.get("url") for o in exc.payment_options if o.get("url")),
+            "https://dashboard.trycaspianai.com",
+        )
         lines = [
             "",
             "  ┌─────────────────────────────────────────────────────────────┐",
@@ -1205,9 +1251,7 @@ class CommClient:
                 except KeyboardInterrupt:
                     raise
                 except Exception:
-                    logger.warning(
-                        "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
-                    )
+                    logger.warning("gateway poll failed; retrying in %.1fs", backoff, exc_info=True)
                     time.sleep(backoff)
                     backoff = min(backoff * 2, max_backoff)
                     continue
@@ -1221,9 +1265,7 @@ class CommClient:
         finally:
             scheduler.close()
 
-    def handle_webhook(
-        self, body: str | bytes, signature: str, secret: str
-    ) -> None:
+    def handle_webhook(self, body: str | bytes, signature: str, secret: str) -> None:
         """Process a single event pushed by the gateway (serverless mode).
 
         Verifies the HMAC-SHA256 signature, enforces idempotency within this
@@ -1234,13 +1276,13 @@ class CommClient:
             body: The raw HTTP request body.
             signature: The signature header from the gateway.
             secret: Your configured webhook secret.
-        
+
         Raises:
             WebhookVerificationError: If the signature is invalid.
         """
         if isinstance(body, str):
             body = body.encode("utf-8")
-        
+
         expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise WebhookVerificationError()
@@ -1255,7 +1297,7 @@ class CommClient:
             if event_id in self._processed_events:
                 return  # already handled in this invocation
             self._processed_events.add(event_id)
-        
+
         # Discard old events to bound memory on warm serverless containers
         if len(self._processed_events) > 1000:
             self._processed_events.clear()

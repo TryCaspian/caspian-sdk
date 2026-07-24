@@ -1,13 +1,13 @@
-import pytest
-from caspian_sdk import CommClient, CommError
 import httpx
-from caspian_sdk.client import StreamSession
+from caspian_sdk import CommClient
 
 API_KEY = "comm_test_key"
+
 
 def _client(handler) -> CommClient:
     http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://gw.test")
     return CommClient(api_key=API_KEY, base_url="http://gw.test", http=http)
+
 
 def _message(client: CommClient) -> dict:
     return {
@@ -23,6 +23,7 @@ def _message(client: CommClient) -> dict:
         "html": None,
         "media": [],
     }
+
 
 def test_streaming_post_edit():
     seen = []
@@ -43,7 +44,9 @@ def test_streaming_post_edit():
         # Use a short edit_interval to force edits
         with msg.stream(edit_interval=0.01) as s:
             s.append("chunk1")
-            import time; time.sleep(0.02)
+            import time
+
+            time.sleep(0.02)
             s.append(" chunk2")
     finally:
         client.close()
@@ -59,13 +62,14 @@ def test_streaming_post_edit():
     assert seen[-1][1] == "/v1/messages/msg_reply_1"
     assert "chunk1 chunk2" in seen[-1][2]
 
+
 def test_streaming_final_only():
     seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path, request.read().decode("utf-8")))
         if request.method == "GET" and request.url.path == "/v1/connections/conn_1":
-            return httpx.Response(200, json={"capabilities": []}) # No edit_outbound
+            return httpx.Response(200, json={"capabilities": []})  # No edit_outbound
         if request.method == "POST":
             return httpx.Response(200, json={"id": "msg_reply_1"})
         return httpx.Response(404)
@@ -75,7 +79,9 @@ def test_streaming_final_only():
         msg = client._build_message({"message": _message(client)})
         with msg.stream(edit_interval=0.01) as s:
             s.append("chunk1")
-            import time; time.sleep(0.02)
+            import time
+
+            time.sleep(0.02)
             s.append(" chunk2")
     finally:
         client.close()

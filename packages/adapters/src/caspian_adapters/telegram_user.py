@@ -88,16 +88,17 @@ class TelegramUserProvider:
         return ProvisionResult(address=username, provider_resource_id=str(me.id))
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         """Cold-start a conversation with a recipient (@username or phone)."""
         client = self._telethon()
         sent = client.send_message(recipient, message.text or "")
         chat_id = str(sent.chat_id)
-        return SendResult(
-            provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id
-        )
+        return SendResult(provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id)
 
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
@@ -105,23 +106,25 @@ class TelegramUserProvider:
         client = self._telethon()
         chat_id = message.to[0]
         sent = client.send_message(int(chat_id), message.text or "")
-        return SendResult(
-            provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id
-        )
+        return SendResult(provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id)
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         client = self._telethon()
         chat_id, target = split_composite_id(provider_message_id)
         sent = client.send_message(int(chat_id), message.text or "", reply_to=int(target))
-        return SendResult(
-            provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id
-        )
+        return SendResult(provider_message_id=f"{chat_id}:{sent.id}", provider_thread_id=chat_id)
 
     def backfill(
-        self, provider_inbox_id: str, thread_id: str, limit: int,
+        self,
+        provider_inbox_id: str,
+        thread_id: str,
+        limit: int,
         credentials=None,
     ) -> list[InboundMessage]:
         """Fetch history from before the connection existed, oldest to newest."""
@@ -146,7 +149,9 @@ class TelegramUserProvider:
         return out
 
     def parse_webhook(
-        self, payload: bytes, headers: Mapping[str, str],
+        self,
+        payload: bytes,
+        headers: Mapping[str, str],
         credentials=None,
     ) -> list[InboundMessage]:
         # User accounts receive over MTProto, not webhooks. A dedicated listener

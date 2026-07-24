@@ -30,9 +30,7 @@ agent = client.create_agent("Support Bot")
 
 # One-click install of the shared Slack app - no Slack app to create.
 # Pass display_name to post under your own brand instead of the shared name.
-connection = client.install_slack(
-    customer["id"], agent["id"], display_name="Acme Support"
-)
+connection = client.install_slack(customer["id"], agent["id"], display_name="Acme Support")
 print("Open this once to add the bot to your Slack workspace:")
 print(f"    {connection['authorize_url']}")
 print("Waiting for the workspace owner to approve, then listening...\n")

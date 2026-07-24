@@ -43,7 +43,10 @@ class FakeTelegramUserProvider:
         )
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         chat_id = str(abs(hash(recipient)) % 1_000_000)
@@ -64,7 +67,10 @@ class FakeTelegramUserProvider:
         )
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         chat_id, _, target = provider_message_id.partition(":")
@@ -75,7 +81,10 @@ class FakeTelegramUserProvider:
         )
 
     def backfill(
-        self, provider_inbox_id: str, thread_id: str, limit: int,
+        self,
+        provider_inbox_id: str,
+        thread_id: str,
+        limit: int,
         credentials=None,
     ) -> list[InboundMessage]:
         rows = self.history.get(str(thread_id), [])[:limit]

@@ -72,7 +72,9 @@ def _notification_envelope(recipients, object_key="inbound/msg1"):
 def test_provision_allocates_address_on_domain():
     result = _provider().provision(
         ProvisionRequest(
-            connection_id="conn_1", customer_id="cus_1", agent_id="agt_1",
+            connection_id="conn_1",
+            customer_id="cus_1",
+            agent_id="agt_1",
             display_name="Order Support",
         )
     )
@@ -83,9 +85,7 @@ def test_provision_allocates_address_on_domain():
 
 def test_parse_inbound_notification():
     provider = _provider({"inbound/msg1": RAW_EMAIL})
-    inbound = provider.parse_webhook(
-        _notification_envelope(["support-abc@agents.example.com"]), {}
-    )
+    inbound = provider.parse_webhook(_notification_envelope(["support-abc@agents.example.com"]), {})
     assert len(inbound) == 1
     email_in = inbound[0]
     assert email_in.provider_inbox_id == "support-abc@agents.example.com"
@@ -114,8 +114,9 @@ def test_reply_sets_threading_headers():
     result = provider.reply(
         "support-abc@agents.example.com",
         "<original-123@example.com>",
-        OutboundMessage(text="On its way", subject="Re: Where is my order?",
-                        to=("alice@example.com",)),
+        OutboundMessage(
+            text="On its way", subject="Re: Where is my order?", to=("alice@example.com",)
+        ),
     )
     sent = message_from_bytes(provider._ses.sent[0], policy=policy.default)
     assert sent["In-Reply-To"] == "<original-123@example.com>"

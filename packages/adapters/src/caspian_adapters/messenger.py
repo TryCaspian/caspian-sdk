@@ -93,8 +93,9 @@ class _MetaMessagingProvider:
         )
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
-        return ProvisionResult(address=f"{self.channel}:{self._page_id}",
-                               provider_resource_id=self._page_id)
+        return ProvisionResult(
+            address=f"{self.channel}:{self._page_id}", provider_resource_id=self._page_id
+        )
 
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
@@ -102,7 +103,10 @@ class _MetaMessagingProvider:
         return self._send(message.to[0], message.text or "")
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         recipient, _ = split_composite_id(provider_message_id)
@@ -125,9 +129,9 @@ class _MetaMessagingProvider:
     ) -> list[InboundMessage]:
         if self._app_secret:
             received = lower_headers(headers).get("x-hub-signature-256", "")
-            expected = "sha256=" + hmac.new(
-                self._app_secret.encode(), payload, hashlib.sha256
-            ).hexdigest()
+            expected = (
+                "sha256=" + hmac.new(self._app_secret.encode(), payload, hashlib.sha256).hexdigest()
+            )
             if not hmac.compare_digest(received, expected):
                 raise WebhookVerificationError("Meta signature mismatch")
         return parse_messaging_webhook(payload, self._page_id, self.channel)
