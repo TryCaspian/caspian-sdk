@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    teams_messaging_endpoint: str = ""
+    teams_connector_base_url: str = "https://smba.trafficmanager.net/teams"
+    teams_token_url: str = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+    teams_openid_config_url: str = (
+        "https://login.botframework.com/v1/.well-known/openidconfiguration"
+    )
+
     # GitHub App credentials. The private key may be an inline PEM or a path to
     # its PEM file. Per-connection values can override these for bring-your-own
     # Apps; these deployment values power one-click installation.

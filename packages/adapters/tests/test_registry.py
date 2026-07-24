@@ -36,6 +36,12 @@ def test_instagram_and_facebook_build_from_settings():
     assert providers["facebook"].channel == "facebook"
 
 
+def test_teams_builds_from_settings():
+    providers = build_providers(Settings(providers="fake-teams,teams"))
+    assert providers["fake-teams"].channel == "teams"
+    assert providers["teams"].channel == "teams"
+
+
 def test_unknown_provider_points_to_plugins_and_hosted():
     with pytest.raises(ValueError) as excinfo:
         build_providers(Settings(providers="some-hosted-channel"))
