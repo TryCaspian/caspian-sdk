@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     modem_serial_port: str = ""
     modem_msisdn: str = ""
 
+    signal_socket_path: str = ""
+    signal_tcp_address: str = ""
+    signal_http_url: str = ""
+    signal_number: str = ""
+    signal_webhook_secret: str = ""
+
     discord_base_url: str = "https://discord.com/api/v10"
     # Shared Discord bot for one-click install (OAuth). Developers add this ONE
     # bot to their server; messages route by guild_id to their agent.

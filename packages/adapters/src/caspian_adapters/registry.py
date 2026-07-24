@@ -64,6 +64,23 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             serial_port=settings.modem_serial_port,
             msisdn=settings.modem_msisdn,
         )
+    if name == "fake-signal":
+        from .signal import FakeSignalProvider
+
+        return FakeSignalProvider(
+            number=settings.signal_number,
+            webhook_secret=settings.signal_webhook_secret,
+        )
+    if name == "signal":
+        from .signal import SignalProvider
+
+        return SignalProvider(
+            number=settings.signal_number,
+            socket_path=settings.signal_socket_path,
+            tcp_address=settings.signal_tcp_address,
+            http_url=settings.signal_http_url,
+            webhook_secret=settings.signal_webhook_secret,
+        )
     if name == "google-meet":
         import json as _json
         import pathlib as _pathlib
