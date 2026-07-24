@@ -897,12 +897,14 @@ class CommClient:
         if conversation_id not in self._conversation_queues:
             self._conversation_queues[conversation_id] = []
 
-        self._conversation_queues[conversation_id].append(event)
-
         if conversation_id in self._conversation_running:
             if self._concurrency == "drop":
                 return
+
+            self._conversation_queues[conversation_id].append(event)
             return
+
+        self._conversation_queues[conversation_id].append(event)
 
         self._conversation_running.add(conversation_id)
 
