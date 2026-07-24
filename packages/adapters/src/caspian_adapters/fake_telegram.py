@@ -56,7 +56,16 @@ class FakeTelegramProvider:
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
         chat_id = message.to[0]
-        self.sent.append({"bot_id": provider_inbox_id, "chat_id": chat_id, "text": message.text})
+
+        self.sent.append(
+            {
+                "bot_id": provider_inbox_id,
+                "chat_id": chat_id,
+                "text": message.text,
+                "attachments": message.attachments,
+            }
+        )
+
         return SendResult(
             provider_message_id=f"{chat_id}:{secrets.randbelow(100000)}",
             provider_thread_id=str(chat_id),
@@ -70,14 +79,17 @@ class FakeTelegramProvider:
         credentials: Mapping[str, str] | None = None,
     ) -> SendResult:
         chat_id, _, target_message_id = provider_message_id.partition(":")
+
         self.replies.append(
             {
                 "bot_id": provider_inbox_id,
                 "chat_id": chat_id,
                 "in_reply_to": target_message_id,
                 "text": message.text,
+                "attachments": message.attachments,
             }
         )
+
         return SendResult(
             provider_message_id=f"{chat_id}:{secrets.randbelow(100000)}",
             provider_thread_id=chat_id,
@@ -104,24 +116,41 @@ class FakeTelegramProvider:
         self,
         *,
         chat_id: int = 4242,
-        text: str = "Hi there",
+        text: str | None = "Hi there",
         sender_username: str = "customer",
         sender_first_name: str = "Customer",
+        photo: dict | None = None,
+        document: dict | None = None,
+        voice: dict | None = None,
         update_id: int | None = None,
         message_id: int | None = None,
     ) -> dict:
         self._update_seq += 1
+
+        message = {
+            "message_id": message_id if message_id is not None else self._update_seq,
+            "from": {
+                "id": 555_000 + self._update_seq,
+                "username": sender_username,
+                "first_name": sender_first_name,
+            },
+            "chat": {"id": chat_id, "type": "private"},
+            "date": 1_752_400_000,
+        }
+
+        if text is not None:
+            message["text"] = text
+
+        if photo is not None:
+            message["photo"] = [photo]
+
+        if document is not None:
+            message["document"] = document
+
+        if voice is not None:
+            message["voice"] = voice
+
         return {
             "update_id": update_id if update_id is not None else 100_000 + self._update_seq,
-            "message": {
-                "message_id": message_id if message_id is not None else self._update_seq,
-                "from": {
-                    "id": 555_000 + self._update_seq,
-                    "username": sender_username,
-                    "first_name": sender_first_name,
-                },
-                "chat": {"id": chat_id, "type": "private"},
-                "date": 1_752_400_000,
-                "text": text,
-            },
+            "message": message,
         }

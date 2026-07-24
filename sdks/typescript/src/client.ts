@@ -1,5 +1,9 @@
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import {
+  AccountRequiredError,
+  CommError,
+  InsufficientCreditError,
+} from "./errors.js";
 import type {
   Agent,
   AutopayOptions,
@@ -13,7 +17,7 @@ import type {
   EventRecord,
   ListenOptions,
   LoginOptions,
-  Media,
+  Attachment,
   SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";
@@ -57,7 +61,7 @@ export class Message {
     readonly html: string | null,
     private readonly client: CommClient,
     /** File attachments received with the message (empty when none). */
-    readonly media: Media[] = [],
+    readonly attachments: Attachment[] = [],
   ) {}
 
   /**
@@ -65,15 +69,15 @@ export class Message {
    *
    * Pass `blocks` — provider-neutral rich blocks — to render natively on
    * Slack/Discord/Telegram/email and degrade to clean text elsewhere. Pass
-   * `media` to attach files (images/documents).
+   * `attachments` to attach files (images/documents).
    */
   reply(
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
-    media?: Media[] | null,
+    attachments?: Attachment[] | null,
   ): Promise<Record<string, unknown>> {
-    return this.client.reply(this.id, text, html, blocks, media);
+    return this.client.reply(this.id, text, html, blocks, attachments);
   }
 
   /**
@@ -115,12 +119,18 @@ export class Interaction {
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
-    media?: Media[] | null,
+    attachments?: Attachment[] | null,
   ): Promise<Record<string, unknown>> {
     if (!this.sourceMessage) {
       throw new CommError(400, "interaction has no source message to reply to");
     }
-    return this.client.reply(this.sourceMessage.id, text, html, blocks, media);
+    return this.client.reply(
+      this.sourceMessage.id,
+      text,
+      html,
+      blocks,
+      attachments,
+    );
   }
 }
 
@@ -142,7 +152,9 @@ export class Reaction {
 }
 
 export type MessageHandler = (message: Message) => void | Promise<void>;
-export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
+export type InteractionHandler = (
+  interaction: Interaction,
+) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
 
 /**
@@ -164,15 +176,26 @@ export class CommClient {
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
     if (!apiKey) {
-      throw new CommError(401, "No API key: pass apiKey or set CASPIAN_API_KEY (env or ./.env)");
+      throw new CommError(
+        401,
+        "No API key: pass apiKey or set CASPIAN_API_KEY (env or ./.env)",
+      );
     }
     this.apiKey = apiKey;
-    this.baseUrl = (config(options.baseUrl, "CASPIAN_BASE_URL", "https://api.trycaspianai.com") as string)
-      .replace(/\/+$/, "");
+    this.baseUrl = (
+      config(
+        options.baseUrl,
+        "CASPIAN_BASE_URL",
+        "https://api.trycaspianai.com",
+      ) as string
+    ).replace(/\/+$/, "");
     this.timeoutMs = (options.timeout ?? 30) * 1000;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     if (!this.fetchImpl) {
-      throw new CommError(0, "global fetch is unavailable — use Node >= 18 or pass options.fetch");
+      throw new CommError(
+        0,
+        "global fetch is unavailable — use Node >= 18 or pass options.fetch",
+      );
     }
   }
 
@@ -186,10 +209,13 @@ export class CommClient {
     const url = new URL(this.baseUrl + path);
     if (opts.params) {
       for (const [key, value] of Object.entries(opts.params)) {
-        if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+        if (value !== undefined && value !== null)
+          url.searchParams.set(key, String(value));
       }
     }
-    const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+    };
     if (opts.json !== undefined) headers["Content-Type"] = "application/json";
 
     const response = await this.fetchImpl(url, {
@@ -207,7 +233,10 @@ export class CommClient {
         detailValue = body?.detail;
         if (body && body.detail != null) {
           // FastAPI validation errors put an array/object under `detail`.
-          detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+          detail =
+            typeof body.detail === "string"
+              ? body.detail
+              : JSON.stringify(body.detail);
         } else {
           detail = JSON.stringify(body);
         }
@@ -227,9 +256,11 @@ export class CommClient {
       if (
         (response.status === 402 || response.status === 429) &&
         isRecord(detailValue) &&
-        ["insufficient_credit", "monthly_cap_reached", "channel_cap_reached"].includes(
-          detailValue.reason,
-        )
+        [
+          "insufficient_credit",
+          "monthly_cap_reached",
+          "channel_cap_reached",
+        ].includes(detailValue.reason)
       ) {
         throw new InsufficientCreditError(response.status, detailValue, this);
       }
@@ -246,7 +277,10 @@ export class CommClient {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (response.status >= 400) {
-      throw new CommError(response.status, await response.text().catch(() => response.statusText));
+      throw new CommError(
+        response.status,
+        await response.text().catch(() => response.statusText),
+      );
     }
     return response.text();
   }
@@ -283,28 +317,38 @@ export class CommClient {
     opts: ConnectOptions = {},
     channelFields: Record<string, unknown> = {},
   ): Promise<Connection> {
-    let connection = await this.request<Connection>("POST", `/v1/connections/${channel}`, {
-      json: {
-        customer_id: opts.customerId ?? null,
-        agent_id: opts.agentId ?? null,
-        display_name: opts.displayName ?? null,
-        capabilities: opts.capabilities ?? null,
-        ...channelFields,
+    let connection = await this.request<Connection>(
+      "POST",
+      `/v1/connections/${channel}`,
+      {
+        json: {
+          customer_id: opts.customerId ?? null,
+          agent_id: opts.agentId ?? null,
+          display_name: opts.displayName ?? null,
+          capabilities: opts.capabilities ?? null,
+          ...channelFields,
+        },
       },
-    });
+    );
     if (opts.wait === false) return connection;
 
     const deadline = Date.now() + (opts.timeout ?? 60) * 1000;
     const pollMs = (opts.pollInterval ?? 0.5) * 1000;
     while (connection.status === "provisioning") {
       if (Date.now() >= deadline) {
-        throw new CommError(408, `connection ${connection.id} still provisioning`);
+        throw new CommError(
+          408,
+          `connection ${connection.id} still provisioning`,
+        );
       }
       await sleep(pollMs);
       connection = await this.getConnection(connection.id);
     }
     if (connection.status === "failed") {
-      throw new CommError(502, `provisioning failed: ${connection.error ?? ""}`);
+      throw new CommError(
+        502,
+        `provisioning failed: ${connection.error ?? ""}`,
+      );
     }
     return connection;
   }
@@ -317,11 +361,16 @@ export class CommClient {
     opts: ConnectOptions & { domain?: string; username?: string } = {},
   ): Promise<Connection> {
     const { domain, username, ...rest } = opts;
-    return this.connect("email", rest, { domain: domain ?? null, username: username ?? null });
+    return this.connect("email", rest, {
+      domain: domain ?? null,
+      username: username ?? null,
+    });
   }
 
   /** Connect a Telegram bot. Get a token from @BotFather; we do the rest. */
-  connectTelegram(opts: ConnectOptions & { botToken: string }): Promise<Connection> {
+  connectTelegram(
+    opts: ConnectOptions & { botToken: string },
+  ): Promise<Connection> {
     const { botToken, ...rest } = opts;
     return this.connect("telegram", rest, { bot_token: botToken });
   }
@@ -346,7 +395,9 @@ export class CommClient {
    * Connect an SMS/voice phone line. `provider` picks the backend when more than
    * one is configured (e.g. gsm-modem, or a hosted provider); omit for default.
    */
-  connectPhone(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
+  connectPhone(
+    opts: ConnectOptions & { provider?: string } = {},
+  ): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("phone", rest, { provider: provider ?? null });
   }
@@ -355,7 +406,9 @@ export class CommClient {
    * Connect a WhatsApp number. `provider` picks the backend when more than one is
    * configured, `provider` picks one explicitly; omit for the default.
    */
-  connectWhatsapp(opts: ConnectOptions & { provider?: string } = {}): Promise<Connection> {
+  connectWhatsapp(
+    opts: ConnectOptions & { provider?: string } = {},
+  ): Promise<Connection> {
     const { provider, ...rest } = opts;
     return this.connect("whatsapp", rest, { provider: provider ?? null });
   }
@@ -367,14 +420,21 @@ export class CommClient {
    * number is provisioned onto this agent. Poll getConnection() until active.
    */
   startWhatsappOnboarding(
-    opts: { customerId?: string; agentId?: string; displayName?: string; capabilities?: string[] } = {},
+    opts: {
+      customerId?: string;
+      agentId?: string;
+      displayName?: string;
+      capabilities?: string[];
+    } = {},
   ): Promise<WhatsappOnboarding> {
     const body: Record<string, unknown> = {};
     if (opts.customerId !== undefined) body.customer_id = opts.customerId;
     if (opts.agentId !== undefined) body.agent_id = opts.agentId;
     if (opts.displayName !== undefined) body.display_name = opts.displayName;
     if (opts.capabilities !== undefined) body.capabilities = opts.capabilities;
-    return this.request("POST", "/v1/connections/whatsapp/onboarding-session", { json: body });
+    return this.request("POST", "/v1/connections/whatsapp/onboarding-session", {
+      json: body,
+    });
   }
 
   /** Connect an iMessage line (Caspian hosted). */
@@ -438,12 +498,17 @@ export class CommClient {
       slackSigningSecret?: string;
     } = {},
   ): Promise<Connection> {
-    const { slackClientId, slackClientSecret, slackSigningSecret, ...rest } = opts;
-    return this.connect("slack", { ...rest, wait: false }, {
-      slack_client_id: slackClientId ?? null,
-      slack_client_secret: slackClientSecret ?? null,
-      slack_signing_secret: slackSigningSecret ?? null,
-    });
+    const { slackClientId, slackClientSecret, slackSigningSecret, ...rest } =
+      opts;
+    return this.connect(
+      "slack",
+      { ...rest, wait: false },
+      {
+        slack_client_id: slackClientId ?? null,
+        slack_client_secret: slackClientSecret ?? null,
+        slack_signing_secret: slackSigningSecret ?? null,
+      },
+    );
   }
 
   /**
@@ -452,7 +517,12 @@ export class CommClient {
    * `displayName` and `iconUrl` to post under YOUR own name + icon.
    */
   installSlack(
-    opts: { customerId?: string; agentId?: string; displayName?: string; iconUrl?: string } = {},
+    opts: {
+      customerId?: string;
+      agentId?: string;
+      displayName?: string;
+      iconUrl?: string;
+    } = {},
   ): Promise<Connection> {
     return this.request("POST", "/v1/connections/slack/install", {
       json: {
@@ -473,7 +543,10 @@ export class CommClient {
     opts: { displayName?: string; iconUrl?: string } = {},
   ): Promise<Connection> {
     return this.request("PATCH", `/v1/connections/${connectionId}`, {
-      json: { display_name: opts.displayName ?? null, icon_url: opts.iconUrl ?? null },
+      json: {
+        display_name: opts.displayName ?? null,
+        icon_url: opts.iconUrl ?? null,
+      },
     });
   }
 
@@ -503,9 +576,14 @@ export class CommClient {
    * One-click connect of an X account as a DM bot — no tokens to paste. Returns a
    * connection with an `authorize_url` ("Sign in with X").
    */
-  installX(opts: { customerId?: string; agentId?: string } = {}): Promise<Connection> {
+  installX(
+    opts: { customerId?: string; agentId?: string } = {},
+  ): Promise<Connection> {
     return this.request("POST", "/v1/connections/x/install", {
-      json: { customer_id: opts.customerId ?? null, agent_id: opts.agentId ?? null },
+      json: {
+        customer_id: opts.customerId ?? null,
+        agent_id: opts.agentId ?? null,
+      },
     });
   }
 
@@ -544,10 +622,15 @@ export class CommClient {
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
-    media?: Media[] | null,
+    attachments?: Attachment[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/reply`, {
-      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
+      json: {
+        text: text ?? null,
+        html: html ?? null,
+        blocks: blocks ?? null,
+        attachments: attachments ?? null,
+      },
     });
   }
 
@@ -557,7 +640,9 @@ export class CommClient {
    * `reacted: false` rather than erroring.
    */
   react(messageId: string, emoji: string): Promise<Record<string, unknown>> {
-    return this.request("POST", `/v1/messages/${messageId}/react`, { json: { emoji } });
+    return this.request("POST", `/v1/messages/${messageId}/react`, {
+      json: { emoji },
+    });
   }
 
   /**
@@ -570,7 +655,9 @@ export class CommClient {
 
   /** Receive events by push instead of (or alongside) polling. */
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
-    return this.request("PUT", "/v1/webhook", { json: { url, secret: secret ?? null } });
+    return this.request("PUT", "/v1/webhook", {
+      json: { url, secret: secret ?? null },
+    });
   }
 
   getWebhook(): Promise<Record<string, unknown>> {
@@ -611,7 +698,9 @@ export class CommClient {
       });
       const status = result.status;
       if (status === "approved") {
-        process.stderr.write("  Signed in. Add credit to start using paid channels.\n");
+        process.stderr.write(
+          "  Signed in. Add credit to start using paid channels.\n",
+        );
         return result;
       }
       if (status === "expired" || status === "not_found") {
@@ -640,7 +729,9 @@ export class CommClient {
    * `billing()` or watch for the `billing.credited` event. Minimum 100 cents.
    */
   topUp(amountCents = 2000): Promise<Record<string, unknown>> {
-    return this.request("POST", "/v1/billing/topup", { json: { amount_cents: amountCents } });
+    return this.request("POST", "/v1/billing/topup", {
+      json: { amount_cents: amountCents },
+    });
   }
 
   /**
@@ -648,9 +739,12 @@ export class CommClient {
    * monthly spend; `channelCaps` caps per channel (e.g. { whatsapp: 5000 }).
    * Returns the updated billing state.
    */
-  setSpendLimits(opts: SpendLimitsOptions = {}): Promise<Record<string, unknown>> {
+  setSpendLimits(
+    opts: SpendLimitsOptions = {},
+  ): Promise<Record<string, unknown>> {
     const body: Record<string, unknown> = {};
-    if (opts.monthlyCapCents !== undefined) body.monthly_cap_cents = opts.monthlyCapCents;
+    if (opts.monthlyCapCents !== undefined)
+      body.monthly_cap_cents = opts.monthlyCapCents;
     if (opts.channelCaps !== undefined) body.channel_caps = opts.channelCaps;
     return this.request("PUT", "/v1/billing/limits", { json: body });
   }
@@ -683,23 +777,43 @@ export class CommClient {
     text?: string | null,
     html?: string | null,
     blocks?: Block[] | null,
-    media?: Media[] | null,
+    attachments?: Attachment[] | null,
   ): Promise<Record<string, unknown>> {
-    return this.request("POST", `/v1/conversations/${conversationId}/messages`, {
-      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
-    });
+    return this.request(
+      "POST",
+      `/v1/conversations/${conversationId}/messages`,
+      {
+        json: {
+          text: text ?? null,
+          html: html ?? null,
+          blocks: blocks ?? null,
+          attachments: attachments ?? null,
+        },
+      },
+    );
   }
 
   /** Cold-start a conversation (needs Capability.INITIATE — user account). */
-  initiate(connectionId: string, recipient: string, text: string): Promise<Record<string, unknown>> {
+  initiate(
+    connectionId: string,
+    recipient: string,
+    text: string,
+  ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/connections/${connectionId}/initiate`, {
       json: { recipient, text },
     });
   }
 
   /** Pull history from before the connection (needs Capability.BACKFILL). */
-  backfill(conversationId: string, limit = 50): Promise<Record<string, unknown>> {
-    return this.request("POST", `/v1/conversations/${conversationId}/backfill`, { json: { limit } });
+  backfill(
+    conversationId: string,
+    limit = 50,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `/v1/conversations/${conversationId}/backfill`,
+      { json: { limit } },
+    );
   }
 
   testEmail(
@@ -713,7 +827,9 @@ export class CommClient {
     return this.request("POST", "/v1/test-emails", { json: body });
   }
 
-  events(opts: { afterSeq?: number; limit?: number; type?: string } = {}): Promise<EventRecord[]> {
+  events(
+    opts: { afterSeq?: number; limit?: number; type?: string } = {},
+  ): Promise<EventRecord[]> {
     const params: Record<string, unknown> = {
       after_seq: opts.afterSeq ?? 0,
       limit: opts.limit ?? 100,
@@ -760,7 +876,7 @@ export class CommClient {
       m.text ?? null,
       m.html ?? null,
       this,
-      m.media ?? [],
+      m.attachments ?? [],
     );
   }
 
@@ -780,7 +896,8 @@ export class CommClient {
         await handler(interaction);
       } catch (err) {
         if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
-        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else if (err instanceof InsufficientCreditError)
+          this.warnOutOfCredit(err);
         else logger.error("onInteraction handler failed; continuing", err);
       }
     }
@@ -852,7 +969,10 @@ export class CommClient {
         } else if (err instanceof InsufficientCreditError) {
           this.warnOutOfCredit(err);
         } else {
-          logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+          logger.error(
+            `onMessage handler failed for message ${message.id}; continuing`,
+            err,
+          );
         }
       }
     }
@@ -881,7 +1001,10 @@ export class CommClient {
     if (now - this.lastCreditWarning < 60_000) return;
     this.lastCreditWarning = now;
     const balance = err.balanceCents;
-    const bal = typeof balance === "number" ? `$${(balance / 100).toFixed(2)}` : "unknown";
+    const bal =
+      typeof balance === "number"
+        ? `$${(balance / 100).toFixed(2)}`
+        : "unknown";
     let dash = "https://dashboard.trycaspianai.com";
     for (const option of err.paymentOptions) {
       const url = (option as Record<string, unknown>).url;
@@ -936,7 +1059,10 @@ export class CommClient {
         batch = await this.events({ afterSeq: seq });
       } catch (err) {
         if (opts.signal?.aborted) return;
-        logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
+        logger.warn(
+          `gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`,
+          err,
+        );
         await sleep(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoffMs);
         continue;

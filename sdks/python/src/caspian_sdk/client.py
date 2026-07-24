@@ -129,16 +129,22 @@ class Message:
     _client: "CommClient" = field(repr=False)
     # File attachments received with the message: each {"url"|"data", "mime_type",
     # "name", "size"}. Empty on channels/messages with no attachments.
-    media: list[dict] = field(default_factory=list)
+    attachments: list[dict] = field(default_factory=list)
 
     def reply(
         self,
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        media: list[dict] | None = None,
+        attachments: list[dict] | None = None,
     ) -> dict:
-        return self._client.reply(self.id, text=text, html=html, blocks=blocks, media=media)
+        return self._client.reply(
+            self.id,
+            text=text,
+            html=html,
+            blocks=blocks,
+            attachments=attachments,
+        )
 
     def react(self, emoji: str) -> dict:
         """Add an emoji reaction (tapback) to this message. Best-effort; no-op on
@@ -171,13 +177,18 @@ class Interaction:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        media: list[dict] | None = None,
+        attachments: list[dict] | None = None,
     ) -> dict:
         """Reply in the thread the button lived in (replies to the source message)."""
         if not self.source_message:
             raise CommError(400, "interaction has no source message to reply to")
+    
         return self._client.reply(
-            self.source_message["id"], text=text, html=html, blocks=blocks, media=media
+            self.source_message["id"],
+            text=text,
+            html=html,
+            blocks=blocks,
+            attachments=attachments,
         )
 
 
@@ -530,24 +541,27 @@ class CommClient:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        media: list[dict] | None = None,
+        attachments: list[dict] | None = None,
     ) -> dict:
         """Reply on the channel the message arrived from.
-
+    
         Pass ``blocks`` — a list of provider-neutral block dicts (heading, text,
         divider, image, fields, list, buttons, card) — to send a rich message.
         Channels that support rich layout (Slack, Discord, Telegram, email)
         render it natively; every other channel degrades to clean text
         automatically. See ``caspian_sdk.blocks`` for helper builders.
-
-        Pass ``media`` — a list of ``{"url"|"data", "mime_type", "name"}`` dicts —
-        to attach files (images/documents); channels that carry files send them
-        natively and others fall back to the URL.
+    
+        Pass ``attachments`` — a list of attachment dicts — to attach files.
         """
         return self._request(
             "POST",
             f"/v1/messages/{message_id}/reply",
-            json={"text": text, "html": html, "blocks": blocks, "media": media},
+            json={
+                "text": text,
+                "html": html,
+                "blocks": blocks,
+                "attachments": attachments,
+            },
         )
 
     def react(self, message_id: str, emoji: str) -> dict:
@@ -668,19 +682,25 @@ class CommClient:
         text: str | None = None,
         html: str | None = None,
         blocks: list[dict] | None = None,
-        media: list[dict] | None = None,
+        attachments: list[dict] | None = None,
     ) -> dict:
         """Proactively send into an existing conversation (needs Capability.SEND).
-
+    
         Pass ``blocks`` — a list of provider-neutral block dicts — for a rich
         message that renders natively on Slack/Discord/Telegram/email and
-        degrades to clean text elsewhere. Pass ``media`` to attach files. See
-        ``caspian_sdk.blocks``.
+        degrades to clean text elsewhere.
+    
+        Pass ``attachments`` to attach files.
         """
         return self._request(
             "POST",
             f"/v1/conversations/{conversation_id}/messages",
-            json={"text": text, "html": html, "blocks": blocks, "media": media},
+            json={
+                "text": text,
+                "html": html,
+                "blocks": blocks,
+                "attachments": attachments,
+            },
         )
 
     def initiate(self, connection_id: str, recipient: str, text: str) -> dict:
@@ -947,6 +967,6 @@ class CommClient:
             subject=message.get("subject"),
             text=message.get("text"),
             html=message.get("html"),
-            media=message.get("media") or [],
+            attachments=message.get("attachments") or [],
             _client=self,
         )
