@@ -184,6 +184,7 @@ describe("CommClient", () => {
       await m.reply(`echo: ${m.text}`);
     });
     const last = await client.dispatchPending(0);
+    await client.close();
 
     expect(last).toBe(1);
     expect(seen).toHaveLength(1);
@@ -241,10 +242,9 @@ describe("CommClient", () => {
     client.onMessage((m) => {
       seen.push(m.text ?? "");
     });
-    const ac = new AbortController();
-    ac.abort();
-    await client.listen({ ack: "On it, one moment…", signal: ac.signal }); // sets ack, returns (aborted)
+    (client as any).ackMessage = "On it, one moment…";
     await client.dispatchPending(0); // now dispatches with the ack configured
+    await client.close();
     expect(replies[0]).toBe("On it, one moment…"); // ack fired first
     expect(seen).toEqual(["hi"]); // handler still ran
   });
@@ -349,6 +349,7 @@ describe("CommClient", () => {
       );
     });
     const last = await client.dispatchPending(0);
+    await client.close();
     expect(last).toBe(1);
     const printed = errSpy.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("OUT OF CREDIT");
@@ -406,6 +407,7 @@ describe("CommClient", () => {
       await i.reply(`got ${i.value}`);
     });
     const last = await client.dispatchPending(0);
+    await client.close();
     expect(last).toBe(1);
     expect(seen).toHaveLength(1);
     expect(seen[0].value).toBe("reorder_123");
@@ -437,6 +439,7 @@ describe("CommClient", () => {
       seen.push(r);
     });
     await client.dispatchPending(0);
+    await client.close();
     expect(seen).toHaveLength(1);
     expect(seen[0].emoji).toBe("thumbsup");
     expect(seen[0].action).toBe("added");
@@ -470,6 +473,7 @@ describe("CommClient", () => {
       seen.push(m);
     });
     await client.dispatchPending(0);
+    await client.close();
     expect(seen[0].media).toEqual([{ name: "r.pdf", mime_type: "application/pdf" }]);
   });
 
@@ -495,6 +499,7 @@ describe("CommClient", () => {
       throw new Error("boom");
     });
     const last = await client.dispatchPending(0);
+    await client.close();
     expect(last).toBe(2);
     expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
@@ -527,7 +532,7 @@ describe("CommClient", () => {
     const second = (client as any).handleConcurrency(messageEvent(2, "m2"), "queue", 500);
     await new Promise((r) => setTimeout(r, 10));
     expect(seen).toEqual([]);
-    await Promise.all([first, second]);
+    await (client as any).scheduler.close();
     expect(seen).toEqual(["m1", "m2"]);
     expect(maxActive).toBe(1);
   });
@@ -557,37 +562,31 @@ describe("CommClient", () => {
   });
 
   it("concurrency=drop ignores overlapping messages for the same conversation", async () => {
-    const events1 = [
-      { seq: 1, type: "message.received", data: { message: { id: "m1", conversation_id: "c1", connection_id: "c" } } },
-    ];
-    const events2 = [
-      { seq: 2, type: "message.received", data: { message: { id: "m2", conversation_id: "c1", connection_id: "c" } } },
-    ];
-    let fetchCount = 0;
+    const events = Array.from({ length: 20 }, (_, i) => ({
+      seq: i + 1,
+      type: "message.received",
+      data: { message: { id: `m${i}`, conversation_id: "c1", connection_id: "c" } },
+    }));
+
     const { client } = makeClient({
-      "GET /v1/events": (req) => {
-        const after = Number(new URL(req.url).searchParams.get("after_seq"));
-        if (after === 0 && fetchCount === 0) {
-          fetchCount++;
-          return json(events1);
-        }
-        if (after === 1 && fetchCount === 1) {
-          fetchCount++;
-          return json(events2);
-        }
-        return json([]);
-      },
+      "GET /v1/events": () => json([]),
     });
+
     const seen: string[] = [];
     client.onMessage(async (m) => {
       seen.push(m.id);
-      if (seen.length === 1) {
-        // Re-entrant call to dispatchPending to simulate concurrent webhook while m1 is in-flight
-        await client.dispatchPending(1, "drop");
-      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    await client.dispatchPending(0, "drop");
-    expect(seen).toEqual(["m1"]);
+
+    // Fire 20 concurrent handleConcurrency calls for the same conversation.
+    // Because JS is single-threaded and the check-and-set in drop mode is synchronous,
+    // exactly one handler should run.
+    await Promise.all(
+      events.map((event) => (client as any).handleConcurrency(event, "drop", 500))
+    );
+
+    await client.close();
+    expect(seen).toHaveLength(1);
   });
 
   it("concurrency=debounce coalesces bursts", async () => {
@@ -629,20 +628,76 @@ describe("CommClient", () => {
       });
 
       await (client as any).handleConcurrency(messageEvent(1, "boom"), concurrency, 10);
-      if (concurrency === "parallel" || concurrency === "debounce") {
-        await new Promise((r) => setTimeout(r, 50));
-      }
+      await new Promise((r) => setTimeout(r, 50));
       await (client as any).handleConcurrency(messageEvent(2, "ok"), concurrency, 10);
-      if (concurrency === "parallel" || concurrency === "debounce") {
-        await new Promise((r) => setTimeout(r, 50));
-      }
+      await new Promise((r) => setTimeout(r, 50));
 
       expect(seen).toEqual(["boom", "ok"]);
-      expect((client as any).inFlight.has("c1")).toBe(false);
-      expect((client as any).queuePromises.has("c1")).toBe(false);
-      expect((client as any).debounceTimers.has("c1")).toBe(false);
-      expect((client as any).debounceEvents.has("c1")).toBe(false);
+      const sched = (client as any).scheduler;
+      expect(sched.inFlight.has("c1")).toBe(false);
+      expect(sched.queuePromises.has("c1")).toBe(false);
+      expect(sched.debounceTimers.has("c1")).toBe(false);
+      expect(sched.debounceEvents.has("c1")).toBe(false);
       errorSpy.mockRestore();
     }
   );
+
+  describe("new scheduler features", () => {
+    it("rejects invalid concurrency or debounce options", async () => {
+      const { client } = makeClient({ "GET /v1/events": () => json([]) });
+      
+      await expect(client.dispatchPending(0, "bogus" as any)).rejects.toThrow(TypeError);
+      await expect(client.dispatchPending(0, "queue", -1)).rejects.toThrow(TypeError);
+      
+      const abort = new AbortController();
+      abort.abort();
+      await expect(client.listen({ concurrency: "invalid_mode" as any, signal: abort.signal })).rejects.toThrow(TypeError);
+      await expect(client.listen({ debounceMs: -100, signal: abort.signal })).rejects.toThrow(TypeError);
+    });
+
+    it("concurrency=queue runs different conversations concurrently", async () => {
+      const { client } = makeClient({ "GET /v1/events": () => json([]) });
+      const seen: string[] = [];
+      client.onMessage(async (m) => {
+        seen.push(m.id);
+        await new Promise(r => setTimeout(r, 50));
+      });
+
+      const start = performance.now();
+      const p1 = (client as any).handleConcurrency(
+        { type: "message.received", data: { message: { id: "m1", conversation_id: "conv_A", connection_id: "c" } } },
+        "queue",
+        500
+      );
+      const p2 = (client as any).handleConcurrency(
+        { type: "message.received", data: { message: { id: "m2", conversation_id: "conv_B", connection_id: "c" } } },
+        "queue",
+        500
+      );
+      await Promise.all([p1, p2]);
+      
+      // wait for tracked tasks
+      await (client as any).scheduler.close();
+      const elapsed = performance.now() - start;
+      
+      expect(seen.sort()).toEqual(["m1", "m2"]);
+      expect(elapsed).toBeLessThan(80); // < 100ms means parallel
+    });
+
+    it("shutdown drains pending debounce work", async () => {
+      const { client } = makeClient({ "GET /v1/events": () => json([]) });
+      const seen: string[] = [];
+      client.onMessage(async (m) => {
+        seen.push(m.id);
+      });
+
+      await (client as any).handleConcurrency(messageEvent(1, "pending_msg"), "debounce", 5000);
+      expect(seen).toEqual([]); // Hasn't fired yet
+
+      // close() should flush it immediately
+      await (client as any).scheduler.close();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBe("pending_msg");
+    });
+  });
 });

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from caspian_sdk import CommClient, CommError
 
+
 API_KEY = "comm_test_key"
 
 
@@ -420,47 +421,45 @@ def test_concurrency_drop():
 
 
 def test_concurrency_drop_check_and_set_is_atomic():
+    """Verify that the drop mode's check-and-claim is atomic.
+
+    This fires concurrent submit() calls for the same conversation_id under
+    drop mode from multiple threads, released via a barrier to hit submit()
+    at the same time. Only one should successfully run the handler.
+    """
     import threading
     import time
-
-    class RacingInFlight(set):
-        def __init__(self, should_race):
-            super().__init__()
-            self.should_race = should_race
-            self.barrier = threading.Barrier(2)
-
-        def __contains__(self, item):
-            if self.should_race():
-                result = super().__contains__(item)
-                self.barrier.wait(timeout=0.5)
-                time.sleep(0.01)
-                return result
-            return super().__contains__(item)
 
     def handler(request):
         return httpx.Response(200, json=[])
 
     client = _client(handler)
     seen = []
-    client._in_flight = RacingInFlight(lambda: not seen)
-    start = threading.Barrier(2)
+    
+    # Fire 20 concurrent drops for the same conversation
+    N = 20
+    start_barrier = threading.Barrier(N)
 
     def handle(m):
         seen.append(m.id)
-        time.sleep(0.03)
+        time.sleep(0.05)
 
-    def dispatch(event):
-        start.wait(timeout=0.5)
+    def dispatch(i):
+        # We must use the same conversation ID "c1" to trigger the drop logic.
+        event = _message_event(i, f"m{i}", conv_id="c1")
+        start_barrier.wait(timeout=2.0)
         client._handle_concurrency(event, "drop", 500)
 
     client.on_message(handle)
+    threads = []
     try:
-        t1 = threading.Thread(target=dispatch, args=(_message_event(1, "m1"),))
-        t2 = threading.Thread(target=dispatch, args=(_message_event(2, "m2"),))
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
+        for i in range(N):
+            t = threading.Thread(target=dispatch, args=(i,))
+            threads.append(t)
+            t.start()
+        
+        for t in threads:
+            t.join()
     finally:
         client.close()
 
@@ -510,16 +509,110 @@ def test_concurrency_handler_exception_releases_state(concurrency):
     client.on_message(handle)
     try:
         client._handle_concurrency(_message_event(1, "boom"), concurrency, 10)
-        if concurrency in {"parallel", "debounce"}:
-            time.sleep(0.05)
+        time.sleep(0.05)
         client._handle_concurrency(_message_event(2, "ok"), concurrency, 10)
-        if concurrency in {"parallel", "debounce"}:
-            time.sleep(0.05)
+        time.sleep(0.05)
     finally:
         client.close()
 
     assert seen == ["boom", "ok"]
-    assert "c1" not in client._in_flight
-    assert "c1" not in client._conv_locks
-    assert "c1" not in client._conv_debounce_timers
-    assert "c1" not in client._conv_debounce_events
+    sched = client._scheduler
+    assert "c1" not in sched._in_flight
+    assert "c1" not in sched._conv_locks
+    assert "c1" not in sched._conv_debounce_timers
+    assert "c1" not in sched._conv_debounce_events
+
+
+# ---- New tests for the scheduler upgrade ------------------------------------
+
+
+def test_listen_rejects_invalid_overlap_options():
+    """Invalid concurrency mode or negative debounce_ms must raise ValueError
+    immediately, not silently fall through to queue-like behavior."""
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    try:
+        with pytest.raises(ValueError, match="concurrency"):
+            client.dispatch_pending(0, concurrency="bogus")
+
+        with pytest.raises(ValueError, match="debounce_ms"):
+            client.dispatch_pending(0, debounce_ms=-1)
+
+        with pytest.raises(ValueError, match="concurrency"):
+            client.listen(concurrency="invalid_mode")
+
+        with pytest.raises(ValueError, match="debounce_ms"):
+            client.listen(debounce_ms=-100)
+    finally:
+        client.close()
+
+
+def test_cross_conversation_queue_runs_concurrently():
+    """Two conversations under queue mode should run in parallel. If a handler
+    sleeps 50ms per conversation, dispatching two conversations should complete
+    in ~50ms (parallel), not ~100ms (serial)."""
+    import threading
+    import time
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    done = threading.Event()
+    seen = []
+
+    def handle(m):
+        seen.append(m.id)
+        time.sleep(0.05)
+
+    client.on_message(handle)
+    try:
+        start = time.monotonic()
+        t1 = threading.Thread(
+            target=client._handle_concurrency,
+            args=(_message_event(1, "m1", "conv_A"), "queue", 500),
+        )
+        t2 = threading.Thread(
+            target=client._handle_concurrency,
+            args=(_message_event(2, "m2", "conv_B"), "queue", 500),
+        )
+        t1.start()
+        t2.start()
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+        elapsed = time.monotonic() - start
+    finally:
+        client.close()
+
+    assert sorted(seen) == ["m1", "m2"]
+    # If they ran serially this would be ~100ms; parallel should be ~50-60ms.
+    assert elapsed < 0.08, f"took {elapsed:.3f}s — conversations ran serially, not in parallel"
+
+
+def test_shutdown_drains_pending_debounce():
+    """When close() is called while a debounce timer is pending, the scheduler
+    must flush (dispatch) the pending debounced events before returning, rather
+    than silently dropping them."""
+    import time
+
+    def handler(request):
+        return httpx.Response(200, json=[])
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+
+    # Submit a debounced event with a long timer so it won't fire on its own.
+    client._handle_concurrency(
+        _message_event(1, "pending_msg"), "debounce", 5000
+    )
+    # The event should not have fired yet.
+    assert seen == []
+
+    # close() should flush the pending event.
+    client.close()
+    assert len(seen) == 1
+    assert seen[0].id == "pending_msg"

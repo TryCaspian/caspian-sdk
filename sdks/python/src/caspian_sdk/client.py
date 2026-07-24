@@ -20,13 +20,272 @@ import os
 import sys
 import threading
 import time
+import collections
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger("caspian_sdk")
+
+VALID_CONCURRENCY_MODES = ("queue", "parallel", "debounce", "drop")
+
+
+def _validate_concurrency_options(concurrency: str, debounce_ms: int) -> None:
+    """Raise ValueError if concurrency mode or debounce_ms are invalid."""
+    if concurrency not in VALID_CONCURRENCY_MODES:
+        raise ValueError(
+            f"concurrency must be one of {'/'.join(repr(m) for m in VALID_CONCURRENCY_MODES)}, "
+            f"got {concurrency!r}"
+        )
+    if debounce_ms < 0:
+        raise ValueError(f"debounce_ms must be non-negative, got {debounce_ms}")
+
+
+class _MessageScheduler:
+    """Owns per-conversation concurrency state and dispatches work via a thread
+    pool so that different conversations can process in parallel while the same
+    conversation is serialized (under queue/drop modes).
+
+    The scheduler is a separate class so that the concurrency feature is isolated
+    from the rest of CommClient and can be tested and shut down independently.
+    """
+
+    def __init__(self, max_workers: int = 16) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        # Per-conversation serialization locks (used by queue and drop modes).
+        self._conv_locks_lock = threading.Lock()
+        self._conv_locks: dict[str, threading.Lock] = {}
+        self._conv_lock_refs: dict[str, int] = {}
+
+        # Tracks which conversations have a handler currently executing.
+        self._in_flight: set[str] = set()
+
+        # Debounce state: a timer and accumulated events per conversation.
+        self._debounce_lock = threading.Lock()
+        self._conv_debounce_timers: dict[str, threading.Timer] = {}
+        self._conv_debounce_events: dict[str, dict] = {}
+
+        # Queue state: per-conversation deque and lock
+        self._conv_queues_lock = threading.Lock()
+        self._conv_queues: dict[str, collections.deque] = {}
+
+        self._closed = False
+
+    # -- Public API -----------------------------------------------------------
+
+    def submit(
+        self,
+        event: dict,
+        concurrency: str,
+        debounce_ms: int,
+        dispatch_fn: Callable[[dict], None],
+    ) -> None:
+        """Schedule *event* for dispatch under the given concurrency mode.
+
+        For queue and drop modes the per-conversation lock ensures serialization
+        within a conversation, while the thread pool allows different
+        conversations to run concurrently.
+
+        For parallel mode, each event is submitted directly to the pool.
+
+        For debounce mode, events are accumulated and the latest is dispatched
+        after the debounce window expires.
+        """
+        if self._closed:
+            return
+
+        if event.get("type") != "message.received":
+            dispatch_fn(event)
+            return
+
+        message_data = event.get("data", {})
+        conv_id = message_data.get("message", {}).get("conversation_id")
+        if not conv_id:
+            dispatch_fn(event)
+            return
+
+        if concurrency == "parallel":
+            self._executor.submit(self._safe_dispatch, dispatch_fn, event)
+            return
+
+        if concurrency == "debounce":
+            self._handle_debounce(event, conv_id, debounce_ms, dispatch_fn)
+            return
+
+        if concurrency == "queue":
+            with self._conv_queues_lock:
+                queue = self._conv_queues.get(conv_id)
+                if queue is None:
+                    queue = collections.deque()
+                    self._conv_queues[conv_id] = queue
+                    is_new = True
+                else:
+                    is_new = False
+                queue.append((event, dispatch_fn))
+
+            if is_new:
+                self._executor.submit(self._drain_queue, conv_id)
+            return
+
+        lock = self._reserve_conv_lock(conv_id)
+        if concurrency == "drop":
+            if not lock.acquire(blocking=False):
+                self._release_conv_lock_ref(conv_id, lock)
+                return
+            self._in_flight.add(conv_id)
+            self._executor.submit(
+                self._run_with_lock, dispatch_fn, event, conv_id, lock
+            )
+
+    def close(self) -> None:
+        """Gracefully shut down: flush pending debounce work, then wait for all
+        in-flight tasks to finish."""
+        if self._closed:
+            return
+        self._closed = True
+
+        # Cancel timers and flush any pending debounced events so they are not
+        # silently dropped.
+        with self._debounce_lock:
+            timers = dict(self._conv_debounce_timers)
+            for timer in timers.values():
+                timer.cancel()
+            conv_ids_to_flush = list(self._conv_debounce_events.keys())
+
+        for conv_id in conv_ids_to_flush:
+            # _flush_debounce pops from the maps, so it's safe to call even if
+            # the timer already fired.
+            self._flush_debounce(conv_id)
+
+        self._executor.shutdown(wait=True)
+
+    # -- Internal helpers -----------------------------------------------------
+
+    @staticmethod
+    def _safe_dispatch(dispatch_fn: Callable[[dict], None], event: dict) -> None:
+        """Call dispatch_fn, catching exceptions so one bad event can never
+        crash a pool thread."""
+        try:
+            dispatch_fn(event)
+        except Exception:
+            logger.exception("dispatch failed in thread pool; continuing")
+
+    def _drain_queue(self, conv_id: str) -> None:
+        """Process all queued events for a conversation in a single task, 
+        preventing thread pool exhaustion under bursty load."""
+        self._in_flight.add(conv_id)
+        try:
+            while True:
+                with self._conv_queues_lock:
+                    queue = self._conv_queues.get(conv_id)
+                    if not queue:
+                        self._conv_queues.pop(conv_id, None)
+                        break
+                    event, dispatch_fn = queue.popleft()
+                try:
+                    dispatch_fn(event)
+                except Exception:
+                    logger.exception("dispatch failed in queue mode; continuing")
+        finally:
+            self._in_flight.discard(conv_id)
+
+    def _run_with_lock(
+        self,
+        dispatch_fn: Callable[[dict], None],
+        event: dict,
+        conv_id: str,
+        lock: threading.Lock,
+    ) -> None:
+        """Run dispatch_fn while holding *lock* (already acquired), then release."""
+        try:
+            dispatch_fn(event)
+        except Exception:
+            logger.exception("dispatch failed in drop mode; continuing")
+        finally:
+            self._in_flight.discard(conv_id)
+            lock.release()
+            self._release_conv_lock_ref(conv_id, lock)
+
+    def _reserve_conv_lock(self, conv_id: str) -> threading.Lock:
+        with self._conv_locks_lock:
+            lock = self._conv_locks.get(conv_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._conv_locks[conv_id] = lock
+            self._conv_lock_refs[conv_id] = self._conv_lock_refs.get(conv_id, 0) + 1
+            return lock
+
+    def _release_conv_lock_ref(self, conv_id: str, lock: threading.Lock) -> None:
+        with self._conv_locks_lock:
+            refs = self._conv_lock_refs.get(conv_id, 0) - 1
+            if refs > 0:
+                self._conv_lock_refs[conv_id] = refs
+                return
+
+            self._conv_lock_refs.pop(conv_id, None)
+            if self._conv_locks.get(conv_id) is not lock or conv_id in self._in_flight:
+                return
+            with self._debounce_lock:
+                has_debounce = (
+                    conv_id in self._conv_debounce_timers
+                    or conv_id in self._conv_debounce_events
+                )
+            if not has_debounce:
+                self._conv_locks.pop(conv_id, None)
+
+    def _cleanup_conv_lock_if_idle(self, conv_id: str) -> None:
+        with self._conv_locks_lock:
+            if self._conv_lock_refs.get(conv_id, 0) > 0 or conv_id in self._in_flight:
+                return
+            self._conv_lock_refs.pop(conv_id, None)
+            self._conv_locks.pop(conv_id, None)
+
+    def _handle_debounce(
+        self,
+        event: dict,
+        conv_id: str,
+        debounce_ms: int,
+        dispatch_fn: Callable[[dict], None],
+    ) -> None:
+        with self._debounce_lock:
+            if conv_id in self._conv_debounce_timers:
+                self._conv_debounce_timers[conv_id].cancel()
+
+            if conv_id not in self._conv_debounce_events:
+                self._conv_debounce_events[conv_id] = {"events": [], "dispatch_fn": dispatch_fn}
+            self._conv_debounce_events[conv_id]["events"].append(event)
+
+            timer = threading.Timer(
+                debounce_ms / 1000.0,
+                self._flush_debounce,
+                args=(conv_id,)
+            )
+            self._conv_debounce_timers[conv_id] = timer
+            timer.start()
+
+    def _flush_debounce(self, conv_id: str) -> None:
+        with self._debounce_lock:
+            debounce_state = self._conv_debounce_events.pop(conv_id, None)
+            if conv_id in self._conv_debounce_timers:
+                self._conv_debounce_timers.pop(conv_id, None)
+
+        if not debounce_state:
+            return
+
+        events = debounce_state["events"]
+        dispatch_fn = debounce_state["dispatch_fn"]
+
+        latest_event = events[-1]
+        coalesced = events[:-1]
+        latest_event["data"]["_coalesced_messages"] = coalesced
+        try:
+            dispatch_fn(latest_event)
+        finally:
+            self._cleanup_conv_lock_if_idle(conv_id)
 
 
 def _dotenv() -> dict[str, str]:
@@ -217,17 +476,14 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
-        
-        # Concurrency state
-        self._conv_locks_lock = threading.Lock()
-        self._conv_locks: dict[str, threading.Lock] = {}
-        self._conv_lock_refs: dict[str, int] = {}
-        self._in_flight: set[str] = set()
-        self._debounce_lock = threading.Lock()
-        self._conv_debounce_timers: dict[str, threading.Timer] = {}
-        self._conv_debounce_events: dict[str, list[dict]] = {}
+
+        # All per-conversation concurrency state (locks, debounce timers,
+        # in-flight tracking) is owned by the scheduler, which dispatches
+        # work via a thread pool for cross-conversation parallelism.
+        self._scheduler = _MessageScheduler()
 
     def close(self) -> None:
+        self._scheduler.close()
         self._http.close()
 
     def _request(
@@ -841,6 +1097,7 @@ class CommClient:
         Handler exceptions are caught per message, so this always drains the
         queue and advances the cursor even if some handlers fail.
         """
+        _validate_concurrency_options(concurrency, debounce_ms)
         last_seq = after_seq
         while True:
             batch = self.events(after_seq=last_seq)
@@ -871,29 +1128,35 @@ class CommClient:
         on channels with no typing indicator (X, SMS, email) so the human knows
         the agent is working while it thinks; the real answer follows.
         """
+        _validate_concurrency_options(concurrency, debounce_ms)
         if ack is not None:
             self._ack = ack
         seq = self._latest_seq() if from_seq is None else from_seq
         backoff = poll_interval
-        while True:
-            try:
-                batch = self.events(after_seq=seq)
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                logger.warning(
-                    "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
-                )
-                time.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
-                continue
-            backoff = poll_interval
-            if not batch:
-                time.sleep(poll_interval)
-                continue
-            for event in batch:
-                self._handle_concurrency(event, concurrency, debounce_ms)
-                seq = event["seq"]  # advance only after the dispatch attempt
+        try:
+            while True:
+                try:
+                    batch = self.events(after_seq=seq)
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
+                    continue
+                backoff = poll_interval
+                if not batch:
+                    time.sleep(poll_interval)
+                    continue
+                for event in batch:
+                    self._handle_concurrency(event, concurrency, debounce_ms)
+                    seq = event["seq"]  # advance only after the dispatch attempt
+        finally:
+            # Graceful shutdown: flush pending debounce work and wait for
+            # in-flight tasks so KeyboardInterrupt doesn't silently drop work.
+            self._scheduler.close()
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""
@@ -971,113 +1234,6 @@ class CommClient:
             _client=self,
         )
 
-    def _reserve_conv_lock(self, conv_id: str) -> threading.Lock:
-        with self._conv_locks_lock:
-            lock = self._conv_locks.get(conv_id)
-            if lock is None:
-                lock = threading.Lock()
-                self._conv_locks[conv_id] = lock
-            self._conv_lock_refs[conv_id] = self._conv_lock_refs.get(conv_id, 0) + 1
-            return lock
-
-    def _release_conv_lock_ref(self, conv_id: str, lock: threading.Lock) -> None:
-        with self._conv_locks_lock:
-            refs = self._conv_lock_refs.get(conv_id, 0) - 1
-            if refs > 0:
-                self._conv_lock_refs[conv_id] = refs
-                return
-
-            self._conv_lock_refs.pop(conv_id, None)
-            if self._conv_locks.get(conv_id) is not lock or conv_id in self._in_flight:
-                return
-            with self._debounce_lock:
-                has_debounce = (
-                    conv_id in self._conv_debounce_timers
-                    or conv_id in self._conv_debounce_events
-                )
-            if not has_debounce:
-                self._conv_locks.pop(conv_id, None)
-
-    def _cleanup_conv_lock_if_idle(self, conv_id: str) -> None:
-        with self._conv_locks_lock:
-            if self._conv_lock_refs.get(conv_id, 0) > 0 or conv_id in self._in_flight:
-                return
-            self._conv_lock_refs.pop(conv_id, None)
-            self._conv_locks.pop(conv_id, None)
-
-    def _handle_debounce(self, event: dict, conv_id: str, debounce_ms: int) -> None:
-        with self._debounce_lock:
-            if conv_id in self._conv_debounce_timers:
-                self._conv_debounce_timers[conv_id].cancel()
-            
-            if conv_id not in self._conv_debounce_events:
-                self._conv_debounce_events[conv_id] = []
-            self._conv_debounce_events[conv_id].append(event)
-            
-            timer = threading.Timer(
-                debounce_ms / 1000.0,
-                self._flush_debounce,
-                args=(conv_id,)
-            )
-            self._conv_debounce_timers[conv_id] = timer
-            timer.start()
-
-    def _flush_debounce(self, conv_id: str) -> None:
-        with self._debounce_lock:
-            events = self._conv_debounce_events.pop(conv_id, [])
-            if conv_id in self._conv_debounce_timers:
-                del self._conv_debounce_timers[conv_id]
-        
-        if not events:
-            return
-            
-        latest_event = events[-1]
-        coalesced = events[:-1]
-        latest_event["data"]["_coalesced_messages"] = coalesced
-        try:
-            self._dispatch_event(latest_event)
-        finally:
-            self._cleanup_conv_lock_if_idle(conv_id)
-
     def _handle_concurrency(self, event: dict, concurrency: str, debounce_ms: int) -> None:
-        if event.get("type") != "message.received":
-            self._dispatch_event(event)
-            return
-
-        message_data = event.get("data", {})
-        conv_id = message_data.get("message", {}).get("conversation_id")
-        if not conv_id:
-            self._dispatch_event(event)
-            return
-
-        if concurrency == "parallel":
-            threading.Thread(target=self._dispatch_event, args=(event,), daemon=True).start()
-            return
-            
-        if concurrency == "debounce":
-            self._handle_debounce(event, conv_id, debounce_ms)
-            return
-            
-        lock = self._reserve_conv_lock(conv_id)
-        if concurrency == "drop":
-            if not lock.acquire(blocking=False):
-                self._release_conv_lock_ref(conv_id, lock)
-                return  # Drop
-            self._in_flight.add(conv_id)
-            try:
-                self._dispatch_event(event)
-            finally:
-                self._in_flight.discard(conv_id)
-                lock.release()
-                self._release_conv_lock_ref(conv_id, lock)
-        else:  # queue
-            lock.acquire()
-            try:
-                self._in_flight.add(conv_id)
-                try:
-                    self._dispatch_event(event)
-                finally:
-                    self._in_flight.discard(conv_id)
-            finally:
-                lock.release()
-                self._release_conv_lock_ref(conv_id, lock)
+        """Delegate to the scheduler for all concurrency dispatch."""
+        self._scheduler.submit(event, concurrency, debounce_ms, self._dispatch_event)

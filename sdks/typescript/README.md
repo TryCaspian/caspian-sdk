@@ -101,7 +101,9 @@ client.listen({ signal: ac.signal });
 
 ## Concurrency Policies
 
-If a user sends multiple messages rapidly (a "burst") while your agent is still thinking, you can configure how `listen()` processes the overlap using the `concurrency` option:
+Caspian provides high-performance cross-conversation parallelism out of the box — multiple conversations are always handled concurrently without blocking each other.
+
+If a single user sends multiple messages rapidly (a "burst") while your agent is still thinking, you can configure how `listen()` processes that overlap within the same conversation using the `concurrency` option:
 
 ```ts
 await client.listen({ concurrency: "queue" }); // the default
@@ -111,6 +113,8 @@ await client.listen({ concurrency: "queue" }); // the default
 - `"debounce"`: Waits briefly (`debounceMs: 500` by default) for a burst to settle. Your handler runs once with the latest message. Dropped messages are preserved in `message.coalescedMessages` if you need the full context.
 - `"drop"`: If your agent is actively handling a message for a conversation, any new messages that arrive for that conversation are immediately dropped/ignored.
 - `"parallel"`: Executes handlers concurrently without awaiting them. Use with caution as this allows duplicate replies if the human sends overlapping messages.
+
+**Graceful Shutdown:** Stopping the `listen()` loop (e.g. by firing the `AbortSignal`) cleanly flushes any pending `debounce` windows and waits for in-flight tasks to finish before exiting, ensuring no events are silently dropped.
 
 ## Errors
 
