@@ -7,6 +7,7 @@ exercised on the same normalization path as the live adapters.
 import json
 import secrets
 from collections.abc import Mapping
+from typing import Any
 
 from .base import (
     InboundMessage,
@@ -234,18 +235,38 @@ class _FakeMetaMessaging:
         return ProvisionResult(address=f"{self.channel}:{self.page_id}",
                                provider_resource_id=self.page_id)
 
-    def send(self, provider_inbox_id, message: OutboundMessage, credentials=None) -> SendResult:
+    def send(
+        self, provider_inbox_id, message: OutboundMessage, credentials=None
+    ) -> SendResult:
         to = message.to[0]
-        self.sent.append({"to": to, "text": message.text})
-        return SendResult(provider_message_id=f"{to}:m{self._seq}", provider_thread_id=to)
+        self.sent.append(
+            {
+                "to": to,
+                "text": message.text,
+                "attachments": message.attachments,
+            }
+        )
+        return SendResult(
+            provider_message_id=f"{to}:m{self._seq}",
+            provider_thread_id=to,
+        )
 
     def reply(
         self, provider_inbox_id, provider_message_id, message, credentials=None
     ) -> SendResult:
         to, _, _ = provider_message_id.partition(":")
-        self.replies.append({"to": to, "text": message.text})
+        self.replies.append(
+            {
+                "to": to,
+                "text": message.text,
+                "attachments": message.attachments,
+            }
+        )
         self._seq += 1
-        return SendResult(provider_message_id=f"{to}:m{self._seq}", provider_thread_id=to)
+        return SendResult(
+            provider_message_id=f"{to}:m{self._seq}",
+            provider_thread_id=to,
+        )
 
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
         return params.get("hub.challenge") if params.get("hub.mode") == "subscribe" else None
@@ -257,8 +278,25 @@ class _FakeMetaMessaging:
             raise WebhookVerificationError("invalid JSON") from exc
         return parse_messaging_webhook(payload, self.page_id, self.channel)
 
-    def webhook_payload(self, *, sender="9998887776", text="Hi there"):
+    def webhook_payload(
+        self,
+        *,
+        sender="9998887776",
+        text: str | None = "Hi there",
+        attachments: list[dict] | None = None,
+    ):
         self._seq += 1
+
+        message: dict[str, Any] = {
+            "mid": f"mid{self._seq}",
+        }
+
+        if text is not None:
+            message["text"] = text
+
+        if attachments:
+            message["attachments"] = attachments
+
         return {
             "object": self.channel,
             "entry": [
@@ -268,7 +306,7 @@ class _FakeMetaMessaging:
                         {
                             "sender": {"id": sender},
                             "recipient": {"id": self.page_id},
-                            "message": {"mid": f"mid{self._seq}", "text": text},
+                            "message": message,
                         }
                     ],
                 }

@@ -19,6 +19,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -31,17 +32,32 @@ from .base import (
 )
 
 
-def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[InboundMessage]:
+def parse_messaging_webhook(
+    payload: bytes, page_id: str, channel: str
+) -> list[InboundMessage]:
     data = json.loads(payload)
     out: list[InboundMessage] = []
+
     for entry in data.get("entry", []):
         recipient_id = entry.get("id", page_id)
+
         for m in entry.get("messaging", []):
             message = m.get("message")
-            if not message or message.get("is_echo") or not message.get("text"):
+            if not message or message.get("is_echo"):
                 continue
+
             sender = m["sender"]["id"]
             mid = message.get("mid", "")
+            text = message.get("text")
+
+            attachments = [
+                Attachment(url=attachment.get("payload", {}).get("url"))
+                for attachment in message.get("attachments", [])
+            ]
+
+            if not text and not attachments:
+                continue
+
             out.append(
                 InboundMessage(
                     external_event_id=mid,
@@ -50,17 +66,25 @@ def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[
                     provider_thread_id=sender,
                     sender_address=sender,
                     recipients=[{"address": recipient_id}],
-                    text=message["text"],
+                    text=text,
                     chat_type=channel,
+                    attachments=tuple(attachments),
                 )
             )
+
     return out
 
 
 class _MetaMessagingProvider:
     channel = "override"
     name = "override"
-    capabilities = frozenset({Capability.RECEIVE, Capability.REPLY, Capability.SEND})
+    capabilities = frozenset(
+        {
+            Capability.RECEIVE,
+            Capability.REPLY,
+            Capability.SEND,
+        }
+    )
 
     def __init__(
         self,
@@ -99,12 +123,25 @@ class _MetaMessagingProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                f"{self.name} does not support outbound attachments."
+            )
+
         return self._send(message.to[0], message.text or "")
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                f"{self.name} does not support outbound attachments."
+            )
+
         recipient, _ = split_composite_id(provider_message_id)
         return self._send(recipient, message.text or "")
 

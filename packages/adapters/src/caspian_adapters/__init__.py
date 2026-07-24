@@ -8,6 +8,7 @@ capability negotiation. Bring your own platform credentials.
 from .base import (
     ALL_CAPABILITIES,
     BASELINE_CAPABILITIES,
+    Attachment,
     Capability,
     ChannelProvider,
     InboundMessage,
@@ -22,6 +23,7 @@ from .registry import PLUGIN_GROUP, build_providers
 
 __all__ = [
     "ALL_CAPABILITIES",
+    "Attachment",
     "BASELINE_CAPABILITIES",
     "Capability",
     "ChannelProvider",

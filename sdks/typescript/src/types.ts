@@ -142,11 +142,28 @@ export interface Block {
   image?: string;
 }
 
+// /**
+//  * A file attachment. Send `Media[]` via `reply` / `sendMessage` to attach files;
+//  * inbound messages expose received attachments on `Message.media`.
+//  */
+// export interface Media {
+//   /** Public URL of the file (mutually exclusive with `data`). */
+//   url?: string;
+//   /** Base64-encoded bytes (mutually exclusive with `url`). */
+//   data?: string;
+//   mimeType?: string;
+//   mime_type?: string;
+//   name?: string;
+//   size?: number;
+//   [key: string]: unknown;
+// }
+
 /**
- * A file attachment. Send `Media[]` via `reply` / `sendMessage` to attach files;
- * inbound messages expose received attachments on `Message.media`.
+ * A file attachment. Send `Attachment[]` via `reply` / `sendMessage` to attach
+ * files; inbound messages expose received attachments on
+ * `Message.attachments`.
  */
-export interface Media {
+export interface Attachment {
   /** Public URL of the file (mutually exclusive with `data`). */
   url?: string;
   /** Base64-encoded bytes (mutually exclusive with `url`). */

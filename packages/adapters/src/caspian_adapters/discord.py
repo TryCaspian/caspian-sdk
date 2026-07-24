@@ -18,6 +18,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -46,9 +47,23 @@ def parse_gateway_message(
         return []
     if data.get("author", {}).get("bot"):
         return []  # ignore other bots (and our own echoes) by default
+
     content = data.get("content")
-    if not content:
+
+    attachments = [
+        Attachment(
+            url=attachment.get("url"),
+            filename=attachment.get("filename"),
+            mime_type=attachment.get("content_type"),
+            size_bytes=attachment.get("size"),
+        )
+        for attachment in data.get("attachments", [])
+    ]
+
+    # Allow attachment-only messages.
+    if not content and not attachments:
         return []
+
     guild_id = data.get("guild_id")
     if route_by_guild:
         if guild_id is None:
@@ -56,8 +71,10 @@ def parse_gateway_message(
         inbox_id = str(guild_id)
     else:
         inbox_id = application_id
+
     channel_id = str(data["channel_id"])
     author = data.get("author", {})
+
     return [
         InboundMessage(
             external_event_id=str(data["id"]),
@@ -68,6 +85,7 @@ def parse_gateway_message(
             sender_name=author.get("global_name") or author.get("username"),
             text=content,
             chat_type="dm" if guild_id is None else "guild",
+            attachments=tuple(attachments),
         )
     ]
 
@@ -199,12 +217,19 @@ class DiscordProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                "DiscordProvider does not support outbound attachments."
+            )
+
         creds = credentials or {}
         if creds.get("webhook_url"):
             channel_id, msg_id = self._post_webhook(creds, message.text or "")
             return SendResult(
-                provider_message_id=f"{channel_id}:{msg_id}", provider_thread_id=channel_id
+                provider_message_id=f"{channel_id}:{msg_id}",
+                provider_thread_id=channel_id,
             )
+
         token = self._token(credentials)
         channel_id = message.to[0]
         result = self._post_message(token, channel_id, message.text or "", None)
@@ -217,20 +242,33 @@ class DiscordProvider:
         self, provider_inbox_id: str, recipient: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
         # recipient is a channel id the bot can post to
-        return self.send(provider_inbox_id, OutboundMessage(text=message.text, to=(recipient,)),
-                         credentials=credentials)
+        return self.send(
+            provider_inbox_id,
+            OutboundMessage(text=message.text, to=(recipient,), attachments=message.attachments),
+            credentials=credentials,
+        )
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                "DiscordProvider does not support outbound attachments."
+            )
+
         creds = credentials or {}
         if creds.get("webhook_url"):
             # webhooks can't reply-reference; post the message with the identity
             channel_id, msg_id = self._post_webhook(creds, message.text or "")
             return SendResult(
-                provider_message_id=f"{channel_id}:{msg_id}", provider_thread_id=channel_id
+                provider_message_id=f"{channel_id}:{msg_id}",
+                provider_thread_id=channel_id,
             )
+
         token = self._token(credentials)
         channel_id, target = split_composite_id(provider_message_id)
         result = self._post_message(token, channel_id, message.text or "", target)

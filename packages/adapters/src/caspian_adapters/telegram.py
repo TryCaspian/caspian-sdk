@@ -21,6 +21,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -40,32 +41,84 @@ def bot_id_from_token(token: str) -> str:
 
 
 def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
-    """Normalize a Telegram Update into our schema. Text messages only for now.
+    """Normalize a Telegram Update into the shared schema.
 
-    Handles both fresh (`message`) and `edited_message` updates; group and
-    channel chats normalize the same way as private ones, tagged by chat_type.
+    Supports text messages, media captions, photos, documents, and voice
+    messages. Handles both fresh (`message`) and `edited_message` updates.
     """
+
     edited = "edited_message" in data
     message = data.get("message") or data.get("edited_message")
-    if message is None or message.get("text") is None:
+    if message is None:
         return []
+
     chat = message["chat"]
     chat_id = chat["id"]
+
     sender = message.get("from") or {}
     sender_name = " ".join(
-        part for part in (sender.get("first_name"), sender.get("last_name")) if part
+        part
+        for part in (sender.get("first_name"), sender.get("last_name"))
+        if part
     )
+
+    attachments: list[Attachment] = []
+
+    # Photos (Telegram provides multiple sizes; keep the largest.)
+    photos = message.get("photo")
+    if photos:
+        photo = photos[-1]
+        attachments.append(
+            Attachment(
+                provider_file_id=photo["file_id"],
+                mime_type="image/jpeg",
+                size_bytes=photo.get("file_size"),
+            )
+        )
+
+    # Documents
+    document = message.get("document")
+    if document:
+        attachments.append(
+            Attachment(
+                provider_file_id=document["file_id"],
+                filename=document.get("file_name"),
+                mime_type=document.get("mime_type"),
+                size_bytes=document.get("file_size"),
+            )
+        )
+
+    # Voice notes
+    voice = message.get("voice")
+    if voice:
+        attachments.append(
+            Attachment(
+                provider_file_id=voice["file_id"],
+                mime_type=voice.get("mime_type"),
+                size_bytes=voice.get("file_size"),
+            )
+        )
+
+    # Telegram stores captions separately from plain text.
+    text = message.get("text") or message.get("caption")
+
+    # Ignore updates that don't contain user-visible content.
+    if text is None and not attachments:
+        return []
+
     return [
         InboundMessage(
             external_event_id=f"{bot_id}:{data['update_id']}",
             provider_inbox_id=bot_id,
             provider_message_id=f"{chat_id}:{message['message_id']}",
             provider_thread_id=str(chat_id),
-            sender_address=sender.get("username") or str(sender.get("id", "")) or None,
+            sender_address=sender.get("username")
+            or (str(sender["id"]) if "id" in sender else None),
             sender_name=sender_name or None,
-            text=message["text"],
+            text=text,
             chat_type=chat.get("type"),
             edited=edited,
+            attachments=tuple(attachments),
         )
     ]
 
@@ -84,6 +137,7 @@ class TelegramProvider:
             Capability.SEND,
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
+            Capability.ATTACHMENTS
         }
     )
 
@@ -133,6 +187,34 @@ class TelegramProvider:
         self._call(token, "sendChatAction",
                    {"chat_id": provider_thread_id, "action": "typing"})
 
+    def _send_media(
+        self,
+        token: str,
+        chat_id: str,
+        attachment: Attachment,
+        caption: str,
+        reply_to_message_id: int | None = None,
+    ) -> dict:
+        media = attachment.provider_file_id or attachment.url
+        if media is None:
+            raise ValueError("Telegram attachments require a provider_file_id or url")
+
+        mime_type = attachment.mime_type or ""
+        body: dict = {"chat_id": chat_id, "caption": caption}
+        if reply_to_message_id is not None:
+            body["reply_to_message_id"] = reply_to_message_id
+            body["allow_sending_without_reply"] = True
+
+        if mime_type.startswith("image/"):
+            body["photo"] = media
+            return self._call(token, "sendPhoto", body)
+        if mime_type.startswith("audio/"):
+            body["voice"] = media
+            return self._call(token, "sendVoice", body)
+
+        body["document"] = media
+        return self._call(token, "sendDocument", body)
+
     def send(
         self,
         provider_inbox_id: str,
@@ -141,9 +223,30 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id = message.to[0]
-        result = self._call(
-            token, "sendMessage", {"chat_id": chat_id, "text": message.text or ""}
-        )
+
+        if not message.attachments:
+            result = self._call(
+                token,
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": message.text or "",
+                },
+            )
+        else:
+            result: dict | None = None
+            for index, attachment in enumerate(message.attachments):
+                caption = message.text or ""
+                if index > 0:
+                    caption = ""
+                result = self._send_media(
+                    token,
+                    chat_id,
+                    attachment,
+                    caption,
+                )
+            assert result is not None
+
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=str(chat_id),
@@ -158,16 +261,33 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id, target_message_id = split_composite_id(provider_message_id)
-        result = self._call(
-            token,
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": message.text or "",
-                "reply_to_message_id": int(target_message_id),
-                "allow_sending_without_reply": True,
-            },
-        )
+
+        if not message.attachments:
+            result = self._call(
+                token,
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": message.text or "",
+                    "reply_to_message_id": int(target_message_id),
+                    "allow_sending_without_reply": True,
+                },
+            )
+        else:
+            result: dict | None = None
+            for index, attachment in enumerate(message.attachments):
+                caption = message.text or ""
+                if index > 0:
+                    caption = ""
+                result = self._send_media(
+                    token,
+                    chat_id,
+                    attachment,
+                    caption,
+                    reply_to_message_id=int(target_message_id),
+                )
+            assert result is not None
+
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=chat_id,

@@ -16,6 +16,7 @@ from collections.abc import Mapping
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -39,8 +40,26 @@ def parse_event(data: dict) -> list[InboundMessage]:
     event = data.get("event", {})
     if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
         return []
+
     channel = event["channel"]
     ts = event["ts"]
+    text = event.get("text")
+
+    attachments = [
+        Attachment(
+            url=file.get("url_private"),
+            filename=file.get("name"),
+            mime_type=file.get("mimetype"),
+            size_bytes=file.get("size"),
+            provider_file_id=file.get("id"),
+        )
+        for file in event.get("files", [])
+    ]
+
+    # Ignore completely empty messages.
+    if not text and not attachments:
+        return []
+
     return [
         InboundMessage(
             external_event_id=data.get("event_id") or f"{channel}:{ts}",
@@ -51,8 +70,9 @@ def parse_event(data: dict) -> list[InboundMessage]:
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,
             sender_address=event.get("user"),
-            text=event.get("text"),
+            text=text,
             chat_type=event.get("channel_type") or "channel",
+            attachments=tuple(attachments),
         )
     ]
 
@@ -66,7 +86,11 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {
+            Capability.RECEIVE,
+            Capability.REPLY,
+            Capability.SEND,
+        }
     )
 
     def __init__(
@@ -261,24 +285,51 @@ class SlackProvider:
     def send(
         self, provider_inbox_id: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                "SlackProvider does not support outbound attachments."
+            )
+
         creds = credentials or {}
         channel = message.to[0]
-        data = self._post(creds["bot_token"], channel, message.text or "", None,
-                          username=creds.get("display_name"), icon_url=creds.get("icon_url"))
+        data = self._post(
+            creds["bot_token"],
+            channel,
+            message.text or "",
+            None,
+            username=creds.get("display_name"),
+            icon_url=creds.get("icon_url"),
+        )
         return SendResult(
-            provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
+            provider_message_id=f"{channel}:{data['ts']}",
+            provider_thread_id=channel,
         )
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
+        if message.attachments:
+            raise NotImplementedError(
+                "SlackProvider does not support outbound attachments."
+            )
+
         creds = credentials or {}
         channel, ts = split_composite_id(provider_message_id)
-        data = self._post(creds["bot_token"], channel, message.text or "", ts,
-                          username=creds.get("display_name"), icon_url=creds.get("icon_url"))
+        data = self._post(
+            creds["bot_token"],
+            channel,
+            message.text or "",
+            ts,
+            username=creds.get("display_name"),
+            icon_url=creds.get("icon_url"),
+        )
         return SendResult(
-            provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
+            provider_message_id=f"{channel}:{data['ts']}",
+            provider_thread_id=channel,
         )
 
     def parse_webhook(

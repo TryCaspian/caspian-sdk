@@ -21,6 +21,12 @@ print(f"Email connection active: {connection['address']}")
 @client.on_message
 def handle(message):
     print(f"Inbound from {message.sender['address']}: {message.text!r}")
+
+    if message.attachments:
+        print(f"Received {len(message.attachments)} attachment(s)")
+        for attachment in message.attachments:
+            print(f"- {attachment.get('name')} ({attachment.get('mime_type')})")
+
     message.reply(f"Thanks for reaching out. You said: {message.text}")
 
 

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from caspian_sdk import (
     AccountRequiredError,
+    Attachment,
     CommClient,
     CommError,
     InsufficientCreditError,
@@ -44,7 +45,7 @@ def test_error_maps_to_comm_error_with_detail():
     client = _client(handler)
     with pytest.raises(CommError) as excinfo:
         try:
-            client.connect_telegram(bot_token=None)
+            client.connect_telegram(bot_token="")
         finally:
             client.close()
     assert excinfo.value.status_code == 422
@@ -215,28 +216,73 @@ def test_reply_and_send_message_forward_blocks():
         client.close()
 
     assert bodies[0][0] == "/v1/messages/msg_1/reply"
-    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload,
-                            "media": None}
+    assert bodies[0][1] == {
+        "text": "Order shipped",
+        "html": None,
+        "blocks": payload,
+        "attachments": None,
+    }
+
     assert bodies[1][0] == "/v1/conversations/conv_1/messages"
-    assert bodies[1][1] == {"text": None, "html": None, "blocks": payload, "media": None}
+    assert bodies[1][1] == {
+        "text": None,
+        "html": None,
+        "blocks": payload,
+        "attachments": None,
+    }
 
 
-def test_reply_and_send_forward_media():
+def test_reply_and_send_forward_attachments():
     bodies = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request):
         bodies.append((request.url.path, json.loads(request.content)))
         return httpx.Response(200, json={"delivered": True})
 
-    media = [{"url": "https://x/i.png", "mime_type": "image/png", "name": "i.png"}]
+    attachments = [
+        Attachment(
+            url="https://x/i.png",
+            mime_type="image/png",
+            name="i.png",
+        )
+    ]
+
     client = _client(handler)
     try:
-        client.reply("msg_1", text="here", media=media)
-        client.send_message("conv_1", media=media)
+        client.reply("msg_1", text="here", attachments=attachments)
+        client.send_message("conv_1", attachments=attachments)
     finally:
         client.close()
-    assert bodies[0][1] == {"text": "here", "html": None, "blocks": None, "media": media}
-    assert bodies[1][1] == {"text": None, "html": None, "blocks": None, "media": media}
+
+    assert bodies[0][1] == {
+        "text": "here",
+        "html": None,
+        "blocks": None,
+        "attachments": [
+            {
+                "url": "https://x/i.png",
+                "data": None,
+                "mime_type": "image/png",
+                "name": "i.png",
+                "size": None,
+            }
+        ],
+    }
+
+    assert bodies[1][1] == {
+        "text": None,
+        "html": None,
+        "blocks": None,
+        "attachments": [
+            {
+                "url": "https://x/i.png",
+                "data": None,
+                "mime_type": "image/png",
+                "name": "i.png",
+                "size": None,
+            }
+        ],
+    }
 
 
 def test_react_hits_endpoint():
@@ -293,6 +339,7 @@ def test_on_interaction_dispatches_and_replies():
         client.close()
     assert len(seen) == 1
     assert seen[0].value == "reorder_123"
+    assert seen[0].source_message is not None
     assert seen[0].source_message["id"] == "msg_9"
     # reply routed to the source message
     assert replies[0][0] == "/v1/messages/msg_9/reply"
@@ -330,17 +377,26 @@ def test_on_reaction_dispatches():
     assert seen[0].action == "added"
 
 
-def test_message_carries_media_to_handler():
+def test_message_carries_attachments_to_handler():
     events = [
         {
             "seq": 1,
             "type": "message.received",
             "data": {
-                "customer_id": "cus_1", "agent_id": "agt_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
                 "message": {
-                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
-                    "channel": "email", "text": "see attached",
-                    "media": [{"name": "r.pdf", "mime_type": "application/pdf"}],
+                    "id": "m1",
+                    "conversation_id": "c1",
+                    "connection_id": "cn1",
+                    "channel": "email",
+                    "text": "see attached",
+                    "attachments": [
+                        {
+                            "name": "r.pdf",
+                            "mime_type": "application/pdf",
+                        }
+                    ],
                 },
             },
         }
@@ -359,7 +415,10 @@ def test_message_carries_media_to_handler():
         client.dispatch_pending(0)
     finally:
         client.close()
-    assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
+
+    assert seen[0].attachments == [
+        Attachment(name="r.pdf", mime_type="application/pdf")
+    ]
 
 
 def test_behavior_prompt_returns_text():

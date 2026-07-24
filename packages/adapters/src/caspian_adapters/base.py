@@ -45,6 +45,7 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    ATTACHMENTS = "attachments"  # receive attachments (media/files) with messages
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -76,11 +77,23 @@ class ProvisionResult:
 
 
 @dataclass(frozen=True)
+class Attachment:
+    """A channel-agnostic media/file attachment."""
+
+    url: str | None = None
+    mime_type: str | None = None
+    filename: str | None = None
+    size_bytes: int | None = None
+    provider_file_id: str | None = None
+
+
+@dataclass(frozen=True)
 class OutboundMessage:
     text: str | None = None
     html: str | None = None
     subject: str | None = None
     to: tuple[str, ...] = ()
+    attachments: tuple[Attachment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,7 @@ class InboundMessage:
     subject: str | None = None
     text: str | None = None
     html: str | None = None
+    attachments: tuple[Attachment, ...] = ()
     chat_type: str | None = None  # "private" | "group" | "channel" | ...
     edited: bool = False
     auto_generated: bool = False  # auto-responder/bounce/no-reply; never auto-reply to these
