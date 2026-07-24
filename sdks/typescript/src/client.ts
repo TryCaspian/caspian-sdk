@@ -1,5 +1,6 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
 import type {
   Agent,
   AutopayOptions,
@@ -12,11 +13,13 @@ import type {
   Customer,
   Domain,
   EventRecord,
+  HandleWebhookOptions,
   ListenOptions,
   LoginOptions,
   Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
+  WebhookResult,
 } from "./types.js";
 
 const logger = {
@@ -1119,4 +1122,60 @@ export class CommClient {
     }
     return 0;
   }
+
+  /**
+   * Process a single gateway webhook delivery (serverless mode).
+   *
+   * Use this instead of `listen()` when running on Lambda, Cloudflare Workers,
+   * Vercel, or any request-scoped serverless runtime. Verifies the signature,
+   * dispatches to registered handlers, and returns — no loop, no long-lived connection.
+   */
+  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult> {
+    const { body, headers, secret } = opts;
+    const lower: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      if (v !== undefined) {
+        lower[k.toLowerCase()] = Array.isArray(v) ? v[0] : (v as string);
+      }
+    }
+    const signature = lower["x-caspian-signature"] ?? "";
+    if (!signature) {
+      throw new WebhookVerificationError("missing x-caspian-signature header");
+    }
+
+    const raw = typeof body === "string" ? Buffer.from(body, "utf-8") : body;
+    const hmacHex = createHmac("sha256", secret).update(raw).digest("hex");
+    const expected = `sha256=${hmacHex}`;
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+      throw new WebhookVerificationError("webhook signature mismatch");
+    }
+
+    const jsonStr = typeof body === "string" ? body : Buffer.from(body).toString("utf-8");
+    const payload = JSON.parse(jsonStr);
+    const events: EventRecord[] = Array.isArray(payload) ? payload : [payload];
+
+    const seenIds = new Set<string>();
+    let result: WebhookResult = { status: "ignored" };
+
+    for (const event of events) {
+      const eventId = String(event.id ?? event.seq ?? "");
+      const eventType = event.type;
+
+      if (eventId && seenIds.has(eventId)) continue;
+      if (eventId) seenIds.add(eventId);
+
+      await this.dispatchEvent(event);
+      result = {
+        status: "ok",
+        eventId: eventId || null,
+        eventType,
+      };
+    }
+
+    return result;
+  }
 }
+
