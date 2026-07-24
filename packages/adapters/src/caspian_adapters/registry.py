@@ -149,18 +149,6 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             verify_token=settings.facebook_verify_token,
             base_url=f"https://graph.facebook.com/{settings.graph_version}",
         )
-    if name == "fake-bluesky":
-        from .fake_bluesky import FakeBlueskyProvider
-
-        return FakeBlueskyProvider()
-    if name == "bluesky":
-        from .bluesky import BlueskyProvider
-
-        return BlueskyProvider(
-            handle=settings.bluesky_handle,
-            app_password=settings.bluesky_app_password,
-            base_url=settings.bluesky_base_url,
-        )
     plugin = _build_plugin(name, settings)
     if plugin is not None:
         return plugin
