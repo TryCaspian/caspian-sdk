@@ -82,6 +82,24 @@ message.reply(blocks=[
 Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 `card`. A button with a `url` is a link; a button with a `value` is a callback.
 
+## Streaming
+
+Stream LLM tokens with live edits on channels that support it:
+
+```python
+@client.on_message
+def handle(message):
+    with message.stream() as s:
+        for chunk in my_llm(message.text):
+            s.append(chunk)
+```
+
+On **Telegram, Discord and Slack** the first chunk posts the message and
+subsequent chunks edit it in place (throttled to avoid rate limits). On
+channels without outbound edit support (**email, SMS, WhatsApp, X, …**) all
+chunks buffer silently and a single reply fires when the block exits — no
+code change needed, the fallback is automatic.
+
 ## How it works
 
 - **One handler, every channel.** Adding a channel is another `connect_*()` call — never new handler code.

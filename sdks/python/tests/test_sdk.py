@@ -579,3 +579,111 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_stream_post_edit_on_telegram():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": "out_1", "delivered": True})
+
+    client = _client(handler)
+    from caspian_sdk import Message
+
+    msg = Message(
+        id="msg_1", conversation_id="c1", connection_id="cn1",
+        customer_id="cus_1", agent_id="agt_1", channel="telegram",
+        sender=None, subject=None, text="hi", html=None, media=[], _client=client,
+    )
+    try:
+        with msg.stream(throttle=0) as s:
+            s.append("Hello")
+            s.append(" world")
+    finally:
+        client.close()
+    # first append → reply, second append → edit (throttle=0), exit → final edit
+    assert bodies[0][1] == "/v1/messages/msg_1/reply"
+    assert bodies[0][2]["text"] == "Hello"
+    edits = [b for b in bodies if "/edit" in b[1]]
+    assert len(edits) >= 1
+    assert edits[-1][2]["text"] == "Hello world"
+
+
+def test_stream_fallback_on_email():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": "out_1", "delivered": True})
+
+    client = _client(handler)
+    from caspian_sdk import Message
+
+    msg = Message(
+        id="msg_1", conversation_id="c1", connection_id="cn1",
+        customer_id="cus_1", agent_id="agt_1", channel="email",
+        sender=None, subject=None, text="hi", html=None, media=[], _client=client,
+    )
+    try:
+        with msg.stream() as s:
+            s.append("one ")
+            assert len(bodies) == 0  # nothing sent yet
+            s.append("two")
+    finally:
+        client.close()
+    assert len(bodies) == 1
+    assert bodies[0][0] == "/v1/messages/msg_1/reply"
+    assert bodies[0][1]["text"] == "one two"
+
+
+def test_stream_error_midstream():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"id": "out_1", "delivered": True})
+
+    client = _client(handler)
+    from caspian_sdk import Message
+
+    msg = Message(
+        id="msg_1", conversation_id="c1", connection_id="cn1",
+        customer_id="cus_1", agent_id="agt_1", channel="email",
+        sender=None, subject=None, text="hi", html=None, media=[], _client=client,
+    )
+    try:
+        try:
+            with msg.stream() as s:
+                s.append("partial")
+                raise ValueError("boom")
+        except ValueError:
+            pass
+    finally:
+        client.close()
+    # partial text still delivered on exit
+    assert len(bodies) == 1
+    assert bodies[0][1]["text"] == "partial"
+
+
+def test_stream_empty():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(request.url.path)
+        return httpx.Response(200, json={"id": "out_1"})
+
+    client = _client(handler)
+    from caspian_sdk import Message
+
+    msg = Message(
+        id="msg_1", conversation_id="c1", connection_id="cn1",
+        customer_id="cus_1", agent_id="agt_1", channel="telegram",
+        sender=None, subject=None, text="hi", html=None, media=[], _client=client,
+    )
+    try:
+        with msg.stream() as _:
+            pass  # no appends
+    finally:
+        client.close()
+    assert len(bodies) == 0  # nothing sent
