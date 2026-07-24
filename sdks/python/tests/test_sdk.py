@@ -1,7 +1,7 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
 import json
-
+import time
 import httpx
 import pytest
 from caspian_sdk import CommClient, CommError
@@ -282,3 +282,67 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+def test_queue_preserves_order():
+    processed = []
+
+    client = CommClient(api_key="test")
+
+    def handler(message):
+        processed.append(message.text)
+
+    client.on_message(handler)
+
+    event1 = {
+    "type": "message.received",
+    "data": {
+        "customer_id": "cus_1",
+        "agent_id": "agt_1",
+        "message": {
+            "id": "1",
+            "conversation_id": "conv1",
+            "connection_id": "cn1",
+            "channel": "email",
+            "text": "first",
+        },
+    },
+}
+
+    event2 = {
+    "type": "message.received",
+    "data": {
+        "customer_id": "cus_2",
+        "agent_id": "agt_2",
+        "message": {
+            "id": "2",
+            "conversation_id": "conv1",
+            "connection_id": "cn2",
+            "channel": "email",
+            "text": "second",
+        },
+    },
+}
+
+    event3 = {
+    "type": "message.received",
+    "data": {
+        "customer_id": "cus_3",
+        "agent_id": "agt_3",
+        "message": {
+            "id": "3",
+            "conversation_id": "conv1",
+            "connection_id": "cn3",
+            "channel": "email",
+            "text": "third",
+        },
+    },
+}
+
+    client._route_event(event1)
+    client._route_event(event2)
+    client._route_event(event3)
+
+    while len(processed) < 3:
+        time.sleep(0.01)
+
+    assert processed == ["first", "second", "third"]
