@@ -69,6 +69,9 @@ def test_parse_webhook_enforces_secret_header():
         provider.parse_webhook(
             payload, {"X-Telegram-Bot-Api-Secret-Token": "wrong"}, credentials=creds
         )
+    # A missing header must reject cleanly, not raise on the constant-time compare.
+    with pytest.raises(WebhookVerificationError, match="secret token"):
+        provider.parse_webhook(payload, {}, credentials=creds)
 
 
 def test_parse_webhook_without_secret_skips_check():

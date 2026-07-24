@@ -119,6 +119,15 @@ def test_hub_challenge_echo():
     }) is None
 
 
+def test_hub_challenge_rejects_when_verify_token_unset():
+    # A provider with no configured verify_token must not echo the challenge,
+    # even for an empty incoming token (would otherwise fail open).
+    provider = InstagramProvider(page_id=PAGE_ID, access_token="page-token")
+    assert provider.meta_verify({
+        "hub.mode": "subscribe", "hub.verify_token": "", "hub.challenge": "999",
+    }) is None
+
+
 def test_facebook_provider_same_shape():
     provider = _provider(cls=FacebookProvider)
     assert provider.channel == "facebook"

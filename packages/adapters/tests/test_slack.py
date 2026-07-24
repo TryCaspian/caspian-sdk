@@ -3,14 +3,11 @@
 import hashlib
 import hmac
 import json
+import time
 
 import pytest
-from caspian_adapters.base import (
-    InboundCommand,
-    InboundReaction,
-    WebhookVerificationError,
-)
-from caspian_adapters.slack import SlackProvider, parse_event, parse_slash_command
+from caspian_adapters.base import WebhookVerificationError
+from caspian_adapters.slack import MAX_TIMESTAMP_SKEW, SlackProvider, parse_event
 
 SIGNING_SECRET = "sign-me"
 
@@ -42,7 +39,11 @@ def _event(text="hello", channel="C123", user="U456", team="T1", app="A1", **eve
     }
 
 
-def _signed_headers(payload: bytes, secret=SIGNING_SECRET, ts="12345"):
+def _signed_headers(payload: bytes, secret=SIGNING_SECRET, ts=None):
+    # Default to a current timestamp so the signature passes the recency check;
+    # pass an explicit ts to exercise stale/invalid-timestamp rejection.
+    if ts is None:
+        ts = str(int(time.time()))
     basestring = f"v0:{ts}:".encode() + payload
     sig = "v0=" + hmac.new(secret.encode(), basestring, hashlib.sha256).hexdigest()
     return {"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig}
@@ -74,6 +75,25 @@ def test_parse_webhook_rejects_bad_signature():
     payload = json.dumps(_event()).encode()
     with pytest.raises(WebhookVerificationError):
         provider.parse_webhook(payload, _signed_headers(payload, secret="wrong"))
+
+
+def test_parse_webhook_rejects_stale_timestamp():
+    # A correctly-signed request is still rejected once its timestamp is older
+    # than the allowed skew, so a captured request can't be replayed later.
+    provider = _provider()
+    payload = json.dumps(_event()).encode()
+    stale_ts = str(int(time.time()) - MAX_TIMESTAMP_SKEW - 60)
+    with pytest.raises(WebhookVerificationError, match="too old"):
+        provider.parse_webhook(payload, _signed_headers(payload, ts=stale_ts))
+
+
+@pytest.mark.parametrize("ts", ["", "not-a-timestamp"])
+def test_parse_webhook_rejects_missing_or_invalid_timestamp(ts):
+    provider = _provider()
+    payload = json.dumps(_event()).encode()
+    headers = _signed_headers(payload, ts=ts)
+    with pytest.raises(WebhookVerificationError, match="missing or invalid"):
+        provider.parse_webhook(payload, headers)
 
 
 def test_url_verification_returns_no_messages():

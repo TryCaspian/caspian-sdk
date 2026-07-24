@@ -1,6 +1,6 @@
 {
   "name": "caspian-sdk",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "One identity for your AI agent across every channel \u2014 email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage \u2014 behind a single onMessage handler.",
   "type": "module",
   "main": "./dist/index.cjs",

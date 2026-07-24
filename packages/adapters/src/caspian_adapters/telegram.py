@@ -14,6 +14,7 @@ their bots never overlap.
   without extra lookups (composite ids never leave this package)
 """
 
+import hmac
 import json
 from collections.abc import Mapping
 
@@ -269,8 +270,8 @@ class TelegramProvider:
             raise WebhookVerificationError("telegram webhooks require a connection scope")
         secret = credentials.get("webhook_secret")
         if secret:
-            received = lower_headers(headers).get(SECRET_HEADER)
-            if received != secret:
+            received = lower_headers(headers).get(SECRET_HEADER) or ""
+            if not hmac.compare_digest(received, secret):
                 raise WebhookVerificationError("secret token mismatch")
         try:
             data = json.loads(payload)

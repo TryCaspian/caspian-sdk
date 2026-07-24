@@ -6,6 +6,7 @@ bot_token credential to exercise the multi-tenant per-bot path exactly as
 the live adapter requires it.
 """
 
+import hmac
 import json
 import secrets
 from collections.abc import Mapping
@@ -90,8 +91,8 @@ class FakeTelegramProvider:
     ) -> list[InboundEvent]:
         secret = (credentials or {}).get("webhook_secret") or self._webhook_secret
         if secret:
-            received = lower_headers(headers).get(SECRET_HEADER)
-            if received != secret:
+            received = lower_headers(headers).get(SECRET_HEADER) or ""
+            if not hmac.compare_digest(received, secret):
                 raise WebhookVerificationError("secret token mismatch")
         try:
             data = json.loads(payload)

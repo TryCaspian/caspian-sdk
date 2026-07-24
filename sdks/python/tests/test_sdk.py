@@ -4,7 +4,12 @@ import json
 
 import httpx
 import pytest
-from caspian_sdk import CommClient, CommError
+from caspian_sdk import (
+    AccountRequiredError,
+    CommClient,
+    CommError,
+    InsufficientCreditError,
+)
 
 API_KEY = "comm_test_key"
 
@@ -44,6 +49,92 @@ def test_error_maps_to_comm_error_with_detail():
             client.close()
     assert excinfo.value.status_code == 422
     assert "bot_token" in str(excinfo.value)
+
+
+def test_account_required_maps_from_401():
+    """A 401 with reason=account_required raises the typed AccountRequiredError,
+    carrying the sign-in message and raw login_options for callers to react."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "detail": {
+                    "reason": "account_required",
+                    "message": "Sign in to use paid channels.",
+                    "login_options": [{"start": "/v1/auth/device/start"}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert isinstance(err, CommError)
+    assert err.status_code == 401
+    assert err.reason == "account_required"
+    assert err.detail == "Sign in to use paid channels."
+    assert err.login_options == [{"start": "/v1/auth/device/start"}]
+
+
+def test_insufficient_credit_maps_from_402():
+    """A 402 with reason=insufficient_credit raises InsufficientCreditError with
+    the structured balance and payment_options the gateway returns."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "message": "Out of credit.",
+                    "balance_cents": 42,
+                    "payment_options": [
+                        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+                    ],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert isinstance(err, CommError)
+    assert err.status_code == 402
+    assert err.reason == "insufficient_credit"
+    assert err.detail == "Out of credit."
+    assert err.balance_cents == 42
+    assert err.payment_options[0]["url"] == "https://pay/1"
+
+
+def test_monthly_cap_reached_maps_from_429():
+    """A 429 spend-cap block also raises InsufficientCreditError (429 shares the
+    typed billing error with 402), preserving the 429 status code."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "monthly_cap_reached", "message": "Capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "monthly_cap_reached"
+    assert err.detail == "Capped."
 
 
 def test_connect_email_waits_for_provisioning():
