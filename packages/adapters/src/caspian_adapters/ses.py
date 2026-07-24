@@ -34,10 +34,22 @@ _CERT_CACHE: dict[str, bytes] = {}
 _SIGNED_FIELDS = {
     "Notification": ["Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type"],
     "SubscriptionConfirmation": [
-        "Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type",
+        "Message",
+        "MessageId",
+        "SubscribeURL",
+        "Timestamp",
+        "Token",
+        "TopicArn",
+        "Type",
     ],
     "UnsubscribeConfirmation": [
-        "Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type",
+        "Message",
+        "MessageId",
+        "SubscribeURL",
+        "Timestamp",
+        "Token",
+        "TopicArn",
+        "Type",
     ],
 }
 
@@ -48,7 +60,13 @@ def _slug(value: str) -> str:
 
 
 _AUTO_SENDER_LOCALS = {
-    "mailer-daemon", "postmaster", "no-reply", "noreply", "donotreply", "do-not-reply", "bounce",
+    "mailer-daemon",
+    "postmaster",
+    "no-reply",
+    "noreply",
+    "donotreply",
+    "do-not-reply",
+    "bounce",
 }
 
 
@@ -90,9 +108,7 @@ def _verify_sns_signature(envelope: dict) -> None:
     canonical = "".join(
         f"{key}\n{envelope[key]}\n" for key in fields if envelope.get(key) is not None
     )
-    algorithm = (
-        hashes.SHA256() if envelope.get("SignatureVersion") == "2" else hashes.SHA1()
-    )
+    algorithm = hashes.SHA256() if envelope.get("SignatureVersion") == "2" else hashes.SHA1()
     try:
         certificate.public_key().verify(
             base64.b64decode(envelope["Signature"]),
@@ -250,7 +266,10 @@ class SESEmailProvider:
         return SendResult(provider_message_id=message_id)
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         message_id = self._send_mime(

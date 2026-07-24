@@ -1,7 +1,7 @@
 {
   "name": "caspian-sdk",
   "version": "0.4.1",
-  "description": "One identity for your AI agent across every channel \u2014 email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage \u2014 behind a single onMessage handler.",
+  "description": "One identity for your AI agent across every channel — email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage — behind a single onMessage handler.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -53,7 +53,9 @@
     "directory": "sdks/typescript"
   },
   "devDependencies": {
+    "@types/ioredis-mock": "^8.2.7",
     "@types/node": "^20.14.0",
+    "ioredis-mock": "^8.13.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"
@@ -64,5 +66,8 @@
   },
   "overrides": {
     "esbuild": "^0.28.1"
+  },
+  "dependencies": {
+    "ioredis": "^5.11.1"
   }
 }

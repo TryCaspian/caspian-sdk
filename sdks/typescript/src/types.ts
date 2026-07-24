@@ -36,6 +36,8 @@ export interface Conversation {
 }
 
 /** One item from the event stream (GET /v1/events). */
+import type { StateAdapter } from "./state.js";
+
 export interface EventRecord {
   seq: number;
   type: string;
@@ -59,6 +61,15 @@ export interface ClientOptions {
   timeout?: number;
   /** Inject a custom fetch (for testing). Defaults to global fetch. */
   fetch?: typeof fetch;
+  /** State adapter for idempotent deduplication and per-conversation locks. */
+  state?: StateAdapter;
+}
+
+export type StreamStrategy = "post_edit" | "final_only";
+
+export interface StreamOptions {
+  /** How often to update the message on supported platforms, in ms (default 500). */
+  editIntervalMs?: number;
 }
 
 /** Shared options for every connect_* call. */

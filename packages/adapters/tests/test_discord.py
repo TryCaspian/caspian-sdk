@@ -49,8 +49,13 @@ def test_parse_extracts_attachments():
     event = _event(
         text="see file",
         attachments=[
-            {"id": "a1", "filename": "photo.png", "size": 2048,
-             "url": "https://cdn.discord/photo.png", "content_type": "image/png"},
+            {
+                "id": "a1",
+                "filename": "photo.png",
+                "size": 2048,
+                "url": "https://cdn.discord/photo.png",
+                "content_type": "image/png",
+            },
         ],
     )
     [inbound] = parse_gateway_message(event, APP_ID)
@@ -68,8 +73,13 @@ def test_parse_keeps_attachment_only_message():
     event = _event(
         text="",
         attachments=[
-            {"id": "a1", "filename": "doc.pdf", "size": 10,
-             "url": "https://cdn/doc.pdf", "content_type": "application/pdf"},
+            {
+                "id": "a1",
+                "filename": "doc.pdf",
+                "size": 10,
+                "url": "https://cdn/doc.pdf",
+                "content_type": "application/pdf",
+            },
         ],
     )
     [inbound] = parse_gateway_message(event, APP_ID)
@@ -86,8 +96,11 @@ def test_webhook_id_from_url():
 
 def test_install_url_shape():
     url = install_url(
-        "https://discord.com/api/v10", "client-1", "67177472",
-        "https://gw.example.com/cb", "state-1",
+        "https://discord.com/api/v10",
+        "client-1",
+        "67177472",
+        "https://gw.example.com/cb",
+        "state-1",
     )
     assert url.startswith("https://discord.com/oauth2/authorize?")
     assert "client_id=client-1" in url

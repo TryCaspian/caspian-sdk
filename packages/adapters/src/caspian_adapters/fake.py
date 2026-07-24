@@ -38,8 +38,11 @@ class FakeEmailProvider:
         self.domains.append(domain)
         token = secrets.token_hex(16)
         return [
-            {"type": "CNAME", "name": f"{token}._domainkey.{domain}",
-             "value": f"{token}.dkim.fake.comm.local"},
+            {
+                "type": "CNAME",
+                "name": f"{token}._domainkey.{domain}",
+                "value": f"{token}.dkim.fake.comm.local",
+            },
             {"type": "MX", "name": domain, "value": "inbound.fake.comm.local", "priority": 10},
         ]
 

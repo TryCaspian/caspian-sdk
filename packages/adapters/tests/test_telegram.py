@@ -104,8 +104,10 @@ def test_parse_update_extracts_document_and_voice():
     [doc] = parse_update(
         _media_update(
             document={
-                "file_id": "doc1", "file_name": "report.pdf",
-                "mime_type": "application/pdf", "file_size": 2048,
+                "file_id": "doc1",
+                "file_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2048,
             }
         ),
         BOT_ID,
@@ -132,13 +134,17 @@ def test_parse_update_keeps_media_only_message():
 
 def test_inbound_attachment_serializes_to_payload():
     update = _media_update(
-        document={"file_id": "d", "file_name": "a.txt", "mime_type": "text/plain",
-                  "file_size": 4}
+        document={"file_id": "d", "file_name": "a.txt", "mime_type": "text/plain", "file_size": 4}
     )
     payload = parse_update(update, BOT_ID)[0].to_payload()
     assert payload["attachments"] == [
-        {"url": None, "mime_type": "text/plain", "filename": "a.txt",
-         "size_bytes": 4, "provider_file_id": "d"}
+        {
+            "url": None,
+            "mime_type": "text/plain",
+            "filename": "a.txt",
+            "size_bytes": 4,
+            "provider_file_id": "d",
+        }
     ]
 
 

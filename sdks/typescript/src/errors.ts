@@ -87,3 +87,4 @@ export class InsufficientCreditError extends CommError {
     return this.client.topUp(amountCents ?? 2000);
   }
 }
+export class WebhookVerificationError extends CommError { constructor() { super(400, "Invalid webhook signature"); this.name = "WebhookVerificationError"; Object.setPrototypeOf(this, WebhookVerificationError.prototype); } }

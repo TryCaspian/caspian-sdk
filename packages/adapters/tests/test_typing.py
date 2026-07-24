@@ -19,8 +19,9 @@ def test_discord_typing_hits_channel_typing_endpoint():
         return httpx.Response(204)
 
     p = DiscordProvider(base_url="https://discord.test", shared_bot_token="")
-    p._client = httpx.Client(base_url="https://discord.test",
-                             transport=httpx.MockTransport(handler), timeout=5.0)
+    p._client = httpx.Client(
+        base_url="https://discord.test", transport=httpx.MockTransport(handler), timeout=5.0
+    )
     p.typing("chan123", credentials={"bot_token": "BOT"})
     assert seen["path"] == "/channels/chan123/typing"
     assert seen["auth"] == "Bot BOT"
@@ -31,13 +32,15 @@ def test_telegram_typing_sends_chat_action():
 
     def handler(request):
         import json
+
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"ok": True, "result": True})
 
     p = TelegramProvider(webhook_base="", base_url="https://tg.test")
-    p._client = httpx.Client(base_url="https://tg.test",
-                             transport=httpx.MockTransport(handler), timeout=5.0)
+    p._client = httpx.Client(
+        base_url="https://tg.test", transport=httpx.MockTransport(handler), timeout=5.0
+    )
     p.typing("55555", credentials={"bot_token": "123:ABC"})
     assert seen["path"] == "/bot123:ABC/sendChatAction"
     assert seen["body"] == {"chat_id": "55555", "action": "typing"}

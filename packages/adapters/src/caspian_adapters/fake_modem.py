@@ -43,14 +43,20 @@ class FakeModemProvider:
         return self._record(message.to[0], message.text)
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         remote_number, _, _ = provider_message_id.partition(":")
         return self._record(remote_number, message.text)
 
     def initiate(
-        self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        recipient: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         return self._record(recipient, message.text)

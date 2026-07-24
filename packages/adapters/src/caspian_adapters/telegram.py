@@ -209,8 +209,7 @@ class TelegramProvider:
     def typing(self, provider_thread_id: str, credentials: Mapping[str, str] | None = None) -> None:
         """Show the 'typing…' chat action (~5s) while the agent thinks."""
         token = self._token(credentials)
-        self._call(token, "sendChatAction",
-                   {"chat_id": provider_thread_id, "action": "typing"})
+        self._call(token, "sendChatAction", {"chat_id": provider_thread_id, "action": "typing"})
 
     def send(
         self,

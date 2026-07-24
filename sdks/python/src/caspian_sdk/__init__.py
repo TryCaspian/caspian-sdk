@@ -8,7 +8,10 @@ from .client import (
     Interaction,
     Message,
     Reaction,
+    StreamSession,
+    WebhookVerificationError,
 )
+from .state import InMemoryStateAdapter, RedisStateAdapter, StateAdapter
 
 __all__ = [
     "AccountRequiredError",
@@ -19,5 +22,10 @@ __all__ = [
     "Interaction",
     "Message",
     "Reaction",
+    "StreamSession",
+    "WebhookVerificationError",
     "blocks",
+    "StateAdapter",
+    "InMemoryStateAdapter",
+    "RedisStateAdapter",
 ]

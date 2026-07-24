@@ -96,20 +96,21 @@ def set_bot_nickname(base_url: str, bot_token: str, guild_id: str, nick: str) ->
     r.raise_for_status()
 
 
-def install_url(base: str, client_id: str, permissions: str, redirect_uri: str,
-                state: str) -> str:
+def install_url(base: str, client_id: str, permissions: str, redirect_uri: str, state: str) -> str:
     """The Discord 'add bot to server' OAuth URL for the shared Caspian bot."""
     from urllib.parse import urlencode
 
     origin = base.split("/api")[0]  # https://discord.com
-    q = urlencode({
-        "client_id": client_id,
-        "scope": "bot",
-        "permissions": permissions,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "state": state,
-    })
+    q = urlencode(
+        {
+            "client_id": client_id,
+            "scope": "bot",
+            "permissions": permissions,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "state": state,
+        }
+    )
     return f"{origin}/oauth2/authorize?{q}"
 
 
@@ -200,9 +201,7 @@ class DiscordProvider:
                 address=name, provider_resource_id=webhook_id_from_url(creds["webhook_url"])
             )
         token = self._token(creds)
-        r = self._client.get(
-            "/applications/@me", headers={"Authorization": f"Bot {token}"}
-        )
+        r = self._client.get("/applications/@me", headers={"Authorization": f"Bot {token}"})
         r.raise_for_status()
         app = r.json()
         name = app.get("name") or app["id"]
@@ -229,11 +228,17 @@ class DiscordProvider:
         self, provider_inbox_id: str, recipient: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
         # recipient is a channel id the bot can post to
-        return self.send(provider_inbox_id, OutboundMessage(text=message.text, to=(recipient,)),
-                         credentials=credentials)
+        return self.send(
+            provider_inbox_id,
+            OutboundMessage(text=message.text, to=(recipient,)),
+            credentials=credentials,
+        )
 
     def reply(
-        self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
+        self,
+        provider_inbox_id: str,
+        provider_message_id: str,
+        message: OutboundMessage,
         credentials=None,
     ) -> SendResult:
         creds = credentials or {}

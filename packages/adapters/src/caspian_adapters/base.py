@@ -46,6 +46,8 @@ class Capability:
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
     ATTACHMENTS = "attachments"  # send/receive file attachments (image, document, voice, …)
+    EDIT_OUTBOUND = "edit_outbound"  # edit own sent messages (enables post+edit streaming)
+    REACTIONS = "reactions"  # add/remove emoji reactions (tapback) on messages
 
 
 # Every valid capability string, for validating a connection's manifest.
