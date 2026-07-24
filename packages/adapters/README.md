@@ -20,3 +20,18 @@ my-channel = "my_pkg.providers:build_my_channel"
 ```
 
 Part of [Caspian](https://github.com/TryCaspian/caspian-sdk). Managed channels with the same interface: [trycaspianai.com](https://trycaspianai.com).
+
+## Gateway event mapping
+
+`parse_webhook()` returns normalized adapter events. Gateway code can classify
+them with `event_type(event)`:
+
+| Adapter object | Gateway event |
+| --- | --- |
+| `InboundMessage` | `message.received` |
+| `InboundReaction` | `reaction.received` |
+| `InboundCommand` | `command.received` |
+
+The gateway should enrich `event_payload(event)` with connection/customer/agent
+IDs, conversation IDs, source-message records, and SDK-facing sender fields after
+it resolves the provider inbox/thread/message IDs.

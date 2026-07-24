@@ -25,6 +25,7 @@ from collections.abc import Mapping
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -148,7 +149,7 @@ class TelegramUserProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str],
         credentials=None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         # User accounts receive over MTProto, not webhooks. A dedicated listener
         # (out of scope for this slice) feeds inbound; the webhook path is unused.
         raise NotImplementedError("telegram-user delivers inbound over MTProto, not webhooks")

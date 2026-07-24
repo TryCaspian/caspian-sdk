@@ -51,6 +51,7 @@ import httpx
 
 from .base import (
     Capability,
+    InboundEvent,
     InboundMessage,
     OutboundMessage,
     ProvisionRequest,
@@ -96,7 +97,7 @@ def oauth1_header(
     return "OAuth " + ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(oauth.items()))
 
 
-def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[InboundMessage]:
+def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[InboundEvent]:
     """Turn an Account Activity DM-event payload into InboundMessages.
 
     Skips the agent's own outbound echoes (`sender_id == for_user_id`) so the
@@ -105,7 +106,7 @@ def parse_x_webhook(payload: bytes, for_user_fallback: str = "") -> list[Inbound
     data = json.loads(payload)
     for_user_id = data.get("for_user_id") or for_user_fallback
     users = data.get("users", {}) or {}
-    out: list[InboundMessage] = []
+    out: list[InboundEvent] = []
     for event in data.get("direct_message_events", []):
         if event.get("type") != "message_create":
             continue
@@ -430,7 +431,7 @@ class XProvider:
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if self._webhook_secret:
             received = {k.lower(): v for k, v in headers.items()}.get(
                 "x-twitter-webhooks-signature", ""
