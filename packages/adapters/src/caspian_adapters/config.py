@@ -93,3 +93,9 @@ class Settings(BaseSettings):
     x_webhook_secret: str = ""  # overrides x_api_secret for CRC/signature if set
     x_base_url: str = "https://api.x.com"
     x_dm_poll_interval: float = 10.0  # seconds between DM polls per connection
+
+    # Bluesky AT Protocol API. Per-connection identifier and app password are
+    # supplied at connect time; these values configure the shared API endpoint
+    # and optional webhook verification.
+    bluesky_base_url: str = "https://bsky.social"
+    bluesky_webhook_secret: str = ""
