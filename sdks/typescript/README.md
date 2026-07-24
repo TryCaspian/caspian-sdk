@@ -99,6 +99,33 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
+## Concurrency Strategies
+
+`listen()` supports per-conversation concurrency policies.
+
+### Queue (default)
+
+Safest option for agents. Messages from the same conversation are processed in order.
+
+```ts
+await client.listen({ concurrency: "queue" });
+```
+
+### Drop
+
+If a handler is already running for a conversation, new messages for that conversation are ignored.
+
+```ts
+await client.listen({ concurrency: "drop" });
+```
+
+### Parallel
+
+Processes overlapping messages concurrently. Ordering is not guaranteed.
+
+```ts
+await client.listen({ concurrency: "parallel" });
+```
 ## Errors
 
 Non-2xx responses throw a `CommError` with `statusCode` and `detail`:

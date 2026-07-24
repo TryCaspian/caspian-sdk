@@ -71,6 +71,34 @@ Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 - **`message.typing()`** shows a "typing…" indicator while your agent thinks (where the platform supports it).
 - **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop.
 
+## Concurrency Strategies
+
+`listen()` supports per-conversation concurrency policies.
+
+### Queue (default)
+
+Safest option for agents. Messages from the same conversation are processed in order.
+
+```python
+client.listen(concurrency="queue")
+```
+
+### Drop
+
+If a handler is already running for a conversation, new messages for that conversation are ignored.
+
+```python
+client.listen(concurrency="drop")
+```
+
+### Parallel
+
+Processes overlapping messages concurrently. Ordering is not guaranteed.
+
+```python
+client.listen(concurrency="parallel")
+```
+
 ## Docs
 
 Point your coding agent at the setup guide and it does the whole integration for you. Full docs and your API key: **[trycaspianai.com](https://trycaspianai.com)**.
