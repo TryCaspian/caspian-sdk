@@ -173,4 +173,6 @@ export interface ListenOptions {
    * typing indicator (X, SMS, email); the real answer follows from the handler.
    */
   ack?: string;
+  concurrency?: "queue" | "parallel" | "debounce" | "drop";
+  debounceMs?: number;
 }

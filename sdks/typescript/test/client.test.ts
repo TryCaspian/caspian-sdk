@@ -36,6 +36,14 @@ function json(body: unknown, status = 200) {
   });
 }
 
+function messageEvent(seq: number, id: string, convId = "c1") {
+  return {
+    seq,
+    type: "message.received",
+    data: { message: { id, conversation_id: convId, connection_id: "c" } },
+  };
+}
+
 describe("CommClient", () => {
   it("requires an API key", () => {
     delete process.env.CASPIAN_API_KEY;
@@ -466,7 +474,7 @@ describe("CommClient", () => {
   });
 
   it("a throwing handler does not stop the drain", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => { });
     const { client } = makeClient({
       "GET /v1/events": (req) => {
         const after = Number(new URL(req.url).searchParams.get("after_seq"));
@@ -488,7 +496,153 @@ describe("CommClient", () => {
     });
     const last = await client.dispatchPending(0);
     expect(last).toBe(2);
+    expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
   });
+
+  it("concurrency=queue runs sequentially per conversation", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": () => json([]),
+    });
+    const seen: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    let firstEntered!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    client.onMessage(async (m) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (m.id === "m1") {
+        firstEntered();
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      seen.push(m.id);
+      active -= 1;
+    });
+    const first = (client as any).handleConcurrency(messageEvent(1, "m1"), "queue", 500);
+    await firstStarted;
+    const second = (client as any).handleConcurrency(messageEvent(2, "m2"), "queue", 500);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(seen).toEqual([]);
+    await Promise.all([first, second]);
+    expect(seen).toEqual(["m1", "m2"]);
+    expect(maxActive).toBe(1);
+  });
+
+  it("concurrency=parallel runs concurrently without waiting", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": () => json([]),
+    });
+    const seen: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    client.onMessage(async (m) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 50));
+      seen.push(m.id);
+      active -= 1;
+    });
+    const start = performance.now();
+    await (client as any).handleConcurrency(messageEvent(1, "m1"), "parallel", 500);
+    await (client as any).handleConcurrency(messageEvent(2, "m2"), "parallel", 500);
+    await new Promise((r) => setTimeout(r, 80));
+    const elapsed = performance.now() - start;
+    expect(seen).toEqual(expect.arrayContaining(["m1", "m2"]));
+    expect(maxActive).toBe(2);
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it("concurrency=drop ignores overlapping messages for the same conversation", async () => {
+    const events1 = [
+      { seq: 1, type: "message.received", data: { message: { id: "m1", conversation_id: "c1", connection_id: "c" } } },
+    ];
+    const events2 = [
+      { seq: 2, type: "message.received", data: { message: { id: "m2", conversation_id: "c1", connection_id: "c" } } },
+    ];
+    let fetchCount = 0;
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after === 0 && fetchCount === 0) {
+          fetchCount++;
+          return json(events1);
+        }
+        if (after === 1 && fetchCount === 1) {
+          fetchCount++;
+          return json(events2);
+        }
+        return json([]);
+      },
+    });
+    const seen: string[] = [];
+    client.onMessage(async (m) => {
+      seen.push(m.id);
+      if (seen.length === 1) {
+        // Re-entrant call to dispatchPending to simulate concurrent webhook while m1 is in-flight
+        await client.dispatchPending(1, "drop");
+      }
+    });
+    await client.dispatchPending(0, "drop");
+    expect(seen).toEqual(["m1"]);
+  });
+
+  it("concurrency=debounce coalesces bursts", async () => {
+    const events = [messageEvent(1, "m1"), messageEvent(2, "m2"), messageEvent(3, "m3")];
+    let fetched = false;
+    const { client } = makeClient({
+      "GET /v1/events": () => {
+        if (fetched) return json([]);
+        fetched = true;
+        return json(events);
+      },
+    });
+    const seen: Message[] = [];
+    client.onMessage(async (m) => {
+      seen.push(m);
+    });
+    await client.dispatchPending(0, "debounce", 40);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].id).toBe("m3");
+    expect(seen[0].coalescedMessages).toHaveLength(2);
+    expect(seen[0].coalescedMessages[0].id).toBe("m1");
+    expect(seen[0].coalescedMessages[1].id).toBe("m2");
+  });
+
+  it.each(["queue", "parallel", "debounce", "drop"] as const)(
+    "concurrency=%s releases state after handler exceptions",
+    async (concurrency) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => { });
+      const { client } = makeClient({
+        "GET /v1/events": () => json([]),
+      });
+      const seen: string[] = [];
+      client.onMessage(async (m) => {
+        seen.push(m.id);
+        if (m.id === "boom") throw new Error("boom");
+      });
+
+      await (client as any).handleConcurrency(messageEvent(1, "boom"), concurrency, 10);
+      if (concurrency === "parallel" || concurrency === "debounce") {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      await (client as any).handleConcurrency(messageEvent(2, "ok"), concurrency, 10);
+      if (concurrency === "parallel" || concurrency === "debounce") {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(seen).toEqual(["boom", "ok"]);
+      expect((client as any).inFlight.has("c1")).toBe(false);
+      expect((client as any).queuePromises.has("c1")).toBe(false);
+      expect((client as any).debounceTimers.has("c1")).toBe(false);
+      expect((client as any).debounceEvents.has("c1")).toBe(false);
+      errorSpy.mockRestore();
+    }
+  );
 });

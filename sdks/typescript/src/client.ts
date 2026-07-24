@@ -58,7 +58,10 @@ export class Message {
     private readonly client: CommClient,
     /** File attachments received with the message (empty when none). */
     readonly media: Media[] = [],
+    /** Messages that were skipped/debounced in a burst. */
+    readonly coalescedMessages: Message[] = [],
   ) {}
+
 
   /**
    * Reply on whichever channel this message arrived from (auto-threaded).
@@ -160,6 +163,12 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+
+  // Concurrency state
+  private readonly inFlight = new Set<string>();
+  private readonly queuePromises = new Map<string, Promise<void>>();
+  private readonly debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly debounceEvents = new Map<string, EventRecord[]>();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -748,6 +757,10 @@ export class CommClient {
 
   private buildMessage(data: any): Message {
     const m = data.message;
+    
+    const coalescedRaw = data._coalescedMessages || [];
+    const coalescedMsgs = coalescedRaw.map((evt: any) => this.buildMessage(evt.data));
+    
     return new Message(
       m.id,
       m.conversation_id,
@@ -761,6 +774,7 @@ export class CommClient {
       m.html ?? null,
       this,
       m.media ?? [],
+      coalescedMsgs,
     );
   }
 
@@ -903,18 +917,115 @@ export class CommClient {
     process.stderr.write(lines.join("\n") + "\n");
   }
 
+  private handleDebounce(event: EventRecord, convId: string, debounceMs: number) {
+    const timer = this.debounceTimers.get(convId);
+    if (timer) clearTimeout(timer);
+
+    const events = this.debounceEvents.get(convId) || [];
+    events.push(event);
+    this.debounceEvents.set(convId, events);
+
+    const newTimer = setTimeout(() => {
+      this.flushDebounce(convId).catch((err) => {
+        logger.error(`debounced dispatch failed for conversation ${convId}; continuing`, err);
+      });
+    }, debounceMs);
+    this.debounceTimers.set(convId, newTimer);
+  }
+
+  private async flushDebounce(convId: string): Promise<void> {
+    const events = this.debounceEvents.get(convId) || [];
+    this.debounceEvents.delete(convId);
+    this.debounceTimers.delete(convId);
+
+    if (events.length === 0) return;
+
+    const latestEvent = events[events.length - 1];
+    const coalesced = events.slice(0, -1);
+    
+    if (latestEvent.data) {
+      latestEvent.data._coalescedMessages = coalesced;
+    }
+
+    try {
+      await this.dispatchEvent(latestEvent);
+    } finally {
+      // Cleanup happens via Map delete methods directly
+    }
+  }
+
+
+
+  private async handleConcurrency(
+    event: EventRecord,
+    concurrency: "queue" | "parallel" | "debounce" | "drop",
+    debounceMs: number
+  ): Promise<void> {
+    if (event.type !== "message.received") {
+      await this.dispatchEvent(event);
+      return;
+    }
+    
+    const messageData = event.data?.message as any;
+    const convId = messageData?.conversation_id as string;
+    if (!convId) {
+      await this.dispatchEvent(event);
+      return;
+    }
+
+    if (concurrency === "parallel") {
+      this.dispatchEvent(event).catch(() => {});
+      return;
+    }
+
+    if (concurrency === "debounce") {
+      this.handleDebounce(event, convId, debounceMs);
+      return;
+    }
+
+    if (concurrency === "drop") {
+      // INVARIANT: The check (.has) and set (.add) below must remain strictly synchronous.
+      // Do not insert any `await` or asynchronous operations between them.
+      // The JS event loop ensures this synchronous block acts as an atomic
+      // check-and-set, preventing race conditions.
+      if (this.inFlight.has(convId)) return;
+      this.inFlight.add(convId);
+      try {
+        await this.dispatchEvent(event);
+      } finally {
+        this.inFlight.delete(convId);
+      }
+    } else {
+      const previous = this.queuePromises.get(convId) || Promise.resolve();
+      const p = previous.then(async () => {
+        this.inFlight.add(convId);
+        try {
+          await this.dispatchEvent(event);
+        } finally {
+          this.inFlight.delete(convId);
+        }
+      }).catch(() => {}).finally(() => {
+        if (this.queuePromises.get(convId) === p) {
+          this.queuePromises.delete(convId);
+        }
+      });
+      this.queuePromises.set(convId, p);
+      await p;
+    }
+  }
+
   /**
    * Process all currently available events once. Returns the last seen seq.
    * Handler exceptions are caught per message, so this always drains the queue.
    */
-  async dispatchPending(afterSeq = 0): Promise<number> {
+  async dispatchPending(afterSeq = 0, concurrency: "queue" | "parallel" | "debounce" | "drop" = "queue", debounceMs = 500): Promise<number> {
     let lastSeq = afterSeq;
     for (;;) {
       const batch = await this.events({ afterSeq: lastSeq });
       if (!batch.length) return lastSeq;
       for (const event of batch) {
         lastSeq = event.seq;
-        await this.dispatchEvent(event);
+        await this.handleConcurrency(event, concurrency, debounceMs);
       }
     }
   }
@@ -928,6 +1039,8 @@ export class CommClient {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
+    const concurrency = opts.concurrency ?? "queue";
+    const debounceMs = opts.debounceMs ?? 500;
     let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
     let backoff = pollMs;
     while (!opts.signal?.aborted) {
@@ -947,7 +1060,7 @@ export class CommClient {
         continue;
       }
       for (const event of batch) {
-        await this.dispatchEvent(event);
+        await this.handleConcurrency(event, concurrency, debounceMs);
         seq = event.seq; // advance only after the dispatch attempt
       }
     }

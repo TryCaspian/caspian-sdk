@@ -99,6 +99,19 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
+## Concurrency Policies
+
+If a user sends multiple messages rapidly (a "burst") while your agent is still thinking, you can configure how `listen()` processes the overlap using the `concurrency` option:
+
+```ts
+await client.listen({ concurrency: "queue" }); // the default
+```
+
+- `"queue"` (default): Runs handlers sequentially per conversation. Ensures your agent doesn't double-reply or run concurrently for the same user.
+- `"debounce"`: Waits briefly (`debounceMs: 500` by default) for a burst to settle. Your handler runs once with the latest message. Dropped messages are preserved in `message.coalescedMessages` if you need the full context.
+- `"drop"`: If your agent is actively handling a message for a conversation, any new messages that arrive for that conversation are immediately dropped/ignored.
+- `"parallel"`: Executes handlers concurrently without awaiting them. Use with caution as this allows duplicate replies if the human sends overlapping messages.
+
 ## Errors
 
 Non-2xx responses throw a `CommError` with `statusCode` and `detail`:
