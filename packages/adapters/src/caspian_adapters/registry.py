@@ -121,6 +121,17 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
         )
+    if name == "fake-reddit":
+        from .fake_reddit import FakeRedditProvider
+
+        return FakeRedditProvider()
+    if name == "reddit":
+        from .reddit import RedditProvider
+
+        return RedditProvider(
+            base_url=settings.reddit_base_url,
+            user_agent=settings.reddit_user_agent,
+        )
     if name == "fake-instagram":
         from .fake_social import FakeInstagramProvider
 
