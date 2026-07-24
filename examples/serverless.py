@@ -37,6 +37,6 @@ async def caspian_webhook(request: Request):
     except WebhookVerificationError as err:
         raise HTTPException(status_code=401, detail="Invalid signature") from err
     except CommError as err:
-        raise HTTPException(status_code=err.status_code, detail=err.message) from err
+        raise HTTPException(status_code=err.status_code, detail=err.detail) from err
 
     return {"ok": True}

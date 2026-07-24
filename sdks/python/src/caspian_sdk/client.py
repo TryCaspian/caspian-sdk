@@ -1019,6 +1019,7 @@ class CommClient:
                 strategy = "post_edit"
         except Exception:
             logger.warning("streaming strategy lookup failed; falling back to final_only")
+            return strategy
             
         self._strategy_cache[connection_id] = strategy
         return strategy

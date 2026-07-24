@@ -37,4 +37,14 @@ describe("Webhook Handler", () => {
     await expect(client.handleWebhook(payload, "bad_sig", secret))
       .rejects.toThrow(WebhookVerificationError);
   });
+
+  it("rejects null or non-object JSON payloads", async () => {
+    const client = new CommClient({ apiKey: "test" });
+    const secret = "my_secret";
+    const payload = JSON.stringify(null);
+    const signature = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    
+    await expect(client.handleWebhook(payload, signature, secret))
+      .rejects.toThrow(/invalid JSON payload/);
+  });
 });

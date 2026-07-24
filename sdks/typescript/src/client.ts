@@ -794,6 +794,7 @@ export class CommClient {
       }
     } catch (err) {
       logger.warn("streaming strategy lookup failed; falling back to final_only", err);
+      return strategy;
     }
     
     this.strategyCache.set(connectionId, strategy);
@@ -1096,6 +1097,9 @@ export class CommClient {
     let event: Record<string, any>;
     try {
       event = JSON.parse(bodyBuffer.toString("utf-8"));
+      if (typeof event !== "object" || event === null || Array.isArray(event)) {
+        throw new Error("not an object");
+      }
     } catch (err: any) {
       throw new CommError(400, "invalid JSON payload");
     }

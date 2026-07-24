@@ -2,7 +2,7 @@
  * Example of running the Caspian SDK in a serverless function (Next.js App Router).
  */
 
-import { CommClient, WebhookVerificationError } from "caspian-sdk";
+import { CommClient, WebhookVerificationError, CommError } from "caspian-sdk";
 
 // 1. Initialize the client outside the handler to reuse connection pools
 const client = new CommClient({ apiKey: process.env.CASPIAN_API_KEY });
@@ -31,6 +31,9 @@ export async function POST(req: Request) {
   } catch (err) {
     if (err instanceof WebhookVerificationError) {
       return new Response("Invalid signature", { status: 401 });
+    }
+    if (err instanceof CommError) {
+      return new Response(err.message, { status: err.statusCode });
     }
     console.error(err);
     return new Response("Internal Error", { status: 500 });
