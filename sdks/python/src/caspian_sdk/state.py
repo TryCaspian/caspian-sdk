@@ -1,5 +1,7 @@
 import logging
 import threading
+import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Protocol
@@ -64,25 +66,36 @@ class InMemoryStateAdapter:
             self._conv_lock_refcount[conversation_id] = self._conv_lock_refcount.get(conversation_id, 0) + 1
             lock = self._conv_locks[conversation_id]
 
-        with lock:
-            yield
-
-        with self._conv_locks_lock:
-            self._conv_lock_refcount[conversation_id] -= 1
-            if self._conv_lock_refcount[conversation_id] <= 0:
-                self._conv_locks.pop(conversation_id, None)
-                self._conv_lock_refcount.pop(conversation_id, None)
+        try:
+            with lock:
+                yield
+        finally:
+            with self._conv_locks_lock:
+                self._conv_lock_refcount[conversation_id] -= 1
+                if self._conv_lock_refcount[conversation_id] <= 0:
+                    self._conv_locks.pop(conversation_id, None)
+                    self._conv_lock_refcount.pop(conversation_id, None)
 
 
 class RedisStateAdapter:
     """State adapter using Redis for distributed idempotency and locking."""
 
-    def __init__(self, client: "redis.Redis", key_prefix: str = "caspian:", dedup_ttl: int = 86400, lock_ttl: int = 30):
+    def __init__(
+        self, 
+        client: "redis.Redis", 
+        key_prefix: str = "caspian:", 
+        dedup_ttl: int = 86400, 
+        lock_ttl: int = 30,
+        acquire_timeout: float = 10.0,
+        poll_interval: float = 0.05
+    ):
         """Execute __init__."""
         self.client = client
         self.key_prefix = key_prefix
         self._dedup_ttl = dedup_ttl
         self._lock_ttl = lock_ttl
+        self._acquire_timeout = acquire_timeout
+        self._poll_interval = poll_interval
 
     def seen(self, event_id: str) -> bool:
         """Execute seen."""
@@ -95,9 +108,7 @@ class RedisStateAdapter:
     def lock(self, conversation_id: str) -> Iterator[None]:
         """Execute lock."""
         key = f"{self.key_prefix}lock:{conversation_id}"
-        import time
-        import uuid
-
+        from .client import CommError
         token = str(uuid.uuid4())
 
         start = time.time()
@@ -105,9 +116,9 @@ class RedisStateAdapter:
             # Try to acquire lock
             if self.client.set(key, token, nx=True, ex=self._lock_ttl):
                 break
-            if time.time() - start > 10:
-                raise Exception(f"Timeout acquiring lock for {conversation_id}")
-            time.sleep(0.05)
+            if time.time() - start > self._acquire_timeout:
+                raise CommError(408, f"timeout acquiring lock for {conversation_id}")
+            time.sleep(self._poll_interval)
 
         try:
             yield

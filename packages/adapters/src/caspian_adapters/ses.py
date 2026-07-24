@@ -108,7 +108,13 @@ def _verify_sns_signature(envelope: dict) -> None:
     canonical = "".join(
         f"{key}\n{envelope[key]}\n" for key in fields if envelope.get(key) is not None
     )
-    algorithm = hashes.SHA256() if envelope.get("SignatureVersion") == "2" else hashes.SHA1()
+    sig_ver = envelope.get("SignatureVersion")
+    if sig_ver == "2":
+        algorithm = hashes.SHA256()
+    elif sig_ver == "1":
+        algorithm = hashes.SHA1()
+    else:
+        raise WebhookVerificationError(f"unsupported SignatureVersion: {sig_ver}")
     try:
         certificate.public_key().verify(
             base64.b64decode(envelope["Signature"]),

@@ -21,9 +21,11 @@ def test_in_memory_state_adapter_lock():
     adapter = InMemoryStateAdapter()
 
     result = []
+    entered = threading.Event()
 
     def worker1():
         with adapter.lock("conv_1"):
+            entered.set()
             result.append("w1_start")
             time.sleep(0.1)
             result.append("w1_end")
@@ -36,8 +38,7 @@ def test_in_memory_state_adapter_lock():
     t1 = threading.Thread(target=worker1)
     t2 = threading.Thread(target=worker2)
     t1.start()
-    # ensure t1 grabs lock first
-    time.sleep(0.01)
+    assert entered.wait(timeout=1)
     t2.start()
 
     t1.join()
@@ -62,9 +63,11 @@ def test_redis_state_adapter_lock():
     adapter = RedisStateAdapter(r)
 
     result = []
+    entered = threading.Event()
 
     def worker1():
         with adapter.lock("conv_2"):
+            entered.set()
             result.append("w1_start")
             time.sleep(0.1)
             result.append("w1_end")
@@ -77,7 +80,7 @@ def test_redis_state_adapter_lock():
     t1 = threading.Thread(target=worker1)
     t2 = threading.Thread(target=worker2)
     t1.start()
-    time.sleep(0.01)
+    assert entered.wait(timeout=1)
     t2.start()
 
     t1.join()

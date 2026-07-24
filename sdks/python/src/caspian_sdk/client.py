@@ -552,7 +552,8 @@ class CommClient:
         )
         if response.status_code >= 400:
             try:
-                detail = response.json().get("detail", response.text)
+                payload = response.json()
+                detail = payload.get("detail", response.text) if isinstance(payload, dict) else payload
             except ValueError:
                 detail = response.text
             # A paid channel needs a one-time developer sign-in first.
@@ -1396,7 +1397,10 @@ class CommClient:
             return  # already handled in this invocation or by another instance
 
         data = event.get("data")
-        conv_id = data.get("conversation_id", "default") if isinstance(data, dict) else "default"
+        if isinstance(data, dict):
+            conv_id = data.get("message", {}).get("conversation_id") or data.get("conversation_id") or "default"
+        else:
+            conv_id = "default"
         with self.state.lock(conv_id):
             self._dispatch_event(event)
 

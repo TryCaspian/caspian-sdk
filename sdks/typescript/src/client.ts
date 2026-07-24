@@ -119,6 +119,7 @@ export class StreamSession {
   private postedId?: string;
   private lastEdit = 0;
   private finalized = false;
+  private postingPromise?: Promise<void>;
 
   constructor(
     private readonly messageId: string,
@@ -143,17 +144,20 @@ export class StreamSession {
 
     const now = Date.now();
     if (!this.postedId) {
-      // First chunk: post initial reply
-      try {
-        const res = await this.client.reply(this.messageId, this.text);
-        this.postedId = (res.id as string) || (res.message_id as string);
-      } catch (err) {
-        logger.warn("stream initial post failed; falling back to final_only", err);
+      if (!this.postingPromise) {
+        this.postingPromise = (async () => {
+          try {
+            const res = await this.client.reply(this.messageId, this.text);
+            this.postedId = (res.id as string) || (res.message_id as string);
+          } catch (err) {
+            logger.warn("stream initial post failed; falling back to final_only", err);
+          }
+          if (!this.postedId) {
+            this.strategy = "final_only";
+          }
+        })();
       }
-      
-      if (!this.postedId) {
-        this.strategy = "final_only";
-      }
+      await this.postingPromise;
       this.lastEdit = now;
     } else if (now - this.lastEdit >= this.editIntervalMs) {
       // Throttled edit
@@ -1109,7 +1113,8 @@ export class CommClient {
       return;
     }
 
-    const convId = (event.data?.conversation_id as string) || "default";
+    const data = event.data as Record<string, any> | undefined;
+    const convId = (data?.message?.conversation_id as string) || (data?.conversation_id as string) || "default";
     const lock = await this.state.lock(convId);
 
     try {

@@ -6,7 +6,7 @@ import { CommClient, WebhookVerificationError, CommError } from "caspian-sdk";
 
 // 1. Initialize the client outside the handler to reuse connection pools
 const client = new CommClient({ apiKey: process.env.CASPIAN_API_KEY });
-const WEBHOOK_SECRET = process.env.CASPIAN_WEBHOOK_SECRET!;
+const WEBHOOK_SECRET = process.env.CASPIAN_WEBHOOK_SECRET;
 
 // 2. Register your agent logic normally
 client.onMessage(async (msg) => {
@@ -17,6 +17,10 @@ client.onMessage(async (msg) => {
 
 // 3. Route inbound HTTP requests into the SDK's webhook handler
 export async function POST(req: Request) {
+  if (!WEBHOOK_SECRET) {
+    return new Response("Missing WEBHOOK_SECRET configuration", { status: 500 });
+  }
+
   const signature = req.headers.get("x-caspian-signature");
   if (!signature) {
     return new Response("Missing signature", { status: 401 });

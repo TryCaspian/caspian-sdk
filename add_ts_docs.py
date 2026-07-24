@@ -42,5 +42,9 @@ def process_file(filepath):
     with open(filepath, "w") as f:
         f.write('\n'.join(new_lines))
 
-for f in glob.glob("sdks/typescript/src/**/*.ts", recursive=True):
-    process_file(f)
+def main():
+    for f in glob.glob("sdks/typescript/src/**/*.ts", recursive=True):
+        process_file(f)
+
+if __name__ == "__main__":
+    main()
