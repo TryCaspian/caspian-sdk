@@ -160,6 +160,9 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private conversationQueues = new Map<string, EventRecord[]>();
+  private conversationRunning = new Set<string>();
+  private concurrency = "queue";
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -857,7 +860,49 @@ export class CommClient {
       }
     }
   }
+  private async routeEvent(event: EventRecord): Promise<void> {
+    if (event.type !== "message.received") {
+      await this.dispatchEvent(event);
+      return;
+    }
 
+    const data = event.data as {
+      message: {
+        conversation_id: string;
+      };
+    };
+
+    const conversationId = data.message.conversation_id;
+
+    if (!this.conversationQueues.has(conversationId)) {
+      this.conversationQueues.set(conversationId, []);
+    }
+
+    if (this.conversationRunning.has(conversationId)) {
+      if (this.concurrency === "drop") {
+        return;
+      }
+
+      if (this.concurrency === "parallel") {
+        void this.dispatchEvent(event);
+        return;
+      }
+
+      this.conversationQueues.get(conversationId)!.push(event);
+      return;
+    }
+
+    this.conversationQueues.get(conversationId)!.push(event);
+
+    this.conversationRunning.add(conversationId);
+
+    while (this.conversationQueues.get(conversationId)!.length > 0) {
+      const nextEvent = this.conversationQueues.get(conversationId)!.shift()!;
+      await this.dispatchEvent(nextEvent);
+    }
+
+    this.conversationRunning.delete(conversationId);
+  }
   /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
   private warnAccountRequired(err: AccountRequiredError): void {
     const now = Date.now();
@@ -914,7 +959,7 @@ export class CommClient {
       if (!batch.length) return lastSeq;
       for (const event of batch) {
         lastSeq = event.seq;
-        await this.dispatchEvent(event);
+        await this.routeEvent(event);
       }
     }
   }
@@ -947,7 +992,7 @@ export class CommClient {
         continue;
       }
       for (const event of batch) {
-        await this.dispatchEvent(event);
+        await this.routeEvent(event);
         seq = event.seq; // advance only after the dispatch attempt
       }
     }
