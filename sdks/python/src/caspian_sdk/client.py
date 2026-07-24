@@ -901,6 +901,13 @@ class CommClient:
             if self._concurrency == "drop":
                 return
 
+            if self._concurrency == "parallel":
+                self._executor.submit(
+                    self._dispatch_event,
+                    event,
+                )
+                return
+
             self._conversation_queues[conversation_id].append(event)
             return
 

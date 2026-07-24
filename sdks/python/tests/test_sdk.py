@@ -393,3 +393,50 @@ def test_drop_skips_overlapping_messages():
         time.sleep(0.01)
 
     assert processed == ["first"]
+def test_parallel_processes_overlapping_messages():
+    processed = []
+
+    client = CommClient(api_key="test")
+    client._concurrency = "parallel"
+
+    def handler(message):
+        processed.append(message.text)
+
+    client.on_message(handler)
+
+    event1 = {
+        "type": "message.received",
+        "data": {
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "message": {
+                "id": "1",
+                "conversation_id": "conv1",
+                "connection_id": "cn1",
+                "channel": "email",
+                "text": "first",
+            },
+        },
+    }
+
+    event2 = {
+        "type": "message.received",
+        "data": {
+            "customer_id": "cus_2",
+            "agent_id": "agt_2",
+            "message": {
+                "id": "2",
+                "conversation_id": "conv2",
+                "connection_id": "cn2",
+                "channel": "email",
+                "text": "second",
+            },
+        },
+    }
+    client._route_event(event1)
+    client._route_event(event2)
+
+    while len(processed) < 2:
+        time.sleep(0.01)
+
+    assert sorted(processed) == ["first", "second"]
