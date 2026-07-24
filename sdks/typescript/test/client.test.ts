@@ -160,6 +160,39 @@ describe("CommClient", () => {
     expect(calls[0].body).toMatchObject({ slack_client_id: "cid", slack_signing_secret: "sig" });
   });
 
+  it("connectGitHub maps App credentials and installGitHub uses install endpoint", async () => {
+    const { client, calls } = makeClient({
+      "POST /v1/connections/github": () =>
+        json({ id: "gh1", status: "pending_oauth", authorize_url: "https://github/install" }),
+      "POST /v1/connections/github/install": () =>
+        json({ id: "gh2", status: "pending_oauth", authorize_url: "https://github/shared" }),
+    });
+    const connected = await client.connectGitHub({
+      githubAppId: "123",
+      githubAppSlug: "my-app",
+      githubPrivateKey: "pem",
+      githubWebhookSecret: "secret",
+      customerId: "cus_1",
+    });
+    const installed = await client.installGitHub({ displayName: "Review Agent" });
+
+    expect(connected.authorize_url).toBe("https://github/install");
+    expect(installed.authorize_url).toBe("https://github/shared");
+    expect(calls[0].body).toMatchObject({
+      github_app_id: "123",
+      github_app_slug: "my-app",
+      github_private_key: "pem",
+      github_webhook_secret: "secret",
+      receive_mode: "mentions",
+      customer_id: "cus_1",
+    });
+    expect(calls[1].path).toBe("/v1/connections/github/install");
+    expect(calls[1].body).toMatchObject({
+      display_name: "Review Agent",
+      receive_mode: "mentions",
+    });
+  });
+
   it("throws CommError with detail on 4xx", async () => {
     const { client } = makeClient({
       "POST /v1/connections/x": () => json({ detail: "sign in first" }, 402),

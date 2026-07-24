@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    # GitHub App credentials. The private key may be an inline PEM or a path to
+    # its PEM file. Per-connection values can override these for bring-your-own
+    # Apps; these deployment values power one-click installation.
+    github_app_id: str = ""
+    github_app_slug: str = ""
+    github_private_key: str = ""
+    github_webhook_secret: str = ""
+    github_api_base: str = "https://api.github.com"
+
     # Instagram DM / Facebook Messenger via the developer's own Meta app + Page
     # (Graph API). Page id + access token identify the Page the agent answers as.
     instagram_page_id: str = ""
