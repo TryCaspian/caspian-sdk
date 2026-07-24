@@ -29,6 +29,10 @@ from .base import (
 
 API = "https://slack.com/api"
 
+# Reject requests whose signed timestamp is older than this, so a captured
+# request can't be replayed indefinitely (matches Slack's own guidance).
+MAX_TIMESTAMP_SKEW = 60 * 5
+
 
 def parse_event(data: dict) -> list[InboundMessage]:
     """Normalize a Slack Events API callback into our schema (user messages only)."""
@@ -294,6 +298,14 @@ class SlackProvider:
             h = lower_headers(headers)
             ts = h.get("x-slack-request-timestamp", "")
             sig = h.get("x-slack-signature", "")
+            # Reject stale (or unparseable) timestamps before checking the
+            # signature, so a captured signed request can't be replayed later.
+            try:
+                skew = abs(time.time() - int(ts))
+            except ValueError:
+                raise WebhookVerificationError("Slack timestamp missing or invalid") from None
+            if skew > MAX_TIMESTAMP_SKEW:
+                raise WebhookVerificationError("Slack timestamp too old")
             basestring = f"v0:{ts}:".encode() + payload
             expected = "v0=" + hmac.new(
                 signing_secret.encode(), basestring, hashlib.sha256

@@ -109,9 +109,8 @@ class _MetaMessagingProvider:
         return self._send(recipient, message.text or "")
 
     def meta_verify(self, params: Mapping[str, str]) -> str | None:
-        if (
-            params.get("hub.mode") == "subscribe"
-            and params.get("hub.verify_token") == self.verify_token
+        if params.get("hub.mode") == "subscribe" and hmac.compare_digest(
+            params.get("hub.verify_token") or "", self.verify_token or ""
         ):
             return params.get("hub.challenge")
         return None
