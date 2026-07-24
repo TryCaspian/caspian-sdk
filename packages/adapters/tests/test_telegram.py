@@ -2,8 +2,9 @@
 
 import json
 
+import httpx
 import pytest
-from caspian_adapters.base import WebhookVerificationError
+from caspian_adapters.base import Attachment, OutboundMessage, WebhookVerificationError
 from caspian_adapters.telegram import TelegramProvider, bot_id_from_token, parse_update
 
 BOT_TOKEN = "7123456789:AAEexample"
@@ -64,6 +65,9 @@ def test_parse_webhook_enforces_secret_header():
         provider.parse_webhook(
             payload, {"X-Telegram-Bot-Api-Secret-Token": "wrong"}, credentials=creds
         )
+    # A missing header must reject cleanly, not raise on the constant-time compare.
+    with pytest.raises(WebhookVerificationError, match="secret token"):
+        provider.parse_webhook(payload, {}, credentials=creds)
 
 
 def test_parse_webhook_without_secret_skips_check():
@@ -71,3 +75,117 @@ def test_parse_webhook_without_secret_skips_check():
     payload = json.dumps(_update()).encode()
     inbound = provider.parse_webhook(payload, {}, credentials={"bot_token": BOT_TOKEN})
     assert inbound[0].provider_inbox_id == BOT_ID
+
+
+def _media_update(update_id=200, **media):
+    message = {"message_id": 60, "chat": {"id": 900, "type": "private"}, **media}
+    return {"update_id": update_id, "message": message}
+
+
+def test_parse_update_extracts_photo_with_caption():
+    update = _media_update(
+        caption="my cat",
+        photo=[
+            {"file_id": "small", "file_size": 111},
+            {"file_id": "big", "file_size": 999},  # largest size is last
+        ],
+    )
+    [msg] = parse_update(update, BOT_ID)
+    assert msg.text == "my cat"  # caption is surfaced as text
+    assert len(msg.attachments) == 1
+    att = msg.attachments[0]
+    assert att.provider_file_id == "big"
+    assert att.mime_type == "image/jpeg"
+    assert att.size_bytes == 999
+    assert att.url is None  # Telegram needs a getFile call to resolve a URL
+
+
+def test_parse_update_extracts_document_and_voice():
+    [doc] = parse_update(
+        _media_update(
+            document={
+                "file_id": "doc1", "file_name": "report.pdf",
+                "mime_type": "application/pdf", "file_size": 2048,
+            }
+        ),
+        BOT_ID,
+    )
+    assert doc.text is None
+    assert doc.attachments[0].filename == "report.pdf"
+    assert doc.attachments[0].mime_type == "application/pdf"
+    assert doc.attachments[0].provider_file_id == "doc1"
+
+    [voice] = parse_update(
+        _media_update(voice={"file_id": "v1", "mime_type": "audio/ogg", "file_size": 512}),
+        BOT_ID,
+    )
+    assert voice.attachments[0].mime_type == "audio/ogg"
+    assert voice.attachments[0].provider_file_id == "v1"
+
+
+def test_parse_update_keeps_media_only_message():
+    # A photo with no caption has no text but must not be dropped.
+    [inbound] = parse_update(_media_update(photo=[{"file_id": "p", "file_size": 10}]), BOT_ID)
+    assert inbound.text is None
+    assert inbound.attachments[0].provider_file_id == "p"
+
+
+def test_inbound_attachment_serializes_to_payload():
+    update = _media_update(
+        document={"file_id": "d", "file_name": "a.txt", "mime_type": "text/plain",
+                  "file_size": 4}
+    )
+    payload = parse_update(update, BOT_ID)[0].to_payload()
+    assert payload["attachments"] == [
+        {"url": None, "mime_type": "text/plain", "filename": "a.txt",
+         "size_bytes": 4, "provider_file_id": "d"}
+    ]
+
+
+def _mock_provider(handler):
+    provider = TelegramProvider()
+    provider._client = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="https://api.telegram.org"
+    )
+    return provider
+
+
+def test_send_photo_uses_sendphoto_with_caption():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 77}})
+
+    provider = _mock_provider(handler)
+    message = OutboundMessage(
+        text="here you go",
+        to=("900",),
+        attachments=[Attachment(url="https://cdn/img.png", mime_type="image/png")],
+    )
+    result = provider.send("inbox", message, credentials={"bot_token": BOT_TOKEN})
+    assert seen["path"] == f"/bot{BOT_TOKEN}/sendPhoto"
+    assert seen["body"]["photo"] == "https://cdn/img.png"
+    assert seen["body"]["caption"] == "here you go"
+    assert result.provider_message_id == "900:77"
+
+
+def test_reply_document_uses_senddocument_and_reply_ref():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 78}})
+
+    provider = _mock_provider(handler)
+    message = OutboundMessage(
+        to=("900",),
+        attachments=[Attachment(provider_file_id="file123", mime_type="application/pdf")],
+    )
+    result = provider.reply("inbox", "900:55", message, credentials={"bot_token": BOT_TOKEN})
+    assert seen["path"] == f"/bot{BOT_TOKEN}/sendDocument"
+    assert seen["body"]["document"] == "file123"
+    assert seen["body"]["reply_to_message_id"] == 55
+    assert result.provider_message_id == "900:78"

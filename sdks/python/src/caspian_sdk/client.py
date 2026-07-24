@@ -19,13 +19,19 @@ import logging
 import os
 import sys
 import time
+from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock, Timer
+from typing import Literal
 
 import httpx
 
 logger = logging.getLogger("caspian_sdk")
+
+ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
 
 
 def _dotenv() -> dict[str, str]:
@@ -127,15 +133,234 @@ class Message:
     text: str | None
     html: str | None
     _client: "CommClient" = field(repr=False)
+    # File attachments received with the message: each {"url"|"data", "mime_type",
+    # "name", "size"}. Empty on channels/messages with no attachments.
+    media: list[dict] = field(default_factory=list)
 
-    def reply(self, text: str | None = None, html: str | None = None) -> dict:
-        return self._client.reply(self.id, text=text, html=html)
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        return self._client.reply(self.id, text=text, html=html, blocks=blocks, media=media)
+
+    def react(self, emoji: str) -> dict:
+        """Add an emoji reaction (tapback) to this message. Best-effort; no-op on
+        channels without a reaction API (needs Capability.REACTIONS)."""
+        return self._client.react(self.id, emoji)
 
     def typing(self) -> None:
         """Show a 'thinking…' typing indicator on the channel (Discord/Telegram;
         no-op where the platform has none). Fired automatically before your
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
+
+
+@dataclass
+class Interaction:
+    """A button tap delivered to an on_interaction handler. `value` is the callback
+    value set on the block button; `source_message` is the message it was on."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    conversation_id: str | None
+    value: str | None
+    source_message: dict | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply in the thread the button lived in (replies to the source message)."""
+        if not self.source_message:
+            raise CommError(400, "interaction has no source message to reply to")
+        return self._client.reply(
+            self.source_message["id"], text=text, html=html, blocks=blocks, media=media
+        )
+
+
+@dataclass
+class Reaction:
+    """An emoji reaction delivered to an on_reaction handler. `action` is "added"
+    or "removed"; `source_message` is the message that was reacted to."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    emoji: str | None
+    action: str
+    source_message: dict | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+
+class _MessageScheduler:
+    """Process message events according to a per-conversation overlap policy."""
+
+    def __init__(
+        self,
+        dispatch: Callable[[dict], None],
+        strategy: ConcurrencyStrategy,
+        debounce_ms: int,
+    ) -> None:
+        if strategy not in {"queue", "debounce", "drop", "parallel"}:
+            raise ValueError(
+                "concurrency must be one of: queue, debounce, drop, parallel"
+            )
+        if debounce_ms < 0:
+            raise ValueError("debounce_ms must be non-negative")
+        self._dispatch = dispatch
+        self._strategy = strategy
+        self._debounce_seconds = debounce_ms / 1000
+        self._executor = ThreadPoolExecutor(thread_name_prefix="caspian-listener")
+        self._lock = Lock()
+        self._queues: dict[str, deque[dict]] = {}
+        self._running: set[str] = set()
+        self._timers: dict[str, Timer] = {}
+        self._pending: dict[str, dict] = {}
+        self._closed = False
+
+    @staticmethod
+    def _conversation_key(event: dict) -> str:
+        data = event.get("data") or {}
+        message = data.get("message") or {}
+        return str(
+            message.get("conversation_id")
+            or data.get("conversation_id")
+            or message.get("id")
+            or event.get("seq")
+            or "unknown"
+        )
+
+    def submit(self, event: dict) -> None:
+        if event.get("type") != "message.received":
+            self._dispatch(event)
+            return
+        key = self._conversation_key(event)
+        if self._strategy == "queue":
+            self._submit_queue(key, event)
+        elif self._strategy == "debounce":
+            self._submit_debounce(key, event)
+        elif self._strategy == "drop":
+            self._submit_drop(key, event)
+        else:
+            self._submit_parallel(event)
+
+    def _submit_parallel(self, event: dict) -> None:
+        with self._lock:
+            if not self._closed:
+                self._executor.submit(self._safe_dispatch, event)
+
+    def _submit_queue(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._queues.setdefault(key, deque()).append(event)
+            if key not in self._running:
+                self._running.add(key)
+                self._executor.submit(self._drain_queue, key)
+
+    def _drain_queue(self, key: str) -> None:
+        while True:
+            with self._lock:
+                queue = self._queues.get(key)
+                if not queue:
+                    self._queues.pop(key, None)
+                    self._running.discard(key)
+                    return
+                event = queue.popleft()
+            self._safe_dispatch(event)
+
+    def _submit_debounce(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if timer := self._timers.get(key):
+                timer.cancel()
+            self._pending[key] = event
+            self._timers.pop(key, None)
+            if key not in self._running:
+                self._start_debounce_timer(key)
+
+    def _start_debounce_timer(self, key: str) -> None:
+        event = self._pending[key]
+        timer = Timer(self._debounce_seconds, self._fire_debounce, args=(key, event))
+        timer.daemon = True
+        self._timers[key] = timer
+        timer.start()
+
+    def _fire_debounce(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed or self._pending.get(key) is not event:
+                return
+            self._pending.pop(key)
+            self._timers.pop(key, None)
+            self._running.add(key)
+            self._executor.submit(self._run_debounce, key, event)
+
+    def _run_debounce(self, key: str, event: dict) -> None:
+        while True:
+            self._safe_dispatch(event)
+            with self._lock:
+                self._running.discard(key)
+                next_event = None
+                if self._closed:
+                    next_event = self._pending.pop(key, None)
+                    if timer := self._timers.pop(key, None):
+                        timer.cancel()
+                    if next_event is not None:
+                        self._running.add(key)
+                elif key in self._pending:
+                    self._start_debounce_timer(key)
+                if next_event is None:
+                    return
+                event = next_event
+
+    def _submit_drop(self, key: str, event: dict) -> None:
+        with self._lock:
+            if self._closed or key in self._running:
+                return
+            self._running.add(key)
+            self._executor.submit(self._run_drop, key, event)
+
+    def _run_drop(self, key: str, event: dict) -> None:
+        try:
+            self._safe_dispatch(event)
+        finally:
+            with self._lock:
+                self._running.discard(key)
+
+    def _safe_dispatch(self, event: dict) -> None:
+        try:
+            self._dispatch(event)
+        except Exception:
+            logger.exception("event dispatch failed; continuing")
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            # ponytail: overlap state stays in this process. A shared state adapter
+            # is the upgrade path if listen() later coordinates multiple workers.
+            for timer in self._timers.values():
+                timer.cancel()
+            self._timers.clear()
+            for key, event in list(self._pending.items()):
+                if key in self._running:
+                    continue
+                self._pending.pop(key)
+                self._running.add(key)
+                self._executor.submit(self._run_debounce, key, event)
+            self._closed = True
+        self._executor.shutdown(wait=True)
 
 
 class CommClient:
@@ -153,6 +378,8 @@ class CommClient:
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         self._handlers: list[Callable[[Message], None]] = []
+        self._interaction_handlers: list[Callable[[Interaction], None]] = []
+        self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
@@ -512,9 +739,38 @@ class CommClient:
     def list_messages(self, conversation_id: str) -> list[dict]:
         return self._request("GET", f"/v1/conversations/{conversation_id}/messages")
 
-    def reply(self, message_id: str, text: str | None = None, html: str | None = None) -> dict:
+    def reply(
+        self,
+        message_id: str,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply on the channel the message arrived from.
+
+        Pass ``blocks`` — a list of provider-neutral block dicts (heading, text,
+        divider, image, fields, list, buttons, card) — to send a rich message.
+        Channels that support rich layout (Slack, Discord, Telegram, email)
+        render it natively; every other channel degrades to clean text
+        automatically. See ``caspian_sdk.blocks`` for helper builders.
+
+        Pass ``media`` — a list of ``{"url"|"data", "mime_type", "name"}`` dicts —
+        to attach files (images/documents); channels that carry files send them
+        natively and others fall back to the URL.
+        """
         return self._request(
-            "POST", f"/v1/messages/{message_id}/reply", json={"text": text, "html": html}
+            "POST",
+            f"/v1/messages/{message_id}/reply",
+            json={"text": text, "html": html, "blocks": blocks, "media": media},
+        )
+
+    def react(self, message_id: str, emoji: str) -> dict:
+        """Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS
+        — Slack/Telegram/Discord). Best-effort; a channel with no reaction API
+        returns ``reacted=false`` rather than erroring."""
+        return self._request(
+            "POST", f"/v1/messages/{message_id}/react", json={"emoji": emoji}
         )
 
     def typing(self, message_id: str) -> dict:
@@ -622,13 +878,24 @@ class CommClient:
         })
 
     def send_message(
-        self, conversation_id: str, text: str | None = None, html: str | None = None
+        self,
+        conversation_id: str,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
     ) -> dict:
-        """Proactively send into an existing conversation (needs Capability.SEND)."""
+        """Proactively send into an existing conversation (needs Capability.SEND).
+
+        Pass ``blocks`` — a list of provider-neutral block dicts — for a rich
+        message that renders natively on Slack/Discord/Telegram/email and
+        degrades to clean text elsewhere. Pass ``media`` to attach files. See
+        ``caspian_sdk.blocks``.
+        """
         return self._request(
             "POST",
             f"/v1/conversations/{conversation_id}/messages",
-            json={"text": text, "html": html},
+            json={"text": text, "html": html, "blocks": blocks, "media": media},
         )
 
     def initiate(self, connection_id: str, recipient: str, text: str) -> dict:
@@ -668,10 +935,33 @@ class CommClient:
         self._handlers.append(handler)
         return handler
 
+    def on_interaction(
+        self, handler: Callable[["Interaction"], None]
+    ) -> Callable[["Interaction"], None]:
+        """Register a handler for button taps (interaction.received). The same
+        handler answers taps from every channel that supports interactive
+        buttons (Slack, Discord, Telegram)."""
+        self._interaction_handlers.append(handler)
+        return handler
+
+    def on_reaction(
+        self, handler: Callable[["Reaction"], None]
+    ) -> Callable[["Reaction"], None]:
+        """Register a handler for emoji reactions (reaction.received)."""
+        self._reaction_handlers.append(handler)
+        return handler
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
-        if event.get("type") != "message.received":
+        event_type = event.get("type")
+        if event_type == "interaction.received":
+            self._dispatch_interaction(event["data"])
+            return
+        if event_type == "reaction.received":
+            self._dispatch_reaction(event["data"])
+            return
+        if event_type != "message.received":
             return
         message = self._build_message(event["data"])
         if self._handlers:
@@ -768,6 +1058,8 @@ class CommClient:
         poll_interval: float = 1.0,
         max_backoff: float = 30.0,
         ack: str | None = None,
+        concurrency: ConcurrencyStrategy = "queue",
+        debounce_ms: int = 500,
     ) -> None:
         """Poll the event stream forever, dispatching inbound messages to handlers.
 
@@ -780,30 +1072,40 @@ class CommClient:
         moment…") the moment a message arrives, before your handler runs. Useful
         on channels with no typing indicator (X, SMS, email) so the human knows
         the agent is working while it thinks; the real answer follows.
+
+        ``concurrency`` controls messages that overlap in one conversation:
+        ``queue`` preserves order, ``debounce`` keeps the latest message,
+        ``drop`` ignores new messages while a handler runs, and ``parallel`` runs
+        every message immediately. Different conversations can run at the same
+        time. ``queue`` is the default.
         """
         if ack is not None:
             self._ack = ack
-        seq = self._latest_seq() if from_seq is None else from_seq
-        backoff = poll_interval
-        while True:
-            try:
-                batch = self.events(after_seq=seq)
-            except KeyboardInterrupt:
-                raise
-            except Exception:
-                logger.warning(
-                    "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
-                )
-                time.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
-                continue
+        scheduler = _MessageScheduler(self._dispatch_event, concurrency, debounce_ms)
+        try:
+            seq = self._latest_seq() if from_seq is None else from_seq
             backoff = poll_interval
-            if not batch:
-                time.sleep(poll_interval)
-                continue
-            for event in batch:
-                self._dispatch_event(event)
-                seq = event["seq"]  # advance only after the dispatch attempt
+            while True:
+                try:
+                    batch = self.events(after_seq=seq)
+                except KeyboardInterrupt:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, max_backoff)
+                    continue
+                backoff = poll_interval
+                if not batch:
+                    time.sleep(poll_interval)
+                    continue
+                for event in batch:
+                    scheduler.submit(event)
+                    seq = event["seq"]  # advance after the scheduler accepts the event
+        finally:
+            scheduler.close()
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""
@@ -821,6 +1123,44 @@ class CommClient:
                 logger.warning("could not read starting cursor; retrying in 2s", exc_info=True)
                 time.sleep(2.0)
 
+    def _dispatch_interaction(self, data: dict) -> None:
+        interaction = Interaction(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            conversation_id=data.get("conversation_id"),
+            value=data.get("value"),
+            source_message=data.get("source_message"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._interaction_handlers:
+            try:
+                handler(interaction)
+            except InsufficientCreditError as exc:
+                self._warn_out_of_credit(exc)
+            except AccountRequiredError as exc:
+                self._warn_account_required(exc)
+            except Exception:
+                logger.exception("on_interaction handler failed; continuing")
+
+    def _dispatch_reaction(self, data: dict) -> None:
+        reaction = Reaction(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            emoji=data.get("emoji"),
+            action=data.get("action", "added"),
+            source_message=data.get("source_message"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._reaction_handlers:
+            try:
+                handler(reaction)
+            except Exception:
+                logger.exception("on_reaction handler failed; continuing")
+
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
         return Message(
@@ -834,5 +1174,6 @@ class CommClient:
             subject=message.get("subject"),
             text=message.get("text"),
             html=message.get("html"),
+            media=message.get("media") or [],
             _client=self,
         )

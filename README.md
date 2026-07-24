@@ -15,6 +15,8 @@
   <a href="./llms.txt">llms.txt for agents</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
+  ·
+  <a href="https://discord.gg/A28qnkvgCM">Discord</a>
 </p>
 
 <p align="center">
@@ -28,6 +30,7 @@
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
+  <a href="https://discord.gg/A28qnkvgCM"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -42,34 +45,53 @@
 
 Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
-```bash
-pip install caspian-sdk      # Python
-npm install caspian-sdk      # TypeScript / Node 18+
+## Get started in 30 seconds
+
+**Building in a coding agent** (Claude Code, Codex, Cursor, Kimi, …)? Paste this — it reads the live guide and does the whole integration for you:
+
+```text
+Integrate Caspian so my agent can message people on email, Slack, Discord, Telegram, and more.
+Read https://api.trycaspianai.com/SKILL.md and follow it end to end.
 ```
 
-Get a project and API key in one command — it provisions a sandbox project on the hosted gateway and writes `CASPIAN_API_KEY` + `CASPIAN_BASE_URL` to your `.env`:
+That's the fastest path — the guide at [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md) is always current, so your agent installs the SDK, mints a key, connects a channel, and writes the handler itself.
+
+**Or set it up by hand:**
 
 ```bash
-caspian init
+cd your-project
+pip install caspian-sdk        # the library (import into your code)
+pipx install caspian-cli       # the CLI (gives the `caspian` command) — or: uvx caspian-cli
+caspian init                   # mints a key, writes CASPIAN_API_KEY + CASPIAN_BASE_URL to .env
+caspian connect email          # free, instant
 ```
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
-
-**Python:**
+Then in your code:
 
 ```python
 from caspian_sdk import CommClient
 
 client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
-email = client.connect_email(display_name="My Agent")
-print("Agent email:", email["address"])
+email = client.connect_email(username="example-agent")
+print(f"Agent email: {email['address']}")
+print("Listening (Ctrl+C to stop).")
+
 
 @client.on_message
 def handle(message):
+    sender = (message.sender or {}).get("address", "?")
+    print(f"<- {sender}: {message.text!r}")
     message.reply(f"You said: {message.text}")
+
 
 client.listen()  # one loop, every channel
 ```
+
+> **Node / TypeScript:** the library is `npm install caspian-sdk`. The `caspian` CLI is a
+> standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
+> or just use the SDK directly (below); nothing else about the flow changes.
+
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **TypeScript** — same contract, zero runtime dependencies:
 
@@ -77,7 +99,7 @@ client.listen()  # one loop, every channel
 import { CommClient } from "caspian-sdk";
 
 const client = new CommClient();  // reads CASPIAN_API_KEY / CASPIAN_BASE_URL
-const inbox = await client.connectEmail({ displayName: "My Agent" });
+const inbox = await client.connectEmail({ username: "my-agent" });
 
 client.onMessage(async (message) => {
   await message.reply(`You said: ${message.text}`);
@@ -174,7 +196,7 @@ flowchart LR
 <td width="50%" valign="top">
 
 **🔐 Webhook verification, always**<br/>
-Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, SES/SNS. Mismatches rejected.
+Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC, and signed email webhooks. Mismatches rejected.
 
 </td>
 </tr>
@@ -188,7 +210,7 @@ Adapters declare what the channel can physically do; an agent can never be grant
 <td valign="top">
 
 **🧪 Offline fakes for every channel**<br/>
-Fakes consume each platform's *real* payload shapes — 80 tests across Python + TS, zero network.
+Fakes consume each platform's *real* payload shapes — 131 tests across Python + TS, zero network.
 
 </td>
 </tr>
@@ -226,7 +248,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 | Channel | This repo (your credentials) | Caspian hosted |
 |---|:---:|:---:|
-| <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email (AWS SES) | ✅ | ✅ instant inbox |
+| <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email | ✅ | ✅ instant inbox |
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
@@ -234,7 +256,6 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
-| <img src="https://cdn.simpleicons.org/googlemeet" width="14"/> &nbsp;Google Meet | ✅ | ✅ |
 | 📶 SMS (GSM modem) | ✅ * | ✅ no hardware |
 | <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram (user account) | ⚠️ opt-in * | — |
 | <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | — | ✅ one-click |
@@ -262,7 +283,7 @@ If your agent needs to talk to humans, this is the layer under it:
 - **Sales & lead follow-up** — first touch on the channel the lead used, follow-ups where they actually respond.
 - **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
 - **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
-- **OpenClaw agents** — [`openclaw-caspian`](./packages/openclaw) is one plugin install for every Caspian channel.
+- **OpenClaw agents** — `clawhub install @trycaspian/caspian` ([the skill](./packages/clawhub-skill)) teaches your agent to wire itself up; [`openclaw-caspian`](./packages/openclaw) is the native channel plugin.
 - **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
 
 Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
@@ -272,7 +293,7 @@ Each of these is the same three lines: `connect_*()` the channels, write one `on
 **Same agent, three channels:**
 
 ```python
-client.connect_email(display_name="Acme Support")
+client.connect_email(username="acme-support")
 client.connect_telegram(bot_token=BOT_TOKEN)
 slack = client.install_slack(display_name="Acme Support")
 print("Add to Slack:", slack["authorize_url"])   # one click, then it's live
@@ -312,6 +333,63 @@ providers = build_providers(Settings(
 
 </details>
 
+## Rich messages
+
+Send **one** provider-neutral `blocks` payload and every channel gets its best
+possible rendering: Slack (Block Kit), Discord (embeds + buttons) and Telegram
+(inline keyboards) render it natively, email gets rich HTML, and every text-only
+channel (SMS, voice, and the rest) degrades to clean, readable text — automatically.
+No per-channel branching in your handler.
+
+A block is a plain dict/object (`{ "type": ... }`): `heading`, `text`, `divider`,
+`image`, `fields`, `list`, `buttons`, `card`. A button with a `url` is a link; a
+button with a `value` is a callback that renders as a tappable action where the
+channel supports it, and as a "reply …" hint where it doesn't.
+
+**Python:**
+
+```python
+from caspian_sdk import blocks as b
+
+message.reply(blocks=[
+    b.card(
+        title="Order #1024 shipped",
+        subtitle="Arriving Thursday",
+        text="Your package is on the way.",
+        buttons=[
+            {"label": "Track package", "url": "https://example.com/track/1024"},
+            {"label": "Get help", "value": "help:1024"},   # callback
+        ],
+    ),
+])
+```
+
+**TypeScript:**
+
+```typescript
+import type { Block } from "caspian-sdk";
+
+const blocks: Block[] = [
+  {
+    type: "card",
+    title: "Order #1024 shipped",
+    subtitle: "Arriving Thursday",
+    text: "Your package is on the way.",
+    buttons: [
+      { label: "Track package", url: "https://example.com/track/1024" },
+      { label: "Get help", value: "help:1024" }, // callback
+    ],
+  },
+];
+
+await message.reply(undefined, undefined, blocks);
+// or proactively: await client.sendMessage(conversationId, null, null, blocks);
+```
+
+Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
+`sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
+that can't render blocks; omit it and a clean text fallback is generated for you.
+
 ## What's in this repo
 
 | Package | |
@@ -320,8 +398,21 @@ providers = build_providers(Settings(
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
+| [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
+
+## Starter templates
+
+Ready-to-run repos — click "Use this template", add a token, and your agent is live on the channel:
+
+| Template | Channel | Language |
+|---|---|---|
+| [`telegram-ai-agent-template`](https://github.com/TryCaspian/telegram-ai-agent-template) | Telegram | Python |
+| [`discord-ai-agent-template`](https://github.com/TryCaspian/discord-ai-agent-template) | Discord | Python |
+| [`slack-ai-agent-template`](https://github.com/TryCaspian/slack-ai-agent-template) | Slack | Python |
+| [`email-ai-agent-template`](https://github.com/TryCaspian/email-ai-agent-template) | Email (instant inbox) | Node.js |
+| [`openclaw-telegram-agent`](https://github.com/TryCaspian/openclaw-telegram-agent) | OpenClaw + Telegram | guide |
 
 ## Roadmap
 
@@ -342,9 +433,9 @@ providers = build_providers(Settings(
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 70 Python tests, all offline
+uv run pytest        # 100 Python tests, all offline
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 10 vitest tests
+cd sdks/typescript && npm ci && npm test   # 31 vitest tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).

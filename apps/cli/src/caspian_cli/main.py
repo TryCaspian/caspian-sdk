@@ -67,9 +67,20 @@ def _request(method: str, path: str, *, json_body: dict | None = None, params: d
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=30,
     )
+    _raise_for_error(response)
+    return response.json()
+
+
+def _raise_for_error(response: httpx.Response) -> None:
+    """Map an unsuccessful gateway response to the CLI's user-facing errors."""
     if response.status_code >= 400:
         try:
-            detail = response.json().get("detail", response.text)
+            payload = response.json()
+            detail = (
+                payload.get("detail", response.text)
+                if isinstance(payload, dict)
+                else response.text
+            )
         except ValueError:
             detail = response.text
         # A billing block (out of credit / spend cap) comes back as a structured
@@ -85,7 +96,6 @@ def _request(method: str, path: str, *, json_body: dict | None = None, params: d
             print("  Sign in once:  caspian login\n", file=sys.stderr)
             sys.exit(3)
         sys.exit(f"Error {response.status_code}: {detail}")
-    return response.json()
 
 
 def _exit_out_of_credit(detail: dict) -> None:
@@ -151,6 +161,7 @@ def cmd_domains(args) -> None:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30,
         )
+        _raise_for_error(response)
         print(response.text)
 
 

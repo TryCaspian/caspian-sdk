@@ -1,10 +1,10 @@
 [project]
 name = "caspian-sdk"
-version = "0.2.1"
+version = "0.4.1"
 description = "One identity for your AI agent across every channel — email, Slack, Discord, WhatsApp, GitHub, SMS, X, Telegram, iMessage — behind a single on_message handler."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [{ name = "Caspian", email = "ayushguptadev1@gmail.com" }]
 keywords = ["ai", "agents", "communication", "sdk", "slack", "discord", "github", "whatsapp", "sms", "chatbot"]
 classifiers = [

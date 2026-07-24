@@ -3,8 +3,10 @@ import { AccountRequiredError, CommError, InsufficientCreditError } from "./erro
 import type {
   Agent,
   AutopayOptions,
+  Block,
   ClientOptions,
   Connection,
+  ConcurrencyStrategy,
   ConnectOptions,
   Conversation,
   Customer,
@@ -12,6 +14,7 @@ import type {
   EventRecord,
   ListenOptions,
   LoginOptions,
+  Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";
@@ -54,11 +57,32 @@ export class Message {
     readonly text: string | null,
     readonly html: string | null,
     private readonly client: CommClient,
+    /** File attachments received with the message (empty when none). */
+    readonly media: Media[] = [],
   ) {}
 
-  /** Reply on whichever channel this message arrived from (auto-threaded). */
-  reply(text?: string | null, html?: string | null): Promise<Record<string, unknown>> {
-    return this.client.reply(this.id, text, html);
+  /**
+   * Reply on whichever channel this message arrived from (auto-threaded).
+   *
+   * Pass `blocks` — provider-neutral rich blocks — to render natively on
+   * Slack/Discord/Telegram/email and degrade to clean text elsewhere. Pass
+   * `media` to attach files (images/documents).
+   */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    return this.client.reply(this.id, text, html, blocks, media);
+  }
+
+  /**
+   * Add an emoji reaction (tapback) to this message. Best-effort; no-op on
+   * channels without a reaction API (needs Capability.REACTIONS).
+   */
+  react(emoji: string): Promise<Record<string, unknown>> {
+    return this.client.react(this.id, emoji);
   }
 
   /**
@@ -71,7 +95,195 @@ export class Message {
   }
 }
 
+/**
+ * A button tap delivered to an onInteraction handler. `value` is the callback
+ * value on the tapped block button; `sourceMessage` is the message it was on.
+ */
+export class Interaction {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly conversationId: string | null,
+    readonly value: string | null,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /** Reply in the thread the button lived in (replies to the source message). */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.sourceMessage) {
+      throw new CommError(400, "interaction has no source message to reply to");
+    }
+    return this.client.reply(this.sourceMessage.id, text, html, blocks, media);
+  }
+}
+
+/**
+ * An emoji reaction delivered to an onReaction handler. `action` is "added" or
+ * "removed"; `sourceMessage` is the message that was reacted to.
+ */
+export class Reaction {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly emoji: string | null,
+    readonly action: string,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
+export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
+export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+
+class MessageScheduler {
+  private readonly queues = new Map<string, EventRecord[]>();
+  private readonly running = new Set<string>();
+  private readonly debounced = new Map<
+    string,
+    { event: EventRecord; timer?: ReturnType<typeof setTimeout> }
+  >();
+  private readonly active = new Set<Promise<void>>();
+  private closed = false;
+
+  constructor(
+    private readonly dispatch: (event: EventRecord) => Promise<void>,
+    private readonly strategy: ConcurrencyStrategy,
+    private readonly debounceMs: number,
+  ) {
+    if (!["queue", "debounce", "drop", "parallel"].includes(strategy)) {
+      throw new TypeError("concurrency must be one of: queue, debounce, drop, parallel");
+    }
+    if (!Number.isFinite(debounceMs) || debounceMs < 0) {
+      throw new TypeError("debounceMs must be a non-negative number");
+    }
+  }
+
+  private conversationKey(event: EventRecord): string {
+    const data = isRecord(event.data) ? event.data : {};
+    const message = isRecord(data.message) ? data.message : {};
+    return String(
+      message.conversation_id ?? data.conversation_id ?? message.id ?? event.seq ?? "unknown",
+    );
+  }
+
+  async submit(event: EventRecord): Promise<void> {
+    if (event.type !== "message.received") {
+      await this.safeDispatch(event);
+      return;
+    }
+    const key = this.conversationKey(event);
+    if (this.strategy === "queue") this.enqueue(key, event);
+    else if (this.strategy === "debounce") this.debounce(key, event);
+    else if (this.strategy === "drop") this.drop(key, event);
+    else this.track(this.safeDispatch(event));
+  }
+
+  private enqueue(key: string, event: EventRecord): void {
+    if (this.closed) return;
+    const queue = this.queues.get(key) ?? [];
+    queue.push(event);
+    this.queues.set(key, queue);
+    if (this.running.has(key)) return;
+    this.running.add(key);
+    this.track(this.drainQueue(key));
+  }
+
+  private async drainQueue(key: string): Promise<void> {
+    for (;;) {
+      const event = this.queues.get(key)?.shift();
+      if (!event) {
+        this.queues.delete(key);
+        this.running.delete(key);
+        return;
+      }
+      await this.safeDispatch(event);
+    }
+  }
+
+  private debounce(key: string, event: EventRecord): void {
+    if (this.closed) return;
+    const previous = this.debounced.get(key);
+    if (previous?.timer) clearTimeout(previous.timer);
+    this.debounced.set(key, { event });
+    if (!this.running.has(key)) this.startDebounceTimer(key);
+  }
+
+  private startDebounceTimer(key: string): void {
+    const pending = this.debounced.get(key);
+    if (!pending) return;
+    pending.timer = setTimeout(() => {
+      const current = this.debounced.get(key);
+      if (current !== pending || this.closed || this.running.has(key)) return;
+      this.debounced.delete(key);
+      this.running.add(key);
+      this.track(this.runDebounce(key, current.event));
+    }, this.debounceMs);
+  }
+
+  private async runDebounce(key: string, event: EventRecord): Promise<void> {
+    await this.safeDispatch(event);
+    this.running.delete(key);
+    const pending = this.debounced.get(key);
+    if (!pending) return;
+    if (this.closed) {
+      if (pending.timer) clearTimeout(pending.timer);
+      this.debounced.delete(key);
+      this.running.add(key);
+      await this.runDebounce(key, pending.event);
+      return;
+    }
+    this.startDebounceTimer(key);
+  }
+
+  private drop(key: string, event: EventRecord): void {
+    if (this.closed || this.running.has(key)) return;
+    this.running.add(key);
+    this.track(
+      this.safeDispatch(event).finally(() => {
+        this.running.delete(key);
+      }),
+    );
+  }
+
+  private track(task: Promise<void>): void {
+    this.active.add(task);
+    void task.finally(() => this.active.delete(task));
+  }
+
+  private async safeDispatch(event: EventRecord): Promise<void> {
+    try {
+      await this.dispatch(event);
+    } catch (err) {
+      logger.error("event dispatch failed; continuing", err);
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    // ponytail: overlap state stays in this process. A shared state adapter is
+    // the upgrade path if listen() later coordinates multiple workers.
+    for (const [key, item] of this.debounced) {
+      if (item.timer) clearTimeout(item.timer);
+      if (this.running.has(key)) continue;
+      this.debounced.delete(key);
+      this.running.add(key);
+      this.track(this.runDebounce(key, item.event));
+    }
+    await Promise.all([...this.active]);
+  }
+}
 
 /**
  * One identity for your AI agent across every channel — behind a single
@@ -84,6 +296,8 @@ export class CommClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly handlers: MessageHandler[] = [];
+  private readonly interactionHandlers: InteractionHandler[] = [];
+  private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -508,14 +722,31 @@ export class CommClient {
     return this.request("GET", `/v1/conversations/${conversationId}/messages`);
   }
 
+  /**
+   * Reply to a message. Pass `blocks` — a list of provider-neutral rich blocks
+   * (heading, text, divider, image, fields, list, buttons, card) — to send a
+   * rich message. Slack, Discord, Telegram and email render it natively; every
+   * other channel degrades to clean text automatically.
+   */
   reply(
     messageId: string,
     text?: string | null,
     html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/messages/${messageId}/reply`, {
-      json: { text: text ?? null, html: html ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
     });
+  }
+
+  /**
+   * Add an emoji reaction (tapback) to a message (needs Capability.REACTIONS —
+   * Slack/Telegram/Discord). Best-effort; a channel with no reaction API returns
+   * `reacted: false` rather than erroring.
+   */
+  react(messageId: string, emoji: string): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/messages/${messageId}/react`, { json: { emoji } });
   }
 
   /**
@@ -630,14 +861,21 @@ export class CommClient {
     });
   }
 
-  /** Proactively send into an existing conversation (needs Capability.SEND). */
+  /**
+   * Proactively send into an existing conversation (needs Capability.SEND).
+   *
+   * Pass `blocks` — provider-neutral rich blocks — to render natively on
+   * Slack/Discord/Telegram/email and degrade to clean text elsewhere.
+   */
   sendMessage(
     conversationId: string,
     text?: string | null,
     html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
   ): Promise<Record<string, unknown>> {
     return this.request("POST", `/v1/conversations/${conversationId}/messages`, {
-      json: { text: text ?? null, html: html ?? null },
+      json: { text: text ?? null, html: html ?? null, blocks: blocks ?? null, media: media ?? null },
     });
   }
 
@@ -681,6 +919,22 @@ export class CommClient {
     return handler;
   }
 
+  /**
+   * Register a handler for button taps (interaction.received). The same handler
+   * answers taps from every channel with interactive buttons (Slack, Discord,
+   * Telegram).
+   */
+  onInteraction(handler: InteractionHandler): InteractionHandler {
+    this.interactionHandlers.push(handler);
+    return handler;
+  }
+
+  /** Register a handler for emoji reactions (reaction.received). */
+  onReaction(handler: ReactionHandler): ReactionHandler {
+    this.reactionHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -695,10 +949,61 @@ export class CommClient {
       m.text ?? null,
       m.html ?? null,
       this,
+      m.media ?? [],
     );
   }
 
+  private async dispatchInteraction(data: any): Promise<void> {
+    const interaction = new Interaction(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.conversation_id ?? null,
+      data.value ?? null,
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.interactionHandlers) {
+      try {
+        await handler(interaction);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error("onInteraction handler failed; continuing", err);
+      }
+    }
+  }
+
+  private async dispatchReaction(data: any): Promise<void> {
+    const reaction = new Reaction(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.emoji ?? null,
+      data.action ?? "added",
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.reactionHandlers) {
+      try {
+        await handler(reaction);
+      } catch (err) {
+        logger.error("onReaction handler failed; continuing", err);
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
+    if (event.type === "interaction.received") {
+      await this.dispatchInteraction(event.data);
+      return;
+    }
+    if (event.type === "reaction.received") {
+      await this.dispatchReaction(event.data);
+      return;
+    }
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
     if (this.handlers.length) {
@@ -806,34 +1111,44 @@ export class CommClient {
   /**
    * Poll the event stream forever, dispatching inbound messages to handlers.
    * Resilient by design: a handler that throws is logged and skipped, and a
-   * failed poll is retried with exponential backoff. Pass an AbortSignal to stop.
+   * failed poll is retried with exponential backoff. Messages use a per-conversation
+   * queue by default. Pass an AbortSignal to stop.
    */
   async listen(opts: ListenOptions = {}): Promise<void> {
     if (opts.ack !== undefined) this.ackMessage = opts.ack;
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
-    let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
-    let backoff = pollMs;
-    while (!opts.signal?.aborted) {
-      let batch: EventRecord[];
-      try {
-        batch = await this.events({ afterSeq: seq });
-      } catch (err) {
-        if (opts.signal?.aborted) return;
-        logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
-        await sleep(backoff, opts.signal);
-        backoff = Math.min(backoff * 2, maxBackoffMs);
-        continue;
+    const scheduler = new MessageScheduler(
+      (event) => this.dispatchEvent(event),
+      opts.concurrency ?? "queue",
+      opts.debounceMs ?? 500,
+    );
+    try {
+      let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
+      let backoff = pollMs;
+      while (!opts.signal?.aborted) {
+        let batch: EventRecord[];
+        try {
+          batch = await this.events({ afterSeq: seq });
+        } catch (err) {
+          if (opts.signal?.aborted) return;
+          logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
+          await sleep(backoff, opts.signal);
+          backoff = Math.min(backoff * 2, maxBackoffMs);
+          continue;
+        }
+        backoff = pollMs;
+        if (!batch.length) {
+          await sleep(pollMs, opts.signal);
+          continue;
+        }
+        for (const event of batch) {
+          await scheduler.submit(event);
+          seq = event.seq; // advance after the scheduler accepts the event
+        }
       }
-      backoff = pollMs;
-      if (!batch.length) {
-        await sleep(pollMs, opts.signal);
-        continue;
-      }
-      for (const event of batch) {
-        await this.dispatchEvent(event);
-        seq = event.seq; // advance only after the dispatch attempt
-      }
+    } finally {
+      await scheduler.close();
     }
   }
 

@@ -14,12 +14,14 @@ their bots never overlap.
   without extra lookups (composite ids never leave this package)
 """
 
+import hmac
 import json
 from collections.abc import Mapping
 
 import httpx
 
 from .base import (
+    Attachment,
     Capability,
     InboundMessage,
     OutboundMessage,
@@ -38,15 +40,62 @@ def bot_id_from_token(token: str) -> str:
     return token.split(":", 1)[0]
 
 
-def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
-    """Normalize a Telegram Update into our schema. Text messages only for now.
+def parse_attachments(message: dict) -> list[Attachment]:
+    """Pull any file attachments out of a Telegram message.
 
-    Handles both fresh (`message`) and `edited_message` updates; group and
-    channel chats normalize the same way as private ones, tagged by chat_type.
+    Telegram returns an opaque ``file_id`` rather than a URL, so we keep it in
+    ``provider_file_id`` (the actual download link needs a ``getFile`` call
+    resolved downstream) alongside whatever metadata the update carries. Photos
+    arrive as a list of rescaled sizes; the last is the largest.
+    """
+    out: list[Attachment] = []
+    photos = message.get("photo")
+    if photos:
+        largest = photos[-1]
+        out.append(
+            Attachment(
+                mime_type="image/jpeg",
+                size_bytes=largest.get("file_size"),
+                provider_file_id=largest.get("file_id"),
+            )
+        )
+    document = message.get("document")
+    if document:
+        out.append(
+            Attachment(
+                mime_type=document.get("mime_type"),
+                filename=document.get("file_name"),
+                size_bytes=document.get("file_size"),
+                provider_file_id=document.get("file_id"),
+            )
+        )
+    voice = message.get("voice")
+    if voice:
+        out.append(
+            Attachment(
+                mime_type=voice.get("mime_type"),
+                size_bytes=voice.get("file_size"),
+                provider_file_id=voice.get("file_id"),
+            )
+        )
+    return out
+
+
+def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
+    """Normalize a Telegram Update into our schema.
+
+    Handles text, media (photo/document/voice), and any caption that comes with
+    it. Both fresh (`message`) and `edited_message` updates are handled; group
+    and channel chats normalize the same way as private ones, tagged by
+    chat_type.
     """
     edited = "edited_message" in data
     message = data.get("message") or data.get("edited_message")
-    if message is None or message.get("text") is None:
+    if message is None:
+        return []
+    attachments = parse_attachments(message)
+    text = message.get("text") or message.get("caption")
+    if text is None and not attachments:
         return []
     chat = message["chat"]
     chat_id = chat["id"]
@@ -62,9 +111,10 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
             provider_thread_id=str(chat_id),
             sender_address=sender.get("username") or str(sender.get("id", "")) or None,
             sender_name=sender_name or None,
-            text=message["text"],
+            text=text,
             chat_type=chat.get("type"),
             edited=edited,
+            attachments=attachments,
         )
     ]
 
@@ -83,6 +133,7 @@ class TelegramProvider:
             Capability.SEND,
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
+            Capability.ATTACHMENTS,
         }
     )
 
@@ -108,6 +159,35 @@ class TelegramProvider:
         if not token or ":" not in token:
             raise ValueError("connection is missing a valid bot_token credential")
         return token
+
+    @staticmethod
+    def _media_method(attachment: Attachment) -> tuple[str, str]:
+        """The Telegram send method + body key for an attachment (photo vs file)."""
+        if (attachment.mime_type or "").startswith("image/"):
+            return "sendPhoto", "photo"
+        return "sendDocument", "document"
+
+    def _send_attachment(
+        self, token: str, chat_id: str, message: OutboundMessage, reply_to: str | None
+    ) -> dict:
+        """Send the first attachment with the message text as its caption.
+
+        Telegram accepts a public URL or a previously seen file_id in place of a
+        multipart upload, so we pass whichever the attachment carries. Extra
+        attachments beyond the first are left to a follow-up (media groups).
+        """
+        attachment = message.attachments[0]
+        media_ref = attachment.url or attachment.provider_file_id
+        if not media_ref:
+            raise ValueError("attachment needs a url or provider_file_id to send")
+        method, key = self._media_method(attachment)
+        body: dict = {"chat_id": chat_id, key: media_ref}
+        if message.text:
+            body["caption"] = message.text
+        if reply_to is not None:
+            body["reply_to_message_id"] = int(reply_to)
+            body["allow_sending_without_reply"] = True
+        return self._call(token, method, body)
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         token = self._token(request.credentials)
@@ -140,9 +220,12 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id = message.to[0]
-        result = self._call(
-            token, "sendMessage", {"chat_id": chat_id, "text": message.text or ""}
-        )
+        if message.attachments:
+            result = self._send_attachment(token, chat_id, message, None)
+        else:
+            result = self._call(
+                token, "sendMessage", {"chat_id": chat_id, "text": message.text or ""}
+            )
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=str(chat_id),
@@ -157,16 +240,19 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id, target_message_id = split_composite_id(provider_message_id)
-        result = self._call(
-            token,
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": message.text or "",
-                "reply_to_message_id": int(target_message_id),
-                "allow_sending_without_reply": True,
-            },
-        )
+        if message.attachments:
+            result = self._send_attachment(token, chat_id, message, target_message_id)
+        else:
+            result = self._call(
+                token,
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": message.text or "",
+                    "reply_to_message_id": int(target_message_id),
+                    "allow_sending_without_reply": True,
+                },
+            )
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=chat_id,
@@ -184,8 +270,8 @@ class TelegramProvider:
             raise WebhookVerificationError("telegram webhooks require a connection scope")
         secret = credentials.get("webhook_secret")
         if secret:
-            received = lower_headers(headers).get(SECRET_HEADER)
-            if received != secret:
+            received = lower_headers(headers).get(SECRET_HEADER) or ""
+            if not hmac.compare_digest(received, secret):
                 raise WebhookVerificationError("secret token mismatch")
         try:
             data = json.loads(payload)
