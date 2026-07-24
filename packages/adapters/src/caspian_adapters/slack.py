@@ -17,7 +17,10 @@ import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -30,25 +33,77 @@ from .base import (
 API = "https://slack.com/api"
 
 
-def parse_event(data: dict) -> list[InboundMessage]:
-    """Normalize a Slack Events API callback into our schema (user messages only)."""
+def parse_event(data: dict) -> list[InboundEvent]:
+    """Normalize a Slack Events API callback into our schema.
+
+    Handles messages, reactions (added/removed), and returns InboundEvent
+    (a union of InboundMessage | InboundReaction | InboundCommand).
+    """
     event = data.get("event", {})
-    if event.get("type") != "message" or event.get("bot_id") or event.get("subtype"):
+    event_type = event.get("type")
+    inbox_id = f"{data.get('api_app_id', '')}:{data.get('team_id', '')}"
+
+    # Reaction events
+    if event_type in ("reaction_added", "reaction_removed"):
+        item = event.get("item", {})
+        channel = item.get("channel", "")
+        ts = item.get("ts", "")
+        if not channel or not ts:
+            return []
+        return [
+            InboundReaction(
+                external_event_id=data.get("event_id") or f"reaction:{inbox_id}:{event_type}:{ts}",
+                provider_inbox_id=inbox_id,
+                emoji=event.get("reaction", ""),
+                action="added" if event_type == "reaction_added" else "removed",
+                source_provider_message_id=f"{channel}:{ts}",
+                sender_address=event.get("user"),
+            )
+        ]
+
+    # Message events (skip bots and subtypes)
+    if event_type != "message" or event.get("bot_id") or event.get("subtype"):
         return []
     channel = event["channel"]
     ts = event["ts"]
     return [
         InboundMessage(
             external_event_id=data.get("event_id") or f"{channel}:{ts}",
-            # Route by (app, workspace) = api_app_id:team_id. The pool means several
-            # apps can live in one workspace, so the app id disambiguates which
-            # developer's connection this event belongs to.
-            provider_inbox_id=f"{data.get('api_app_id', '')}:{data.get('team_id', '')}",
+            provider_inbox_id=inbox_id,
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,
             sender_address=event.get("user"),
             text=event.get("text"),
             chat_type=event.get("channel_type") or "channel",
+        )
+    ]
+
+
+def parse_slash_command(data: dict) -> list[InboundCommand]:
+    """Normalize a Slack slash command payload into our schema.
+
+    Slack sends slash commands as a top-level ``command`` field (payload_type
+    ``slash_commands``), not under the ``event`` key.
+    """
+    command = data.get("command", "")
+    if not command:
+        return []
+    user_id = data.get("user_id", "")
+    channel_id = data.get("channel_id", "")
+    team_id = data.get("team_id", "")
+    app_id = data.get("api_app_id", "")
+    raw_args = data.get("text") or None
+    return [
+        InboundCommand(
+            external_event_id=data.get("trigger_id") or f"cmd:{app_id}:{team_id}:{command}",
+            provider_inbox_id=f"{app_id}:{team_id}",
+            provider_message_id=f"{channel_id}:cmd_{data.get('trigger_id', '')}",
+            provider_thread_id=channel_id,
+            command=command,
+            args=raw_args,
+            text=f"{command} {raw_args}".strip() if raw_args else command,
+            sender_address=user_id,
+            chat_type=data.get("channel_type") or "channel",
         )
     ]
 
@@ -62,7 +117,8 @@ class SlackProvider:
     connect_credentials = ()
     oauth = True
     capabilities = frozenset(
-        {Capability.RECEIVE, Capability.REPLY, Capability.SEND}
+        {Capability.RECEIVE, Capability.REPLY, Capability.SEND,
+         Capability.REACTIONS, Capability.COMMANDS}
     )
 
     def __init__(
@@ -71,7 +127,7 @@ class SlackProvider:
         client_secret: str = "",
         signing_secret: str = "",
         scopes: str = ("chat:write,chat:write.customize,channels:history,"
-                       "im:history,app_mentions:read"),
+                       "im:history,app_mentions:read,reactions:read,commands"),
         base_url: str = API,
         apps: list[dict] | None = None,
     ) -> None:
@@ -277,9 +333,26 @@ class SlackProvider:
             provider_message_id=f"{channel}:{data['ts']}", provider_thread_id=channel
         )
 
+    def react(
+        self, provider_inbox_id: str, provider_message_id: str, emoji: str,
+        credentials=None,
+    ) -> None:
+        """Add an emoji reaction to a message (needs reactions:read scope for verify)."""
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/reactions.add",
+            json={"channel": channel, "name": emoji, "timestamp": ts},
+            headers={"Authorization": f"Bearer {creds.get('bot_token', '')}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")
+
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -303,4 +376,7 @@ class SlackProvider:
         if data.get("type") == "url_verification":
             # handled in the route (returns the challenge); no messages here
             return []
+        # Slash command payload (top-level `command` field, not under `event`)
+        if data.get("command"):
+            return parse_slash_command(data)
         return parse_event(data)

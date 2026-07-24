@@ -21,7 +21,10 @@ import httpx
 
 from .base import (
     Capability,
+    InboundCommand,
+    InboundEvent,
     InboundMessage,
+    InboundReaction,
     OutboundMessage,
     ProvisionRequest,
     ProvisionResult,
@@ -38,12 +41,53 @@ def bot_id_from_token(token: str) -> str:
     return token.split(":", 1)[0]
 
 
-def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
-    """Normalize a Telegram Update into our schema. Text messages only for now.
+def parse_update(data: dict, bot_id: str) -> list[InboundEvent]:
+    """Normalize a Telegram Update into our schema.
 
-    Handles both fresh (`message`) and `edited_message` updates; group and
-    channel chats normalize the same way as private ones, tagged by chat_type.
+    Handles text messages (including bot commands detected via entities),
+    edited messages, and message_reaction updates. Returns a list of
+    InboundEvent (a union of InboundMessage | InboundReaction | InboundCommand).
     """
+    # --- Reaction events ---
+    reaction_update = data.get("message_reaction") or data.get("message_reaction_updated")
+    if reaction_update is not None:
+        chat = reaction_update.get("chat", {})
+        chat_id = chat.get("id", "")
+        old_reaction = reaction_update.get("old_reaction", [])
+        new_reaction = reaction_update.get("new_reaction", [])
+        user = reaction_update.get("user") or reaction_update.get("actor_chat") or {}
+        sender_address = user.get("username") or str(user.get("id", "")) or None
+        # Determine which emoji was added or removed by diffing old/new
+        old_emojis = {r.get("emoji", "") for r in old_reaction}
+        new_emojis = {r.get("emoji", "") for r in new_reaction}
+        added = new_emojis - old_emojis
+        removed = old_emojis - new_emojis
+        results: list[InboundEvent] = []
+        for emoji in added:
+            results.append(
+                InboundReaction(
+                    external_event_id=f"{bot_id}:{data['update_id']}:add:{emoji}",
+                    provider_inbox_id=bot_id,
+                    emoji=emoji,
+                    action="added",
+                    source_provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    sender_address=sender_address,
+                )
+            )
+        for emoji in removed:
+            results.append(
+                InboundReaction(
+                    external_event_id=f"{bot_id}:{data['update_id']}:rm:{emoji}",
+                    provider_inbox_id=bot_id,
+                    emoji=emoji,
+                    action="removed",
+                    source_provider_message_id=f"{chat_id}:{reaction_update.get('message_id', '')}",
+                    sender_address=sender_address,
+                )
+            )
+        return results
+
+    # --- Text messages (including bot commands) ---
     edited = "edited_message" in data
     message = data.get("message") or data.get("edited_message")
     if message is None or message.get("text") is None:
@@ -54,15 +98,39 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
     sender_name = " ".join(
         part for part in (sender.get("first_name"), sender.get("last_name")) if part
     )
+    sender_address = sender.get("username") or str(sender.get("id", "")) or None
+
+    # Check for bot command entity at position 0
+    text = message["text"]
+    entities = message.get("entities", [])
+    for entity in entities:
+        if entity.get("type") == "bot_command" and entity.get("offset", 0) == 0:
+            command_text = text[:entity.get("length", len(text))]
+            args = text[entity.get("length", len(text)):].strip() or None
+            return [
+                InboundCommand(
+                    external_event_id=f"{bot_id}:{data['update_id']}",
+                    provider_inbox_id=bot_id,
+                    provider_message_id=f"{chat_id}:{message['message_id']}",
+                    provider_thread_id=str(chat_id),
+                    command=command_text,
+                    args=args,
+                    text=text,
+                    sender_address=sender_address,
+                    sender_name=sender_name or None,
+                    chat_type=chat.get("type"),
+                )
+            ]
+
     return [
         InboundMessage(
             external_event_id=f"{bot_id}:{data['update_id']}",
             provider_inbox_id=bot_id,
             provider_message_id=f"{chat_id}:{message['message_id']}",
             provider_thread_id=str(chat_id),
-            sender_address=sender.get("username") or str(sender.get("id", "")) or None,
+            sender_address=sender_address,
             sender_name=sender_name or None,
-            text=message["text"],
+            text=text,
             chat_type=chat.get("type"),
             edited=edited,
         )
@@ -83,6 +151,7 @@ class TelegramProvider:
             Capability.SEND,
             Capability.GROUP_VISIBILITY,
             Capability.EDIT_INBOUND,
+            Capability.REACTIONS,
         }
     )
 
@@ -115,7 +184,7 @@ class TelegramProvider:
         if self._webhook_base:
             body = {
                 "url": f"{self._webhook_base}/{me['id']}",
-                "allowed_updates": ["message", "edited_message"],
+                "allowed_updates": ["message", "edited_message", "message_reaction"],
             }
             secret = request.credentials.get("webhook_secret")
             if secret:
@@ -131,6 +200,22 @@ class TelegramProvider:
         token = self._token(credentials)
         self._call(token, "sendChatAction",
                    {"chat_id": provider_thread_id, "action": "typing"})
+
+    def react(
+        self, provider_inbox_id: str, provider_message_id: str, emoji: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        """Add an emoji reaction to a message (Telegram Bot API setMessageReaction)."""
+        token = self._token(credentials)
+        chat_id, message_id = split_composite_id(provider_message_id)
+        self._call(
+            token, "setMessageReaction",
+            {
+                "chat_id": chat_id,
+                "message_id": int(message_id),
+                "reaction": [{"type": "emoji", "emoji": emoji}],
+            },
+        )
 
     def send(
         self,
@@ -177,7 +262,7 @@ class TelegramProvider:
         payload: bytes,
         headers: Mapping[str, str],
         credentials: Mapping[str, str] | None = None,
-    ) -> list[InboundMessage]:
+    ) -> list[InboundEvent]:
         if credentials is None:
             # Telegram webhooks are always per-connection; the scoped route
             # supplies the connection's credentials.

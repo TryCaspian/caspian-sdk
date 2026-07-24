@@ -141,9 +141,43 @@ export class Reaction {
   ) {}
 }
 
+/**
+ * A slash command or bot command delivered to an onCommand handler. `command`
+ * is the command name (e.g. "/deploy"); `args` is the trailing text.
+ */
+export class Command {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly command: string,
+    readonly args: string | null,
+    readonly text: string | null,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /**
+   * Reply in the thread the command was invoked in (replies to the source message).
+   */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.sourceMessage) {
+      throw new CommError(400, "command has no source message to reply to");
+    }
+    return this.client.reply(this.sourceMessage.id, text, html, blocks, media);
+  }
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type CommandHandler = (command: Command) => void | Promise<void>;
 
 /**
  * One identity for your AI agent across every channel — behind a single
@@ -158,6 +192,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly commandHandlers: CommandHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -746,6 +781,12 @@ export class CommClient {
     return handler;
   }
 
+  /** Register a handler for slash/bot commands (command.received). */
+  onCommand(handler: CommandHandler): CommandHandler {
+    this.commandHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -806,6 +847,29 @@ export class CommClient {
     }
   }
 
+  private async dispatchCommand(data: any): Promise<void> {
+    const command = new Command(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.command ?? "",
+      data.args ?? null,
+      data.text ?? null,
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.commandHandlers) {
+      try {
+        await handler(command);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error("onCommand handler failed; continuing", err);
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
@@ -813,6 +877,10 @@ export class CommClient {
     }
     if (event.type === "reaction.received") {
       await this.dispatchReaction(event.data);
+      return;
+    }
+    if (event.type === "command.received") {
+      await this.dispatchCommand(event.data);
       return;
     }
     if (event.type !== "message.received") return;
