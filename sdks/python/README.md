@@ -27,6 +27,10 @@ def handle(message):
 client.listen()  # one loop, every channel
 ```
 
+`api_key` and `base_url` fall back to `CASPIAN_API_KEY` / `CASPIAN_BASE_URL` from the
+environment or a local `.env`, so `CommClient()` with no arguments works too. The legacy
+`COMM_API_KEY` / `COMM_BASE_URL` names are still honoured as a fallback.
+
 ## Channels
 
 | | Connect |
@@ -39,6 +43,20 @@ client.listen()  # one loop, every channel
 | **SMS / phone** | `connect_phone(...)` — own GSM modem, or Caspian hosted |
 | **Telegram** | `connect_telegram(bot_token=...)` |
 | **iMessage** | `connect_imessage()` (Caspian hosted) |
+
+## Make your agent platform-aware
+
+Each channel behaves differently (Slack threads, WhatsApp's 24-hour window, SMS
+length, iMessage has no markdown). Pull per-channel etiquette for the channels
+you've connected and drop it into your agent's system prompt:
+
+```python
+guide = client.behavior_prompt()
+system_prompt += "\n\n" + guide
+# or one channel: client.channel_guide("slack")
+```
+
+Use it, tweak it, or ignore it and write your own.
 
 ## Rich messages
 
@@ -69,7 +87,37 @@ Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 - **One handler, every channel.** Adding a channel is another `connect_*()` call — never new handler code.
 - **`message.reply()`** answers in the right thread on the right channel automatically.
 - **`message.typing()`** shows a "typing…" indicator while your agent thinks (where the platform supports it).
-- **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop.
+- **`client.listen()`** is resilient — a handler error or a dropped poll won't stop the loop; only `Ctrl+C` (KeyboardInterrupt) stops it. Pass `ack=` to auto-send an instant acknowledgement the moment a message arrives, before your handler runs — handy on channels with no typing indicator (X, SMS, email):
+
+```python
+client.listen(ack="On it — one moment…")
+```
+
+## Errors
+
+Non-2xx responses raise a `CommError` with `status_code` and `detail`. Two paid-channel
+cases raise typed subclasses that carry structured fields, so you can react in code:
+
+```python
+from caspian_sdk import AccountRequiredError, CommError, InsufficientCreditError
+
+try:
+    message.reply("On it!")
+except AccountRequiredError as err:
+    # 401 — a paid channel needs a one-time developer sign-in first.
+    err.login()  # runs the device sign-in; or read err.login_options
+except InsufficientCreditError as err:
+    # 402 (out of credit) or 429 (spend cap reached).
+    print(f"Balance: {err.balance_cents}¢")
+    err.top_up(2000)  # mint a Stripe checkout link to refill; or read err.payment_options
+except CommError as err:
+    # Anything else — e.g. a 422 validation error.
+    print(f"{err.status_code}: {err.detail}")
+```
+
+- **`AccountRequiredError`** (HTTP 401) — `reason`, `message`, `login_options`; `.login()` runs the sign-in.
+- **`InsufficientCreditError`** (HTTP 402 / 429) — `reason`, `balance_cents`, `payment_options`; `.top_up()` mints a refill link.
+- **`CommError`** — base class for every other non-2xx response.
 
 ## Docs
 
