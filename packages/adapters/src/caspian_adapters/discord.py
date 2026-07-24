@@ -242,8 +242,11 @@ class DiscordProvider:
         self, provider_inbox_id: str, recipient: str, message: OutboundMessage, credentials=None
     ) -> SendResult:
         # recipient is a channel id the bot can post to
-        return self.send(provider_inbox_id, OutboundMessage(text=message.text, to=(recipient,)),
-                         credentials=credentials)
+        return self.send(
+            provider_inbox_id,
+            OutboundMessage(text=message.text, to=(recipient,), attachments=message.attachments),
+            credentials=credentials,
+        )
 
     def reply(
         self,

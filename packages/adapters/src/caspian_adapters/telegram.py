@@ -187,6 +187,34 @@ class TelegramProvider:
         self._call(token, "sendChatAction",
                    {"chat_id": provider_thread_id, "action": "typing"})
 
+    def _send_media(
+        self,
+        token: str,
+        chat_id: str,
+        attachment: Attachment,
+        caption: str,
+        reply_to_message_id: int | None = None,
+    ) -> dict:
+        media = attachment.provider_file_id or attachment.url
+        if media is None:
+            raise ValueError("Telegram attachments require a provider_file_id or url")
+
+        mime_type = attachment.mime_type or ""
+        body: dict = {"chat_id": chat_id, "caption": caption}
+        if reply_to_message_id is not None:
+            body["reply_to_message_id"] = reply_to_message_id
+            body["allow_sending_without_reply"] = True
+
+        if mime_type.startswith("image/"):
+            body["photo"] = media
+            return self._call(token, "sendPhoto", body)
+        if mime_type.startswith("audio/"):
+            body["voice"] = media
+            return self._call(token, "sendVoice", body)
+
+        body["document"] = media
+        return self._call(token, "sendDocument", body)
+
     def send(
         self,
         provider_inbox_id: str,
@@ -195,7 +223,7 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id = message.to[0]
-    
+
         if not message.attachments:
             result = self._call(
                 token,
@@ -206,46 +234,19 @@ class TelegramProvider:
                 },
             )
         else:
-            attachment = message.attachments[0]
-    
-            if attachment.provider_file_id is None:
-                raise ValueError("Telegram attachments require a provider_file_id")
-    
-            mime_type = attachment.mime_type or ""
-    
-            if mime_type.startswith("image/"):
-                result = self._call(
+            result: dict | None = None
+            for index, attachment in enumerate(message.attachments):
+                caption = message.text or ""
+                if index > 0:
+                    caption = ""
+                result = self._send_media(
                     token,
-                    "sendPhoto",
-                    {
-                        "chat_id": chat_id,
-                        "photo": attachment.provider_file_id,
-                        "caption": message.text or "",
-                    },
+                    chat_id,
+                    attachment,
+                    caption,
                 )
-    
-            elif mime_type.startswith("audio/"):
-                result = self._call(
-                    token,
-                    "sendVoice",
-                    {
-                        "chat_id": chat_id,
-                        "voice": attachment.provider_file_id,
-                        "caption": message.text or "",
-                    },
-                )
-    
-            else:
-                result = self._call(
-                    token,
-                    "sendDocument",
-                    {
-                        "chat_id": chat_id,
-                        "document": attachment.provider_file_id,
-                        "caption": message.text or "",
-                    },
-                )
-    
+            assert result is not None
+
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=str(chat_id),
@@ -260,7 +261,7 @@ class TelegramProvider:
     ) -> SendResult:
         token = self._token(credentials)
         chat_id, target_message_id = split_composite_id(provider_message_id)
-    
+
         if not message.attachments:
             result = self._call(
                 token,
@@ -273,52 +274,20 @@ class TelegramProvider:
                 },
             )
         else:
-            attachment = message.attachments[0]
-    
-            if attachment.provider_file_id is None:
-                raise ValueError("Telegram attachments require a provider_file_id")
-    
-            mime_type = attachment.mime_type or ""
-    
-            if mime_type.startswith("image/"):
-                result = self._call(
+            result: dict | None = None
+            for index, attachment in enumerate(message.attachments):
+                caption = message.text or ""
+                if index > 0:
+                    caption = ""
+                result = self._send_media(
                     token,
-                    "sendPhoto",
-                    {
-                        "chat_id": chat_id,
-                        "photo": attachment.provider_file_id,
-                        "caption": message.text or "",
-                        "reply_to_message_id": int(target_message_id),
-                        "allow_sending_without_reply": True,
-                    },
+                    chat_id,
+                    attachment,
+                    caption,
+                    reply_to_message_id=int(target_message_id),
                 )
-    
-            elif mime_type.startswith("audio/"):
-                result = self._call(
-                    token,
-                    "sendVoice",
-                    {
-                        "chat_id": chat_id,
-                        "voice": attachment.provider_file_id,
-                        "caption": message.text or "",
-                        "reply_to_message_id": int(target_message_id),
-                        "allow_sending_without_reply": True,
-                    },
-                )
-    
-            else:
-                result = self._call(
-                    token,
-                    "sendDocument",
-                    {
-                        "chat_id": chat_id,
-                        "document": attachment.provider_file_id,
-                        "caption": message.text or "",
-                        "reply_to_message_id": int(target_message_id),
-                        "allow_sending_without_reply": True,
-                    },
-                )
-    
+            assert result is not None
+
         return SendResult(
             provider_message_id=f"{chat_id}:{result['message_id']}",
             provider_thread_id=chat_id,

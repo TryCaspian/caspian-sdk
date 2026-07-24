@@ -51,10 +51,7 @@ def parse_messaging_webhook(
             text = message.get("text")
 
             attachments = [
-                Attachment(
-                    url=attachment.get("payload", {}).get("url"),
-                    mime_type=attachment.get("type"),
-                )
+                Attachment(url=attachment.get("payload", {}).get("url"))
                 for attachment in message.get("attachments", [])
             ]
 

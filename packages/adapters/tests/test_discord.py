@@ -1,12 +1,18 @@
 """Discord adapter: gateway-event normalization, routing modes, webhook URLs."""
 
 import pytest
-from caspian_adapters.discord import install_url, parse_gateway_message, webhook_id_from_url
+from caspian_adapters.base import Attachment, OutboundMessage
+from caspian_adapters.discord import (
+    DiscordProvider,
+    install_url,
+    parse_gateway_message,
+    webhook_id_from_url,
+)
 
 APP_ID = "999"
 
 
-def _event(text="hey bot", guild_id="G1", author_bot=False, **data_extra):
+def _event(text="hey bot", guild_id: str | None = "G1", author_bot=False, **data_extra):
     data = {
         "id": "700001",
         "channel_id": "chan42",
@@ -61,3 +67,30 @@ def test_install_url_shape():
     assert "client_id=client-1" in url
     assert "permissions=67177472" in url
     assert "state=state-1" in url
+
+
+def test_initiate_preserves_attachments_when_forwarding_to_send(monkeypatch):
+    provider = DiscordProvider(shared_bot_token="token")
+    seen = {}
+
+    def fake_send(provider_inbox_id, message, credentials=None):
+        seen["provider_inbox_id"] = provider_inbox_id
+        seen["message"] = message
+        seen["credentials"] = credentials
+        return object()
+
+    monkeypatch.setattr(provider, "send", fake_send)
+
+    attachments = (Attachment(url="https://example.com/file.pdf", filename="file.pdf"),)
+    provider.initiate(
+        "inbox",
+        "chan42",
+        OutboundMessage(text="hi", attachments=attachments),
+        credentials={"bot_token": "token"},
+    )
+
+    assert seen["provider_inbox_id"] == "inbox"
+    assert seen["message"].text == "hi"
+    assert seen["message"].to == ("chan42",)
+    assert seen["message"].attachments == attachments
+    assert seen["credentials"] == {"bot_token": "token"}

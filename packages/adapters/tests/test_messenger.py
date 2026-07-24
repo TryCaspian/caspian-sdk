@@ -6,14 +6,14 @@ import json
 
 import httpx
 import pytest
-from caspian_adapters.base import OutboundMessage, WebhookVerificationError
+from caspian_adapters.base import OutboundMessage, ProvisionRequest, WebhookVerificationError
 from caspian_adapters.messenger import FacebookProvider, InstagramProvider
 
 PAGE_ID = "200123"
 APP_SECRET = "app-secret"
 
 
-def _provider(handler=None, cls=InstagramProvider):
+def _provider(handler=None, cls: type = InstagramProvider):
     provider = cls(
         page_id=PAGE_ID,
         access_token="page-token",
@@ -61,7 +61,7 @@ def test_send_posts_to_graph_messages():
         return httpx.Response(200, json={"message_id": "m.123"})
 
     provider = _provider(handler)
-    result = provider.send(PAGE_ID, OutboundMessage(to=["777"], text="hi there"))
+    result = provider.send(PAGE_ID, OutboundMessage(to=("777",), text="hi there"))
     assert seen["path"] == f"/{PAGE_ID}/messages"
     assert seen["body"]["recipient"] == {"id": "777"}
     assert seen["body"]["message"]["text"] == "hi there"
@@ -74,7 +74,7 @@ def test_reply_targets_original_sender():
         return httpx.Response(200, json={"message_id": "m.456"})
 
     provider = _provider(handler)
-    result = provider.reply(PAGE_ID, "777:mid.1", OutboundMessage(to=[], text="answer"))
+    result = provider.reply(PAGE_ID, "777:mid.1", OutboundMessage(to=(), text="answer"))
     assert result.provider_thread_id == "777"
 
 
@@ -132,4 +132,39 @@ def test_facebook_provider_same_shape():
     provider = _provider(cls=FacebookProvider)
     assert provider.channel == "facebook"
     assert provider.name == "facebook"
-    assert provider.provision(None).provider_resource_id == PAGE_ID
+    assert provider.provision(
+        ProvisionRequest(
+            connection_id="c1",
+            customer_id="cust1",
+            agent_id="agt1",
+            credentials={"bot_token": "page-token"},
+        )
+    ).provider_resource_id == PAGE_ID
+
+
+def test_parse_webhook_keeps_attachment_url_without_mime_type():
+    provider = _provider()
+    payload = json.dumps({
+        "object": "page",
+        "entry": [{
+            "id": PAGE_ID,
+            "messaging": [{
+                "sender": {"id": "777"},
+                "recipient": {"id": PAGE_ID},
+                "message": {
+                    "mid": "mid.2",
+                    "text": "hello",
+                    "attachments": [{
+                        "type": "image",
+                        "payload": {"url": "https://example.com/pic.jpg"},
+                    }],
+                },
+            }],
+        }],
+    }).encode()
+
+    inbound = provider.parse_webhook(payload, {"x-hub-signature-256": _signature(payload)})
+
+    assert len(inbound) == 1
+    assert inbound[0].attachments[0].url == "https://example.com/pic.jpg"
+    assert inbound[0].attachments[0].mime_type is None

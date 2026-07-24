@@ -2,8 +2,9 @@
 
 import json
 
+import httpx
 import pytest
-from caspian_adapters.base import WebhookVerificationError
+from caspian_adapters.base import Attachment, OutboundMessage, WebhookVerificationError
 from caspian_adapters.telegram import TelegramProvider, bot_id_from_token, parse_update
 
 BOT_TOKEN = "7123456789:AAEexample"
@@ -164,3 +165,74 @@ def test_parse_update_uses_caption_as_text():
     assert len(inbound) == 1
     assert inbound[0].text == "A photo"
     assert len(inbound[0].attachments) == 1
+
+
+def test_send_processes_every_attachment():
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(seen)}})
+
+    provider = TelegramProvider()
+    provider._client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+        timeout=30.0,
+    )
+
+    result = provider.send(
+        "inbox",
+        OutboundMessage(
+            text="caption",
+            to=("777",),
+            attachments=(
+                Attachment(provider_file_id="photo123", mime_type="image/png"),
+                Attachment(url="https://example.com/report.pdf", mime_type="application/pdf"),
+            ),
+        ),
+        credentials={"bot_token": BOT_TOKEN},
+    )
+
+    assert [path for path, _ in seen] == [
+        f"/bot{BOT_TOKEN}/sendPhoto",
+        f"/bot{BOT_TOKEN}/sendDocument",
+    ]
+    assert seen[0][1]["photo"] == "photo123"
+    assert seen[0][1]["caption"] == "caption"
+    assert seen[1][1]["document"] == "https://example.com/report.pdf"
+    assert seen[1][1]["caption"] == ""
+    assert result.provider_thread_id == "777"
+    assert result.provider_message_id == "777:2"
+
+
+def test_reply_uses_url_fallback_and_keeps_reply_fields():
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 11}})
+
+    provider = TelegramProvider()
+    provider._client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.telegram.org",
+        timeout=30.0,
+    )
+
+    result = provider.reply(
+        "inbox",
+        "777:55",
+        OutboundMessage(
+            text="answer",
+            attachments=(Attachment(url="https://example.com/voice.ogg", mime_type="audio/ogg"),),
+        ),
+        credentials={"bot_token": BOT_TOKEN},
+    )
+
+    assert seen[0][0] == f"/bot{BOT_TOKEN}/sendVoice"
+    assert seen[0][1]["voice"] == "https://example.com/voice.ogg"
+    assert seen[0][1]["reply_to_message_id"] == 55
+    assert seen[0][1]["allow_sending_without_reply"] is True
+    assert result.provider_thread_id == "777"
+    assert result.provider_message_id == "777:11"
