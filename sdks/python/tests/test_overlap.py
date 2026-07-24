@@ -746,7 +746,8 @@ def test_parallel_handler_exception_does_not_stop_subsequent_messages():
             seen.append(message.text)
             second_done.set()
 
-    # Dispatch both simultaneously. parallel returns immediately after spawning the thread.
+    # dispatch_pending joins all spawned threads before returning, so by the
+    # time the assertion runs below, both handlers have fully completed.
     client.dispatch_pending(on_overlap="parallel")
     
     assert second_done.wait(timeout=2.0)

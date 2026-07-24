@@ -211,8 +211,9 @@ class _ConversationState:
     long-running agents that see many short-lived conversations.
     """
 
-    # Guards all mutable fields below.  Never held across a handler call,
-    # and never held at the same time as _conv_states_lock on CommClient.
+    # Guards all mutable fields below.  Always acquired *inside*
+    # _conv_states_lock (outer → inner), never in the reverse order,
+    # to prevent deadlocks between threads touching the same conversation.
     lock: threading.Lock = field(default_factory=threading.Lock)
     # Count of handler threads currently executing for this conversation.
     # queue/drop: never exceeds 1. parallel: can exceed 1.
@@ -251,11 +252,11 @@ class CommClient:
         # lazily on first message; deleted once a conversation goes idle.
         self._conv_states: dict[str, _ConversationState] = {}
         # Guards dict key-level operations only (get-or-create an entry,
-        # delete-if-idle).  Never held across a handler call, and never held
-        # at the same time as a per-conversation _ConversationState.lock.
-        # Without this, two threads arriving simultaneously for the same new
-        # conversation_id could each create their own state object, and a
-        # delete-on-idle could race a concurrent new-message arrival.
+        # delete-if-idle).  Always acquired *before* any per-conversation
+        # _ConversationState.lock (outer → inner); acquiring them in the
+        # reverse order would risk deadlock between threads that each hold
+        # one lock and wait for the other.
+        # Never held across a handler call.
         self._conv_states_lock = threading.Lock()
         # Strategy in effect for the current listen()/dispatch_pending() call.
         self._on_overlap: str = "queue"
