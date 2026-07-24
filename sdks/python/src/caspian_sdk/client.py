@@ -25,7 +25,10 @@ from pathlib import Path
 
 import httpx
 
+from .state import InMemoryStateAdapter, StateAdapter
+
 logger = logging.getLogger("caspian_sdk")
+
 
 
 def _dotenv() -> dict[str, str]:
@@ -203,6 +206,7 @@ class CommClient:
         base_url: str | None = None,
         http: httpx.Client | None = None,
         timeout: float = 30.0,
+        state_adapter: StateAdapter | None = None,
     ) -> None:
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
@@ -210,11 +214,15 @@ class CommClient:
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
+        self._state_adapter: StateAdapter = (
+            state_adapter if state_adapter is not None else InMemoryStateAdapter()
+        )
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+
 
     def close(self) -> None:
         self._http.close()
@@ -739,16 +747,44 @@ class CommClient:
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
+        event_id = (
+            event.get("id")
+            or (isinstance(event.get("data"), dict) and event["data"].get("id"))
+            or (
+                isinstance(event.get("data"), dict)
+                and isinstance(event["data"].get("message"), dict)
+                and event["data"]["message"].get("id")
+            )
+        )
+        if event_id and self._state_adapter.seen(str(event_id)):
+            logger.debug("dropping duplicate event %s", event_id)
+            return
+
         event_type = event.get("type")
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
         if event_type == "interaction.received":
-            self._dispatch_interaction(event["data"])
+            conversation_id = data.get("conversation_id")
+            self._dispatch_with_lock(conversation_id, lambda: self._dispatch_interaction(data))
             return
         if event_type == "reaction.received":
-            self._dispatch_reaction(event["data"])
+            conversation_id = data.get("conversation_id")
+            self._dispatch_with_lock(conversation_id, lambda: self._dispatch_reaction(data))
             return
         if event_type != "message.received":
             return
-        message = self._build_message(event["data"])
+        message = self._build_message(data)
+        self._dispatch_with_lock(
+            message.conversation_id, lambda: self._dispatch_message(message)
+        )
+
+    def _dispatch_with_lock(self, conversation_id: str | None, func: Callable[[], None]) -> None:
+        if conversation_id:
+            with self._state_adapter.lock(conversation_id):
+                func()
+        else:
+            func()
+
+    def _dispatch_message(self, message: Message) -> None:
         if self._handlers:
             # Show a 'thinking…' indicator up front so the human sees the agent is
             # working while the handler runs. Best-effort; never blocks dispatch.
@@ -782,6 +818,7 @@ class CommClient:
                 logger.exception(
                     "on_message handler failed for message %s; continuing", message.id
                 )
+
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""

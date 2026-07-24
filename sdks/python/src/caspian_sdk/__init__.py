@@ -8,14 +8,23 @@ from .client import (
     Message,
     Reaction,
 )
+from .state import (
+    InMemoryStateAdapter,
+    RedisStateAdapter,
+    StateAdapter,
+)
 
 __all__ = [
     "AccountRequiredError",
     "CommClient",
     "CommError",
+    "InMemoryStateAdapter",
     "InsufficientCreditError",
     "Interaction",
     "Message",
     "Reaction",
+    "RedisStateAdapter",
+    "StateAdapter",
     "blocks",
 ]
+

@@ -50,6 +50,8 @@ export interface WhatsappOnboarding {
   [key: string]: unknown;
 }
 
+import type { StateAdapter } from "./state.js";
+
 export interface ClientOptions {
   /** Falls back to CASPIAN_API_KEY (or legacy COMM_API_KEY) (env or ./.env). */
   apiKey?: string;
@@ -59,7 +61,10 @@ export interface ClientOptions {
   timeout?: number;
   /** Inject a custom fetch (for testing). Defaults to global fetch. */
   fetch?: typeof fetch;
+  /** Pluggable state adapter for event deduplication and locking. Defaults to InMemoryStateAdapter. */
+  stateAdapter?: StateAdapter;
 }
+
 
 /** Shared options for every connect_* call. */
 export interface ConnectOptions {
