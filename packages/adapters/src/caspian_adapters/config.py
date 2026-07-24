@@ -93,3 +93,11 @@ class Settings(BaseSettings):
     x_webhook_secret: str = ""  # overrides x_api_secret for CRC/signature if set
     x_base_url: str = "https://api.x.com"
     x_dm_poll_interval: float = 10.0  # seconds between DM polls per connection
+
+    # Zulip outgoing-webhook bot. All per-connection in multi-tenant use; these
+    # deployment defaults seed a single-tenant install. site is the realm base
+    # URL (https://ORG.zulipchat.com); webhook_token verifies inbound POSTs.
+    zulip_site: str = ""
+    zulip_bot_email: str = ""
+    zulip_api_key: str = ""
+    zulip_webhook_token: str = ""

@@ -1,7 +1,7 @@
 [project]
 name = "caspian-adapters"
 version = "0.1.0"
-description = "Channel adapters for AI-agent communication - Slack, Discord, GitHub, Telegram, Instagram, Facebook, X, email (SES), Google Meet, GSM-modem SMS - behind one provider interface."
+description = "Channel adapters for AI-agent communication - Slack, Discord, GitHub, Telegram, Zulip, Instagram, Facebook, X, email (SES), Google Meet, GSM-modem SMS - behind one provider interface."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
