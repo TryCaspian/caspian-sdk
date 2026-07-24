@@ -98,6 +98,35 @@ describe("CommClient", () => {
     expect(calls[0].body).toMatchObject({ customer_id: null, agent_id: null, domain: null });
   });
 
+  it("connectEmail with wait: false returns immediately without polling", async () => {
+    const { client, calls } = makeClient({
+      "POST /v1/connections/email": () => json({ id: "conn_1", status: "provisioning" }),
+    });
+    const conn = await client.connectEmail({ wait: false });
+    expect(conn.status).toBe("provisioning");
+    
+    // Verify no polling requests occurred (only the POST should be present)
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].path).toBe("/v1/connections/email");
+  });
+
+  it("connectEmail throws CommError on provisioning failure", async () => {
+    const { client } = makeClient({
+      "POST /v1/connections/email": () => json({ id: "conn_1", status: "provisioning" }),
+      "GET /v1/connections/conn_1": () => {
+        return json({ id: "conn_1", status: "failed", error: "DNS verification failed" });
+      },
+    });
+    
+    const err = await client
+      .connectEmail({ pollInterval: 0.001 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(CommError);
+    expect(err.statusCode).toBe(502);
+    expect(err.detail).toBe("provisioning failed: DNS verification failed");
+  });
+
   it("maps camelCase channel fields to snake_case on the wire", async () => {
     const { client, calls } = makeClient({
       "POST /v1/connections/telegram": () => json({ id: "c", status: "active" }),
