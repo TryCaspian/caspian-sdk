@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     # signing_secret}. If empty, falls back to the single slack_* app above.
     slack_apps: str = ""
 
+    linear_api_key: str = ""
+    linear_webhook_secret: str = ""
+    linear_base_url: str = "https://api.linear.app/graphql"
+
     instagram_page_id: str = ""
     instagram_access_token: str = ""
     instagram_app_secret: str = ""

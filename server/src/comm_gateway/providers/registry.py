@@ -190,6 +190,18 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             scopes=settings.slack_scopes,
             apps=pool,
         )
+    if name == "fake-linear":
+        from .fakes.fake_linear import FakeLinearProvider
+
+        return FakeLinearProvider()
+    if name == "linear":
+        from .linear import LinearProvider
+
+        return LinearProvider(
+            api_key=settings.linear_api_key,
+            webhook_secret=settings.linear_webhook_secret,
+            base_url=settings.linear_base_url,
+        )
     if name == "fake-instagram":
         from .fakes.fake_social import FakeInstagramProvider
 
