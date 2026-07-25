@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_api_base: str = "https://api.github.com"
 
+    # Reddit modmail - token + subreddit come per connection
+    reddit_base_url: str = "https://oauth.reddit.com"
+    reddit_user_agent: str = "comm-gateway/reddit by trycaspian"
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""

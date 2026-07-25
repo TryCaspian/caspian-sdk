@@ -232,6 +232,17 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.github_webhook_secret,
             base_url=settings.github_api_base,
         )
+    if name == "fake-reddit":
+        from .fakes.fake_reddit import FakeRedditProvider
+
+        return FakeRedditProvider()
+    if name == "reddit":
+        from .reddit import RedditProvider
+
+        return RedditProvider(
+            base_url=settings.reddit_base_url,
+            user_agent=settings.reddit_user_agent,
+        )
     if name == "x":
         from .x import XProvider
 
