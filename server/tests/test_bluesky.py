@@ -4,9 +4,12 @@ import json
 
 import httpx
 import pytest
-from caspian_adapters import WebhookVerificationError
-from caspian_adapters.base import OutboundMessage, ProvisionRequest
-from caspian_adapters.bluesky import (
+from comm_gateway.providers.base import (
+    OutboundMessage,
+    ProvisionRequest,
+    WebhookVerificationError,
+)
+from comm_gateway.providers.bluesky import (
     CREATE_RECORD_PATH,
     LIST_NOTIFICATIONS_PATH,
     SESSION_PATH,
