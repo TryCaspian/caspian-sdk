@@ -1,6 +1,6 @@
 # Caspian
 
-> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, Google Meet, SMS — behind a single `on_message` handler. This repo is the open core: channel adapters (`caspian-adapters`), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
+> Caspian gives an AI agent one communication identity across every channel humans use — email, Slack, Discord, Telegram, Instagram DM, Facebook Messenger, X, SMS — behind a single `on_message` handler. This repo is the open core: the self-hostable gateway (`comm-gateway`, with a channel adapter per platform), the Python client (`caspian-sdk`), and a CLI (`caspian`). Hosted channels (WhatsApp Business, phone/voice, iMessage, RCS) use the same API at https://trycaspianai.com.
 
 ## Integrate an agent (the common task)
 
@@ -8,11 +8,13 @@
 2. Config: the client reads `CASPIAN_API_KEY` and `CASPIAN_BASE_URL` from env or `./.env`. Against a running Caspian gateway, mint a key with `POST {base}/v1/projects/sandbox` (no signup) — or fetch `{base}/SKILL.md`, which is the gateway's own agent-readable integration guide with exact, current instructions. Prefer SKILL.md when a gateway URL is available.
 3. Write ONE handler; it fires for every connected channel:
 
+### Python
+
 ```python
 from caspian_sdk import CommClient
 
 client = CommClient()
-email = client.connect_email(display_name="My Agent")  # instant, no setup
+email = client.connect_email(username="my-agent")  # instant, no setup
 
 @client.on_message
 def handle(message):
@@ -22,10 +24,29 @@ def handle(message):
 client.listen()  # blocks; dedupes within a run
 ```
 
+### TypeScript
+
+```ts
+import { CommClient } from "caspian-sdk";
+
+const client = new CommClient();
+
+await client.connectEmail({
+  username: "my-agent",
+});
+
+client.onMessage(async (message) => {
+  await message.reply(yourAgentLogic(message.text));
+});
+
+await client.listen();
+```
+
 4. Add channels with more `connect_*()` calls — never new handler code:
    - `connect_telegram(bot_token=...)` — token from @BotFather; ask the developer for it, never invent one.
    - `connect_discord(bot_token=...)` or `install_discord(display_name=...)` → returns an `authorize_url` to open.
    - `connect_slack(slack_client_id=..., slack_client_secret=..., slack_signing_secret=...)` or `install_slack(...)` → `authorize_url`.
+   - `connect_github(github_app_id=..., github_app_slug=..., github_private_key=..., github_webhook_secret=...)` or `install_github(...)` → GitHub App installation URL; issue/PR comments mentioning the App become messages.
    - `connect_instagram(...)` / `connect_facebook(...)` — developer's own Meta app + Page.
    - `connect_x(access_token=..., access_secret=..., user_id=...)` or `install_x()` — reactive DMs only; X API paid tier required.
    - `connect_whatsapp()` / `connect_imessage()` / `connect_phone()` / `connect_rcs()` — hosted-gateway channels; 400 if not available on this deployment.
@@ -39,7 +60,8 @@ Idempotency: `connect_email()` reuses the existing connection on restart. Replie
 ## Use the adapters directly (no gateway)
 
 ```python
-from caspian_adapters import Settings, build_providers
+from comm_gateway.config import Settings
+from comm_gateway.providers.registry import build_providers
 providers = build_providers(Settings(providers="slack", slack_client_id=..., slack_client_secret=..., slack_signing_secret=...))
 ```
 
@@ -55,7 +77,7 @@ Each provider implements: `provision(request)`, `send(inbox_id, message, credent
 ## Files
 
 - README.md — overview, channel matrix, quickstart
-- packages/adapters/src/caspian_adapters/ — one module per channel; base.py is the interface; registry.py builds providers from Settings
+- server/src/comm_gateway/providers/ — one module per channel; base.py is the interface; registry.py builds providers from Settings
 - sdks/python/src/caspian_sdk/client.py — the full Python client surface
 - sdks/typescript/src/client.ts — the full TypeScript client surface (same API, camelCase)
 - packages/openclaw/ — OpenClaw channel plugin (openclaw-caspian)

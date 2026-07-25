@@ -1,11 +1,15 @@
-export { CommClient, Message } from "./client.js";
-export type { MessageHandler } from "./client.js";
+export { CommClient, Message, Interaction, Reaction } from "./client.js";
+export type { MessageHandler, InteractionHandler, ReactionHandler } from "./client.js";
 export { CommError, AccountRequiredError, InsufficientCreditError } from "./errors.js";
 export type {
   Agent,
   AutopayOptions,
+  Block,
+  BlockButton,
+  BlockField,
   ClientOptions,
   Connection,
+  ConcurrencyStrategy,
   ConnectOptions,
   Conversation,
   Customer,
@@ -13,6 +17,7 @@ export type {
   EventRecord,
   ListenOptions,
   LoginOptions,
+  Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
 } from "./types.js";

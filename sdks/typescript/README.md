@@ -38,13 +38,14 @@ await client.listen(); // one loop, every channel
 | **Email** | `connectEmail()` — default domain or your own |
 | **Slack** | `installSlack()` (one-click) or `connectSlack({...})` (your own app) |
 | **Discord** | `installDiscord()` (one-click) or `connectDiscord({...})` |
+| **GitHub issues / PRs** | `installGitHub()` or `connectGitHub({...})` |
 | **X / Twitter** | `installX()` (one-click) or `connectX({...})` |
 | **WhatsApp** | `connectWhatsapp({...})` (Caspian hosted) |
 | **SMS / phone** | `connectPhone({...})` — own GSM modem, or Caspian hosted |
 | **Telegram** | `connectTelegram({ botToken })` |
 | **iMessage** | `connectImessage()` |
 
-OAuth channels (Slack/Discord/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
+Install channels (Slack/Discord/GitHub/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
 
 ## Make your agent platform-aware
 
@@ -57,6 +58,34 @@ systemPrompt += "\n\n" + guide;
 ```
 
 Use it, tweak it, or ignore it and write your own.
+
+## Rich messages
+
+Send one provider-neutral `blocks` payload and each channel gets its best
+rendering — Slack, Discord and Telegram render natively, email gets rich HTML,
+and text-only channels degrade to clean text automatically.
+
+```ts
+import type { Block } from "caspian-sdk";
+
+const blocks: Block[] = [
+  {
+    type: "card",
+    title: "Order #1024 shipped",
+    subtitle: "Arriving Thursday",
+    buttons: [
+      { label: "Track", url: "https://example.com/track/1024" },
+      { label: "Get help", value: "help:1024" }, // callback
+    ],
+  },
+];
+
+await message.reply(undefined, undefined, blocks);
+// or proactively: await client.sendMessage(conversationId, null, null, blocks);
+```
+
+Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
+`card`. A button with a `url` is a link; a button with a `value` is a callback.
 
 ## How it works
 
@@ -71,21 +100,70 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
-## Errors
+## Overlapping messages
 
-Non-2xx responses throw a `CommError` with `statusCode` and `detail`:
+`listen()` uses a separate queue for each conversation, so a slow reply in one
+conversation does not block everyone else. The default is `queue`:
 
 ```ts
-import { CommError } from "caspian-sdk";
+await client.listen({ concurrency: "queue" });
+```
+
+Choose a different policy when the handler does not need every message:
+
+| Policy | Behavior | Use when |
+|---|---|---|
+| `queue` | Run every message in order for that conversation | The agent must handle every message |
+| `debounce` | Wait for a pause, then run only the latest message | Several quick messages should become one turn |
+| `drop` | Ignore new messages while that conversation is busy | Skipping interruptions is acceptable |
+| `parallel` | Run every message immediately | Handlers are independent; replies may finish out of order |
+
+Set the debounce window in milliseconds:
+
+```ts
+await client.listen({ concurrency: "debounce", debounceMs: 500 });
+```
+
+The queues live in the client process. Multiple agent processes need their own
+shared coordination layer.
+
+## Errors
+
+Non-2xx responses throw a `CommError` with `statusCode` and `detail`. Paid-channel
+operations can throw two more specific subclasses so you can react precisely:
+
+```ts
+import { CommError, AccountRequiredError, InsufficientCreditError } from "caspian-sdk";
 
 try {
   await client.connectX({ accessToken, userId });
 } catch (err) {
-  if (err instanceof CommError && err.statusCode === 402) {
-    // Paid channel — sign in first. err.detail explains how.
+  if (err instanceof AccountRequiredError) {
+    // Paid channel needs a one-time developer sign-in first (HTTP 401).
+    // Run the sign-in flow directly:
+    await err.login();
+    // Or inspect the raw device-flow endpoints yourself:
+    console.log(err.loginOptions);
+  } else if (err instanceof InsufficientCreditError) {
+    // Project is out of credit, or hit a spend cap (HTTP 402 / 429).
+    console.log("Current balance (cents):", err.balanceCents);
+
+    // Mint a hosted checkout link — defaults to the gateway's suggested amount:
+    const { checkout_url } = await err.topUp();
+    console.log("Top up here:", checkout_url);
+
+    // Or specify your own amount:
+    // await err.topUp(5000);
+  } else if (err instanceof CommError) {
+    // Any other non-2xx response.
+    console.log(err.statusCode, err.detail);
   }
 }
 ```
+
+- **`AccountRequiredError`** — thrown when a paid channel needs a one-time developer sign-in (HTTP 401). Free channels never raise this. Call `.login()` to run the sign-in, or read `.loginOptions` for the raw endpoints.
+- **`InsufficientCreditError`** — thrown when a paid channel is blocked due to insufficient credit (HTTP 402) or a spend cap (HTTP 429). Use `.balanceCents` and `.paymentOptions` to inspect the situation in code, or call `.topUp(amountCents?)` to mint a checkout link — omit the argument to use the gateway's suggested amount.
+- All other non-2xx responses continue to throw a plain `CommError`.
 
 ## Docs
 

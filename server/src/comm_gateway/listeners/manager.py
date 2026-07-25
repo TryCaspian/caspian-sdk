@@ -1,0 +1,181 @@
+"""Listener manager: one persistent connection per listener-channel connection.
+
+Runs its own asyncio loop in a background thread. Periodically reconciles the
+live set of connections that need a persistent listener (today: Discord bot
+connections) against the running clients — starting new ones, stopping removed
+ones. Each client feeds inbound into `ingest_inbound`, the same pipeline the
+webhook route uses.
+"""
+
+import asyncio
+import logging
+import threading
+
+from sqlalchemy import select
+
+from ..crypto import read_credentials, write_credentials
+from ..jobs import ingest_inbound
+from ..models import Connection
+from .discord_gateway import DiscordGatewayClient
+
+log = logging.getLogger("comm.listener")
+
+RECONCILE_INTERVAL = 15.0
+
+
+def _active_discord_bots(session_factory) -> dict[str, str]:
+    """Map app_id -> bot_token for every active Discord *bot* connection.
+
+    Webhook-identity Discord connections have no bot_token and receive nothing,
+    so they are skipped.
+    """
+    out: dict[str, str] = {}
+    with session_factory() as session:
+        rows = session.execute(
+            select(Connection).where(
+                Connection.provider == "discord",
+                Connection.status == "active",
+            )
+        ).scalars().all()
+        for conn in rows:
+            creds = read_credentials(conn)
+            token = creds.get("bot_token")
+            if token and conn.provider_resource_id:
+                out[conn.provider_resource_id] = token
+    return out
+
+
+async def _reconcile_loop(session_factory, settings, stop_event: threading.Event) -> None:
+    clients: dict[str, tuple] = {}  # app_id -> (client, task)
+    api_base = f"{settings.discord_base_url}"
+
+    def sink(inbound) -> None:
+        ingest_inbound(session_factory, "discord", inbound)
+
+    # The shared "Caspian" bot: ONE Gateway connection for the whole deployment,
+    # in every server developers installed it into. It routes each message by
+    # guild id to that developer's connection. Start it once, up front.
+    shared_task = None
+    if settings.discord_bot_token:
+        shared = DiscordGatewayClient(
+            settings.discord_bot_token, "shared", sink, api_base, route_by_guild=True
+        )
+        shared_task = asyncio.create_task(shared.run())
+        log.info("started shared discord bot listener")
+
+    while not stop_event.is_set():
+        try:
+            wanted = _active_discord_bots(session_factory)
+        except Exception:
+            log.exception("listener reconcile failed to read connections")
+            wanted = {app: c for app, (c, _) in clients.items()}  # keep current
+
+        # start new
+        for app_id, token in wanted.items():
+            if app_id not in clients:
+                client = DiscordGatewayClient(token, app_id, sink, api_base)
+                task = asyncio.create_task(client.run())
+                clients[app_id] = (client, task)
+                log.info("started discord listener for app %s", app_id)
+        # stop removed
+        for app_id in list(clients):
+            if app_id not in wanted:
+                client, task = clients.pop(app_id)
+                client.stop()
+                task.cancel()
+                log.info("stopped discord listener for app %s", app_id)
+
+        await asyncio.sleep(RECONCILE_INTERVAL)
+
+    for client, task in clients.values():
+        client.stop()
+        task.cancel()
+    if shared_task is not None:
+        shared_task.cancel()
+
+
+def _active_x_connections(session_factory) -> list[tuple[str, dict]]:
+    """(connection_id, decrypted credentials) for every active X connection."""
+    out: list[tuple[str, dict]] = []
+    with session_factory() as session:
+        rows = session.execute(
+            select(Connection).where(
+                Connection.provider == "x",
+                Connection.status == "active",
+            )
+        ).scalars().all()
+        for conn in rows:
+            out.append((conn.id, read_credentials(conn)))
+    return out
+
+
+def _save_dm_cursor(session_factory, conn_id: str, cursor: str) -> None:
+    """Persist the newest-seen dm_event id on the connection so the next poll
+    only picks up messages after it (survives restarts)."""
+    with session_factory() as session:
+        conn = session.get(Connection, conn_id)
+        if conn is None:
+            return
+        creds = read_credentials(conn)
+        creds["dm_cursor"] = cursor
+        write_credentials(conn, creds)
+        session.commit()
+
+
+async def _x_dm_poll_loop(session_factory, settings, stop_event: threading.Event) -> None:
+    """Poll each active X connection's DMs on an interval and ingest new ones.
+
+    Replaces the Account Activity webhook (which caps subscriptions per app and
+    needs enterprise access) with per-connection polling of GET /2/dm_events.
+    """
+    from ..providers.registry import _build_one
+
+    provider = _build_one("x", settings)
+    interval = getattr(settings, "x_dm_poll_interval", 10.0)
+    log.info("started x DM poller (interval=%ss)", interval)
+
+    while not stop_event.is_set():
+        try:
+            conns = _active_x_connections(session_factory)
+        except Exception:
+            log.exception("x poller failed to read connections")
+            conns = []
+        for conn_id, creds in conns:
+            try:
+                cursor = creds.get("dm_cursor")
+                msgs, new_cursor = await asyncio.to_thread(provider.poll_dms, creds, cursor)
+                if msgs:
+                    ingest_inbound(session_factory, "x", msgs)
+                if new_cursor != cursor:
+                    _save_dm_cursor(session_factory, conn_id, new_cursor)
+            except Exception:
+                log.exception("x DM poll failed for connection %s", conn_id)
+        await asyncio.sleep(interval)
+
+
+async def _run_all(session_factory, settings, stop_event: threading.Event) -> None:
+    names = [n.strip() for n in (settings.providers or settings.provider).split(",")]
+    tasks = [asyncio.create_task(_reconcile_loop(session_factory, settings, stop_event))]
+    if "x" in names:
+        tasks.append(asyncio.create_task(_x_dm_poll_loop(session_factory, settings, stop_event)))
+    await asyncio.gather(*tasks)
+
+
+def run_listeners(session_factory, settings) -> threading.Event:
+    """Start the listener manager in a background thread. Returns a stop Event.
+
+    No-op-safe: if the channels that need listeners aren't configured, the loop
+    simply finds nothing to run. Runs the Discord Gateway reconciler and (when
+    `x` is configured) the X DM poller in one asyncio loop.
+    """
+    stop_event = threading.Event()
+
+    def _thread() -> None:
+        try:
+            asyncio.run(_run_all(session_factory, settings, stop_event))
+        except Exception:
+            log.exception("listener manager crashed")
+
+    thread = threading.Thread(target=_thread, name="comm-listeners", daemon=True)
+    thread.start()
+    return stop_event

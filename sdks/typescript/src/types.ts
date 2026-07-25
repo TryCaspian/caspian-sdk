@@ -100,6 +100,66 @@ export interface AutopayOptions {
   monthlyCapCents?: number;
 }
 
+/**
+ * A single rich-message block. Send a `Block[]` via `reply` / `sendMessage` and
+ * channels that support rich layout (Slack, Discord, Telegram, email) render it
+ * natively, while every other channel degrades to clean text automatically.
+ *
+ * Each block is `{ type, ... }`. A button with a `url` is a link; a button with
+ * a `value` is a callback (rendered as a tappable action where supported, shown
+ * as a "reply …" hint on text-only channels).
+ */
+export interface BlockButton {
+  label: string;
+  /** Link button. */
+  url?: string;
+  /** Callback button (posts the value back to the agent). */
+  value?: string;
+}
+
+export interface BlockField {
+  label: string;
+  value: string;
+}
+
+export interface Block {
+  type: "heading" | "text" | "divider" | "image" | "fields" | "list" | "buttons" | "card";
+  /** heading / text. */
+  text?: string;
+  /** image. */
+  url?: string;
+  alt?: string;
+  /** fields. */
+  fields?: BlockField[];
+  /** list. */
+  items?: string[];
+  ordered?: boolean;
+  /** buttons / card. */
+  buttons?: BlockButton[];
+  /** card. */
+  title?: string;
+  subtitle?: string;
+  image?: string;
+}
+
+/**
+ * A file attachment. Send `Media[]` via `reply` / `sendMessage` to attach files;
+ * inbound messages expose received attachments on `Message.media`.
+ */
+export interface Media {
+  /** Public URL of the file (mutually exclusive with `data`). */
+  url?: string;
+  /** Base64-encoded bytes (mutually exclusive with `url`). */
+  data?: string;
+  mimeType?: string;
+  mime_type?: string;
+  name?: string;
+  size?: number;
+  [key: string]: unknown;
+}
+
+export type ConcurrencyStrategy = "queue" | "debounce" | "drop" | "parallel";
+
 export interface ListenOptions {
   /** Start from this event seq instead of "newest at startup". */
   fromSeq?: number;
@@ -115,4 +175,8 @@ export interface ListenOptions {
    * typing indicator (X, SMS, email); the real answer follows from the handler.
    */
   ack?: string;
+  /** How messages that overlap in one conversation are handled (default "queue"). */
+  concurrency?: ConcurrencyStrategy;
+  /** Quiet window for the debounce strategy in milliseconds (default 500). */
+  debounceMs?: number;
 }

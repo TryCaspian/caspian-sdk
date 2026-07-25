@@ -1,10 +1,10 @@
 [project]
 name = "caspian-cli"
-version = "0.2.2"
+version = "0.2.3"
 description = "Caspian CLI: init a project, connect channels, login, billing, and tail events from your terminal."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [{ name = "Caspian", email = "ayushguptadev1@gmail.com" }]
 keywords = ["ai", "agents", "communication", "cli", "caspian"]
 dependencies = [
