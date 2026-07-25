@@ -743,9 +743,26 @@ def test_handle_webhook_rejects_bad_or_missing_signature():
             client.handle_webhook(body, _signed_headers(body, secret="wrong"), WEBHOOK_SECRET)
         with pytest.raises(WebhookVerificationError):
             client.handle_webhook(body, {}, WEBHOOK_SECRET)
+        with pytest.raises(WebhookVerificationError):
+            client.handle_webhook(body, {"X-Caspian-Signature": "zz" * 32}, WEBHOOK_SECRET)
     finally:
         client.close()
     assert seen == []
+
+
+def test_handle_webhook_normalizes_uppercase_signature():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    body = json.dumps(_message_event(1, "conv_1", "hi")).encode()
+    sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest().upper()
+    try:
+        result = client.handle_webhook(
+            body, {"X-Caspian-Signature": sig}, WEBHOOK_SECRET
+        )
+    finally:
+        client.close()
+    assert result == {"processed": 1, "duplicates": 0}
 
 
 def test_handle_webhook_dedup_is_invocation_local():
@@ -792,6 +809,16 @@ def test_handle_webhook_rejects_invalid_json():
             client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
     finally:
         client.close()
+
+
+def test_handle_webhook_rejects_non_object_event():
+    client = _client(lambda request: httpx.Response(404))
+    for payload in [b"null", b'"string"', b"42"]:
+        try:
+            with pytest.raises(ValueError, match="must be an object"):
+                client.handle_webhook(payload, _signed_headers(payload), WEBHOOK_SECRET)
+        finally:
+            client.close()
 
 
 def test_handle_webhook_ignores_unknown_event_types():

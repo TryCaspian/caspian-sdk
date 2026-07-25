@@ -1,6 +1,5 @@
 /**
- * Serverless webhook mode: one pushed event per invocation (fetch-style
- * handler — works on Vercel functions, Cloudflare Workers, Deno, Bun).
+ * Serverless webhook mode: one pushed event per invocation.
  *
  * No poll loop — point the gateway at this function's URL once:
  *
@@ -20,6 +19,7 @@ client.onMessage(async (message) => {
   await message.reply(`Thanks for reaching out. You said: ${message.text}`);
 });
 
+// Vercel / Netlify function style — secret comes from process.env
 export async function POST(request: Request): Promise<Response> {
   try {
     const result = await client.handleWebhook(request);
@@ -31,3 +31,18 @@ export async function POST(request: Request): Promise<Response> {
     throw err;
   }
 }
+
+// Cloudflare Worker style — secret passed via env bindings
+// export default {
+//   async fetch(request: Request, env: { CASPIAN_WEBHOOK_SECRET: string }): Promise<Response> {
+//     try {
+//       const result = await client.handleWebhook(request, { secret: env.CASPIAN_WEBHOOK_SECRET });
+//       return Response.json(result);
+//     } catch (err) {
+//       if (err instanceof WebhookVerificationError) {
+//         return Response.json({ error: err.detail }, { status: err.statusCode });
+//       }
+//       throw err;
+//     }
+//   },
+// };

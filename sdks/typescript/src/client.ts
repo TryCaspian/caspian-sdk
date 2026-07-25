@@ -35,12 +35,13 @@ function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
 }
 
-/** ponytail: verify HMAC-SHA256 using the platform crypto API. */
+/** Verify an HMAC-SHA256 signature using the platform Web Crypto API. */
 async function verifyHmac(
   secret: string,
   body: Uint8Array,
   signatureHex: string,
 ): Promise<boolean> {
+  if (!/^[0-9a-fA-F]{64}$/.test(signatureHex)) return false;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -49,7 +50,7 @@ async function verifyHmac(
     ["verify"],
   );
   const sigBytes = Uint8Array.from(
-    { length: signatureHex.length / 2 },
+    { length: 32 },
     (_, i) => parseInt(signatureHex.slice(i * 2, i * 2 + 2), 16),
   );
   return crypto.subtle.verify("HMAC", key, sigBytes, body);
@@ -1137,10 +1138,14 @@ export class CommClient {
    * Duplicate event ids within the same invocation are processed once.
    * Accepts a single event object or a list of events.
    */
-  async handleWebhook(request: Request): Promise<WebhookResult>;
+  async handleWebhook(
+    request: Request,
+    options?: { secret?: string },
+  ): Promise<WebhookResult>;
   async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult>;
   async handleWebhook(
     requestOrOpts: Request | HandleWebhookOptions,
+    options?: { secret?: string },
   ): Promise<WebhookResult> {
     let raw: Uint8Array;
     let headers: Record<string, string>;
@@ -1152,6 +1157,7 @@ export class CommClient {
       requestOrOpts.headers.forEach((value, key) => {
         headers[key] = value;
       });
+      secret = options?.secret;
     } else {
       raw =
         typeof requestOrOpts.body === "string"
@@ -1183,10 +1189,10 @@ export class CommClient {
     let processed = 0;
     let duplicates = 0;
     for (const event of events) {
-      const eventId =
-        isRecord(event)
-          ? ((event.id ?? event.seq) as string | number | undefined)
-          : undefined;
+      if (!isRecord(event)) {
+        throw new TypeError("Webhook event must be an object");
+      }
+      const eventId = (event.id ?? event.seq) as string | number | undefined;
       if (eventId !== undefined && eventId !== null) {
         if (seen.has(eventId)) {
           duplicates++;

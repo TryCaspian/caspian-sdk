@@ -21,6 +21,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections import deque
@@ -1093,17 +1094,19 @@ class CommClient:
         }.get("x-caspian-signature", "")
         if sig_header.startswith("sha256="):
             sig_header = sig_header[len("sha256="):]
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", sig_header):
+            raise WebhookVerificationError()
         expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-        if not sig_header or not hmac.compare_digest(sig_header, expected):
+        if not hmac.compare_digest(sig_header.lower(), expected):
             raise WebhookVerificationError()
         payload = json.loads(raw)
         events = payload if isinstance(payload, list) else [payload]
         seen: set = set()
         processed = duplicates = 0
         for event in events:
-            event_id = (
-                event.get("id", event.get("seq")) if isinstance(event, dict) else None
-            )
+            if not isinstance(event, dict):
+                raise ValueError("Webhook event must be an object")
+            event_id = event.get("id", event.get("seq"))
             if event_id is not None:
                 if event_id in seen:
                     duplicates += 1

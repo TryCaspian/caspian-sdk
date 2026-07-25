@@ -911,19 +911,22 @@ describe("handleWebhook", () => {
 
   it("accepts a Request object directly", async () => {
     process.env.CASPIAN_WEBHOOK_SECRET = SECRET;
-    const { client } = makeClient({});
-    const seen: (string | null)[] = [];
-    client.onMessage((m) => seen.push(m.text));
-    const body = JSON.stringify(messageEvent(1, "c", "hi"));
-    const req = new Request("https://gw.test/webhook", {
-      method: "POST",
-      headers: await signedHeaders(body),
-      body,
-    });
-    const result = await client.handleWebhook(req);
-    expect(result).toEqual({ processed: 1, duplicates: 0 });
-    expect(seen).toEqual(["hi"]);
-    delete process.env.CASPIAN_WEBHOOK_SECRET;
+    try {
+      const { client } = makeClient({});
+      const seen: (string | null)[] = [];
+      client.onMessage((m) => seen.push(m.text));
+      const body = JSON.stringify(messageEvent(1, "c", "hi"));
+      const req = new Request("https://gw.test/webhook", {
+        method: "POST",
+        headers: await signedHeaders(body),
+        body,
+      });
+      const result = await client.handleWebhook(req);
+      expect(result).toEqual({ processed: 1, duplicates: 0 });
+      expect(seen).toEqual(["hi"]);
+    } finally {
+      delete process.env.CASPIAN_WEBHOOK_SECRET;
+    }
   });
 
   it("dispatches interaction and reaction events", async () => {
@@ -1013,6 +1016,30 @@ describe("handleWebhook", () => {
     await expect(
       client.handleWebhook({ body, headers: await signedHeaders(body), secret: SECRET }),
     ).rejects.toThrow(SyntaxError);
+  });
+
+  it("rejects non-object events", async () => {
+    const { client } = makeClient({});
+    for (const payload of ["null", '"string"', "42"]) {
+      await expect(
+        client.handleWebhook({ body: payload, headers: await signedHeaders(payload), secret: SECRET }),
+      ).rejects.toThrow(TypeError);
+    }
+  });
+
+  it("accepts Request with explicit secret (Cloudflare env style)", async () => {
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => seen.push(m.text));
+    const body = JSON.stringify(messageEvent(1, "c", "hi"));
+    const req = new Request("https://gw.test/webhook", {
+      method: "POST",
+      headers: await signedHeaders(body),
+      body,
+    });
+    const result = await client.handleWebhook(req, { secret: SECRET });
+    expect(result).toEqual({ processed: 1, duplicates: 0 });
+    expect(seen).toEqual(["hi"]);
   });
 
   it("accepts Uint8Array body", async () => {
