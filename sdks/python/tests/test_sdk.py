@@ -107,10 +107,12 @@ def test_account_required_maps_from_401():
         finally:
             client.close()
     err = excinfo.value
+    assert isinstance(err, AccountRequiredError)
     assert isinstance(err, CommError)
     assert err.status_code == 401
     assert err.reason == "account_required"
     assert err.detail == "Sign in to use paid channels."
+    assert err.message == "Sign in to use paid channels."
     assert err.login_options == [{"start": "/v1/auth/device/start"}]
 
 
@@ -140,12 +142,53 @@ def test_insufficient_credit_maps_from_402():
         finally:
             client.close()
     err = excinfo.value
+    assert isinstance(err, InsufficientCreditError)
     assert isinstance(err, CommError)
     assert err.status_code == 402
     assert err.reason == "insufficient_credit"
     assert err.detail == "Out of credit."
+    assert err.message == "Out of credit."
     assert err.balance_cents == 42
+    assert err.payment_options == [
+        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+    ]
     assert err.payment_options[0]["url"] == "https://pay/1"
+
+
+def test_insufficient_credit_top_up_uses_suggested_amount():
+    """Top up helper uses suggested amount_cents from payment_options if no amount is given."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = json.loads(request.content) if request.content else None
+        calls.append((request.method, request.url.path, content))
+        if request.url.path == "/v1/billing/topup":
+            return httpx.Response(200, json={"checkout_url": "https://pay/1"})
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "message": "Out of credit.",
+                    "payment_options": [{"create": {"body": {"amount_cents": 5000}}}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            pass
+    err = excinfo.value
+    assert isinstance(err, InsufficientCreditError)
+    result = err.top_up()
+    client.close()
+
+    assert result == {"checkout_url": "https://pay/1"}
+    topup_call = next(c for c in calls if c[1] == "/v1/billing/topup")
+    assert topup_call[2] == {"amount_cents": 5000}
 
 
 def test_monthly_cap_reached_maps_from_429():
@@ -165,9 +208,36 @@ def test_monthly_cap_reached_maps_from_429():
         finally:
             client.close()
     err = excinfo.value
+    assert isinstance(err, InsufficientCreditError)
+    assert isinstance(err, CommError)
     assert err.status_code == 429
     assert err.reason == "monthly_cap_reached"
     assert err.detail == "Capped."
+    assert err.message == "Capped."
+
+
+def test_channel_cap_reached_maps_from_429():
+    """A 429 channel_cap_reached body also raises InsufficientCreditError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "channel_cap_reached", "message": "Channel capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert isinstance(err, InsufficientCreditError)
+    assert isinstance(err, CommError)
+    assert err.status_code == 429
+    assert err.reason == "channel_cap_reached"
+    assert err.detail == "Channel capped."
+    assert err.message == "Channel capped."
 
 
 def test_connect_email_waits_for_provisioning():
