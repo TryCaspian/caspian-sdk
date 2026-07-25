@@ -169,7 +169,10 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
     if name == "bluesky":
         from .bluesky import BlueskyProvider
 
-        return BlueskyProvider()
+        return BlueskyProvider(
+            base_url=settings.bluesky_base_url,
+            webhook_secret=settings.bluesky_webhook_secret,
+        )
     if name == "fake-discord":
         from .fakes.fake_social import FakeDiscordProvider
 
