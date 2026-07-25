@@ -1,14 +1,88 @@
 # caspian-opencode-plugin
 
-OpenCode plugin that gives your agent a **Caspian email inbox** — humans email the agent, OpenCode runs, replies go back on the same thread.
+[![npm](https://img.shields.io/npm/v/caspian-opencode-plugin.svg)](https://www.npmjs.com/package/caspian-opencode-plugin)
+
+OpenCode plugin that gives your agent a **Caspian inbox** — email, Telegram, and Discord — with sessions, slash commands, and a reliability-critical path.
 
 **No Caspian account required.** On first start the plugin creates a sandbox project for you (same as `caspian init`).
 
-## Install (anyone)
+Package: [npmjs.com/package/caspian-opencode-plugin](https://www.npmjs.com/package/caspian-opencode-plugin)
 
-### Option A — project plugin (recommended while developing)
+## Quick start
 
-In your project:
+```bash
+# 1) Register the plugin + install /caspian:* slash commands
+#    Global (all projects):
+bunx caspian-opencode-plugin setup
+#    Or only this repo:
+bunx caspian-opencode-plugin setup --project
+
+# 2) Restart OpenCode
+```
+
+That’s it. OpenCode pulls the **plugin** (tools/hooks) from npm on startup
+([plugin docs](https://opencode.ai/docs/plugins/)). You should see toasts:
+**Caspian ready** → **Caspian inbox ready** (with your agent email).
+
+| Scope | Config | Commands | Skills |
+|---|---|---|---|
+| `setup` (default) | `~/.config/opencode/opencode.json` | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
+| `setup --project` | `./opencode.json` | `./.opencode/commands/` | `./.opencode/skills/` |
+
+What setup does:
+
+1. Adds `"plugin": ["caspian-opencode-plugin"]` to `opencode.json` (tools/hooks)
+2. Merges `/caspian:*` command templates
+3. Copies **slash commands** and **skills** into OpenCode discovery paths
+
+OpenCode only discovers skills/commands from those folders — not from inside the
+npm tarball ([skills docs](https://opencode.ai/docs/skills/)). Always run `setup`
+once after install or upgrade.
+
+If you use **`opencode.jsonc`** (common with oh-my-opencode / custom providers),
+setup registers the plugin there too. Tools only appear when
+`caspian-opencode-plugin` is in the config file OpenCode actually loads — skills
+alone are not enough.
+
+**Tools missing after setup?** Check OpenCode’s log for
+`failed to load plugin … caspian-opencode-plugin`. OpenCode requires the package
+entry to export **only** plugin functions (no helper constants). Use
+`caspian-opencode-plugin@>=0.1.4`. Then fully quit and relaunch OpenCode (or clear
+`~/.cache/opencode/packages/caspian-opencode-plugin*`).
+
+### Manual install (no setup CLI)
+
+Add the plugin yourself:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["caspian-opencode-plugin"]
+}
+```
+
+Then either run `bunx caspian-opencode-plugin setup` once for slash commands, or copy
+`node_modules/caspian-opencode-plugin/src/commands/*.md` into
+`.opencode/commands/` (or `~/.config/opencode/commands/`).
+
+### Try it
+
+After restart:
+
+| Command | What it does |
+|---|---|
+| `/caspian:inbox` | List connections + recent messages |
+| `/caspian:email` | Send or reply by email |
+| `/caspian:connect-email` | Credentials (sandbox **or** [dashboard](https://dashboard.trycaspianai.com/login) paste) → connect inbox → admit email |
+| `/caspian:connect-telegram` | Connect Telegram (`TELEGRAM_BOT_TOKEN` in `.env`) |
+| `/caspian:telegram @user hi` | Send a Telegram DM |
+| `/caspian:connect-discord` | Connect Discord (OAuth or bot token) |
+| `/caspian:discord <channelId> hi` | Post to a Discord channel |
+
+Email works with zero config. Telegram / Discord need a connect step, then **restart
+OpenCode** so `"channels"` in `~/.config/opencode/caspian.json` is reloaded.
+
+### Local monorepo (developing this package)
 
 ```bash
 mkdir -p .opencode/plugins
@@ -19,40 +93,19 @@ mkdir -p .opencode/plugins
 ```json
 {
   "dependencies": {
-    "caspian-sdk": "^0.1.1",
-    "caspian-opencode-plugin": "file:../caspian-sdk/packages/opencode"
+    "caspian-opencode-plugin": "file:.."
   }
 }
 ```
 
-(From a sibling checkout of this monorepo; adjust the `file:` path to match.)
-
 `.opencode/plugins/caspian.ts`:
 
 ```ts
-export { default } from "caspian-opencode-plugin"
+export { default } from "../../src/index.ts"
 ```
 
-OpenCode installs `.opencode` deps with Bun at startup and loads the plugin automatically
-([docs](https://opencode.ai/docs/plugins/)).
-
-### Option B — npm package name in config
-
-`opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["caspian-opencode-plugin"]
-}
-```
-
-(Publish step TBD — until then use Option A / `file:`.)
-
-### Option C — global plugin file
-
-Copy or symlink into `~/.config/opencode/plugins/` and add deps in
-`~/.config/opencode/package.json` the same way.
+Also keep this package’s root `opencode.json` (slash command templates) for the
+dev checkout.
 
 ## First run (zero signup)
 
@@ -239,7 +292,7 @@ other channels when connected).
 | Slash | `/caspian:inbox` or `/caspian-inbox` |
 | Tool | `caspian_inbox` (`list=true` default; optional `channels`, limits) |
 
-Skill path: `.opencode/skills/caspian-inbox/SKILL.md`.
+Skill path: `src/skills/caspian-inbox/SKILL.md` (also linked under `.opencode/skills/` in this repo).
 
 ### Connect email / Telegram (skills)
 
@@ -305,14 +358,24 @@ Outbound:
 
 Reliability model: [RELIABILITY.md](./RELIABILITY.md).
 
-## Develop / test
+## Develop / test / publish
 
 ```bash
 cd packages/opencode
 bun install
+bun run build     # dist/ for npm
 bun test          # unit + onboard + fault + capacity
 bun run typecheck
+npm publish       # runs prepublishOnly → build
 ```
+
+For local monorepo work against the TypeScript SDK checkout:
+
+```bash
+bun add caspian-sdk@link:../../sdks/typescript
+```
+
+(Published installs resolve `caspian-sdk` from npm `^0.1.2`.)
 
 | Suite | Proves |
 |---|---|
@@ -322,10 +385,10 @@ bun run typecheck
 
 ### Manual email check
 
-1. Load plugin in OpenCode (Option A).
-2. Note the logged inbox address.
-3. `caspian test-email "ping"` (or send a real email).
-4. Confirm OpenCode session activity + reply.
+1. `bunx caspian-opencode-plugin setup` and restart OpenCode.
+2. Note the inbox address from the **Caspian inbox ready** toast (or logs).
+3. Email that address (or `caspian test-email "ping"` if you have the CLI).
+4. Confirm an OpenCode session opens and the reply lands on the thread.
 
 ## License
 

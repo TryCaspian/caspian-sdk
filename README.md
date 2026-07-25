@@ -284,7 +284,14 @@ If your agent needs to talk to humans, this is the layer under it:
 - **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
 - **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
 - **OpenClaw agents** — `clawhub install @trycaspian/caspian` ([the skill](./packages/clawhub-skill)) teaches your agent to wire itself up; [`openclaw-caspian`](./packages/openclaw) is the native channel plugin.
-- **OpenCode agents** — [`caspian-opencode-plugin`](./packages/opencode) bridges Caspian email / Telegram / Discord into OpenCode sessions.
+- **OpenCode agents** — [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) bridges Caspian email / Telegram / Discord into OpenCode sessions:
+
+  ```bash
+  bunx caspian-opencode-plugin setup   # or: setup --project
+  # restart OpenCode
+  ```
+
+  Details: [`packages/opencode`](./packages/opencode).
 - **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
 
 Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
@@ -400,7 +407,7 @@ that can't render blocks; omit it and a clean text fallback is generated for you
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
-| [`packages/opencode`](./packages/opencode) | `caspian-opencode-plugin` — OpenCode plugin: Caspian inbox ↔ OpenCode sessions (email, Telegram, Discord). |
+| [`packages/opencode`](./packages/opencode) | [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) — OpenCode plugin: Caspian inbox ↔ OpenCode sessions (email, Telegram, Discord). Install: `bunx caspian-opencode-plugin setup`. |
 | [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |

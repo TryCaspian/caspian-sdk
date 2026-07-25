@@ -224,15 +224,9 @@ export async function handleInbound(
         envelope.channel,
       );
       const extract = deps.extractAssistantText ?? defaultExtractAssistantText;
-      // An empty reply almost always means the OpenCode model produced no text,
-      // usually because no default model is configured/authenticated (a fresh
-      // install has none, so email sessions silently fail). Say so, rather than
-      // an opaque "try again" that looks like a Caspian problem.
       answer =
         extract(result, { includeThinking }) ||
-        "(No response generated. This usually means no OpenCode model is " +
-          "configured as the default. Set one in opencode.json (for example " +
-          '"model": "opencode/ling-3.0-flash-free") and try again.)';
+        "(No response generated. Please try again.)";
     } catch (err) {
       metrics.incr("inbound.prompt_fail");
       // Best-effort user-visible failure (degraded), then rethrow for logs.
