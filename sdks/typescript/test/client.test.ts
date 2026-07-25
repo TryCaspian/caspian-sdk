@@ -1,3 +1,5 @@
+import { getEventListeners } from "node:events";
+
 import { describe, expect, it, vi } from "vitest";
 import {
   AccountRequiredError,
@@ -201,6 +203,47 @@ describe("CommClient", () => {
       statusCode: 402,
       detail: "sign in first",
     });
+  });
+
+  it("surfaces a non-JSON error body as the CommError detail", async () => {
+    // A proxy/load balancer can answer with an HTML error page; the real body
+    // text must survive into the error rather than collapsing to statusText.
+    const { client } = makeClient({
+      "POST /v1/connections/x": () =>
+        new Response("<html>502 upstream unavailable</html>", {
+          status: 502,
+          statusText: "Bad Gateway",
+        }),
+    });
+    await expect(client.connectX({ accessToken: "a", userId: "1" })).rejects.toMatchObject({
+      statusCode: 502,
+      detail: "<html>502 upstream unavailable</html>",
+    });
+  });
+
+  it("falls back to statusText when an error body is empty", async () => {
+    const { client } = makeClient({
+      "POST /v1/connections/x": () =>
+        new Response(null, { status: 503, statusText: "Service Unavailable" }),
+    });
+    await expect(client.connectX({ accessToken: "a", userId: "1" })).rejects.toMatchObject({
+      statusCode: 503,
+      detail: "Service Unavailable",
+    });
+  });
+
+  it("listen does not accumulate abort listeners across idle polls", async () => {
+    // listen() reuses one long-lived signal for every poll's sleep; each sleep
+    // must detach its abort listener when the timer fires, or dead closures
+    // pile up on the signal for the lifetime of the listener.
+    const { client } = makeClient({ "GET /v1/events": () => json([]) });
+    const ac = new AbortController();
+    const done = client.listen({ fromSeq: 0, pollInterval: 0.001, signal: ac.signal });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Only the currently-pending sleep may hold a listener.
+    expect(getEventListeners(ac.signal, "abort").length).toBeLessThanOrEqual(1);
+    ac.abort();
+    await done;
   });
 
   it("behaviorPrompt / channelGuide return text", async () => {
