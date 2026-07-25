@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     modem_serial_port: str = ""
     modem_msisdn: str = ""
 
+    signal_socket_path: str = ""
+    signal_tcp_address: str = ""
+    signal_http_url: str = ""
+    signal_number: str = ""
+    signal_webhook_secret: str = ""
+
     # Self-hosted iMessage via a BlueBubbles server on a Mac mini (channel
     # "imessage"; deployment owns one Mac mini / Apple ID, so this is config, not
     # per-connection credentials). macmini_webhook_secret is opt-in: verification
