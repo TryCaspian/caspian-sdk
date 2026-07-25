@@ -398,7 +398,15 @@ class CommClient:
         )
         if response.status_code >= 400:
             try:
-                detail = response.json().get("detail", response.text)
+                payload = response.json()
+                # A proxy/gateway can return valid JSON that isn't an object
+                # (a bare list or string); only a dict can carry `detail`. The
+                # explicit key check keeps `response.text` lazy - it is only
+                # decoded when there is no detail to use instead.
+                if isinstance(payload, dict) and "detail" in payload:
+                    detail = payload["detail"]
+                else:
+                    detail = response.text
             except ValueError:
                 detail = response.text
             # A paid channel needs a one-time developer sign-in first.

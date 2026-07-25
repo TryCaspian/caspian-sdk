@@ -68,6 +68,22 @@ def test_error_maps_to_comm_error_with_detail():
     assert "bot_token" in str(excinfo.value)
 
 
+def test_error_with_non_object_json_body_maps_to_comm_error():
+    # A proxy/gateway can answer with valid JSON that isn't an object; that
+    # must surface as a CommError, not an AttributeError from `.get`.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, json=["gateway error"])
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.connect_telegram(bot_token="123:abc")
+        finally:
+            client.close()
+    assert excinfo.value.status_code == 502
+    assert "gateway error" in str(excinfo.value)
+
+
 def test_account_required_maps_from_401():
     """A 401 with reason=account_required raises the typed AccountRequiredError,
     carrying the sign-in message and raw login_options for callers to react."""
