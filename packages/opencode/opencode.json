@@ -1,0 +1,73 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "command": {
+    "caspian:email": {
+      "description": "Caspian email: ask reply-on-thread vs new email, then send",
+      "template": "Handle a Caspian email action.\n\nIf this session has inbound mail ([caspian:email]), ASK: reply on this thread OR send a separate new email?\n- Thread → caspian_reply_email with body\n- New email → caspian_send_email with to + real subject + body + confirmNewEmail=true\n\nIf no thread and user wants a new mail: caspian_send_email with to, real subject (never bare Re:), body.\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-email": {
+      "description": "Alias: Caspian email send/reply",
+      "template": "Handle a Caspian email action.\n\nIf this session has inbound mail ([caspian:email]), ASK: reply on this thread OR send a separate new email?\n- Thread → caspian_reply_email with body\n- New email → caspian_send_email with to + real subject + body + confirmNewEmail=true\n\nIf no thread and user wants a new mail: caspian_send_email with to, real subject (never bare Re:), body.\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:reply": {
+      "description": "Reply on the current Caspian email thread",
+      "template": "Reply on the current Caspian email thread using caspian_reply_email.\nPut the user's message below as the reply body. Do not start a new email.\n\nBody:\n$ARGUMENTS"
+    },
+    "caspian:inbox": {
+      "description": "List Caspian inbox (email + configured channels)",
+      "template": "Use the caspian-inbox skill (caspian:Inbox).\n\nCall tool caspian_inbox with list=true to list connections and recent conversations/messages across configured Caspian channels.\nParse optional args: channels (comma-separated), conversationLimit, messageLimit.\nPresent the tool output; do not invent messages.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-inbox": {
+      "description": "Alias: list Caspian inbox messages",
+      "template": "Use the caspian-inbox skill (caspian:Inbox).\n\nCall tool caspian_inbox with list=true to list connections and recent conversations/messages across configured Caspian channels.\nParse optional args: channels (comma-separated), conversationLimit, messageLimit.\nPresent the tool output; do not invent messages.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:toast": {
+      "description": "Dummy: test OpenCode toast UI",
+      "template": "Use the caspian-toast-test skill.\n\nCall tool caspian_test_toast now to show an OpenCode TUI toast (and system notification unless system=false).\nParse optional args: title, message, variant (info|success|warning|error), system.\nReport whether toast/system succeeded from the tool output.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-toast": {
+      "description": "Alias: test OpenCode toast UI",
+      "template": "Use the caspian-toast-test skill.\n\nCall tool caspian_test_toast now to show an OpenCode TUI toast (and system notification unless system=false).\nParse optional args: title, message, variant (info|success|warning|error), system.\nReport whether toast/system succeeded from the tool output.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:connect-email": {
+      "description": "Connect Caspian email and enable email in caspian.json",
+      "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_email\n3. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit reloads caspian.json\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-connect-email": {
+      "description": "Alias: connect Caspian email",
+      "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_email\n3. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit reloads caspian.json\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:connect-telegram": {
+      "description": "Connect Caspian Telegram and enable telegram in caspian.json",
+      "template": "Use the caspian-connect-telegram skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_telegram\n3. If missing token: instruct TELEGRAM_BOT_TOKEN in .env or ~/.config/opencode/caspian.env (never caspian.json), then retry\n4. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit includes telegram\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-connect-telegram": {
+      "description": "Alias: connect Caspian Telegram",
+      "template": "Use the caspian-connect-telegram skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_telegram\n3. If missing token: instruct TELEGRAM_BOT_TOKEN in .env or ~/.config/opencode/caspian.env (never caspian.json), then retry\n4. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit includes telegram\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:telegram": {
+      "description": "Send a Telegram DM via Caspian (@username)",
+      "template": "Use the caspian-telegram skill (caspian:Telegram).\n\nParse to (@username or chat id) and body from the arguments.\nCall caspian_send_telegram with to + body.\nAlways include this side note: Telegram bots cannot start a private chat — the recipient must message your bot first (Start / any message) before DMs work.\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-telegram": {
+      "description": "Alias: send Telegram DM via Caspian",
+      "template": "Use the caspian-telegram skill (caspian:Telegram).\n\nParse to (@username or chat id) and body from the arguments.\nCall caspian_send_telegram with to + body.\nAlways include this side note: Telegram bots cannot start a private chat — the recipient must message your bot first (Start / any message) before DMs work.\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:connect-discord": {
+      "description": "Connect Caspian Discord and enable discord in caspian.json",
+      "template": "Use the caspian-connect-discord skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_discord (preferInstall optional)\n3. If Authorize URL: tell user to open it and invite the bot; wait until status is active\n4. If RESTART REQUIRED: quit and relaunch OpenCode so admit includes discord\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-connect-discord": {
+      "description": "Alias: connect Caspian Discord",
+      "template": "Use the caspian-connect-discord skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_discord (preferInstall optional)\n3. If Authorize URL: tell user to open it and invite the bot; wait until status is active\n4. If RESTART REQUIRED: quit and relaunch OpenCode so admit includes discord\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian:discord": {
+      "description": "Post a Discord message via Caspian (channel id)",
+      "template": "Use the caspian-discord skill (caspian:Discord).\n\nParse to (Discord channel snowflake id) and body from the arguments.\nCall caspian_send_discord with to + body.\nAlways note: invite the bot; to = Copy Channel ID (Developer Mode).\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    },
+    "caspian-discord": {
+      "description": "Alias: post Discord message via Caspian",
+      "template": "Use the caspian-discord skill (caspian:Discord).\n\nParse to (Discord channel snowflake id) and body from the arguments.\nCall caspian_send_discord with to + body.\nAlways note: invite the bot; to = Copy Channel ID (Developer Mode).\nDo not claim success without a tool result.\n\nArguments:\n$ARGUMENTS"
+    }
+  }
+}

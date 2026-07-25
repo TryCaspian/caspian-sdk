@@ -1,0 +1,50 @@
+{
+  "name": "caspian-opencode-plugin",
+  "version": "0.1.0",
+  "description": "OpenCode plugin — bidirectional Caspian messaging (email-first), reliability-critical path",
+  "type": "module",
+  "license": "Apache-2.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TryCaspian/caspian-sdk.git",
+    "directory": "packages/opencode"
+  },
+  "homepage": "https://trycaspianai.com",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:fault": "bun test tests/fault.test.ts",
+    "test:capacity": "bun test tests/capacity.test.ts"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "caspian",
+    "email",
+    "notifications",
+    "ai-agent"
+  ],
+  "dependencies": {
+    "caspian-sdk": "file:../../sdks/typescript"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.2.1",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  }
+}
