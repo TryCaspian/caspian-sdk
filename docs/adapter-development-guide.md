@@ -121,9 +121,9 @@ import hmac
 import hashlib
 from comm_gateway.providers.base import WebhookVerificationError, lower_headers
 
-def parse_webhook(self, payload: bytes, headers: Mapping[str, str], credentials: None) -> list[InboundMessage]:
+def parse_webhook(self, payload: bytes, headers: Mapping[str, str], credentials: Mapping[str, str] | None = None) -> list[InboundMessage]:
     # 1. Normalize headers (header names are case-insensitive)
-    folded_headers = lower_headers(folded_headers)
+    folded_headers = lower_headers(headers)
     signature = folded_headers.get("x-platform-signature")
     
     # 2. Timing-safe verification
