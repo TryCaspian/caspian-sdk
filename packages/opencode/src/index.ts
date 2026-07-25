@@ -5,7 +5,7 @@
  * Outbound: /caspian:email → email; /caspian:telegram → Telegram DM
  */
 
-import { type Plugin, tool } from "@opencode-ai/plugin";
+import { type Hooks, type Plugin, tool } from "@opencode-ai/plugin";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +16,93 @@ import {
   showOpenCodeToast,
   showSystemNotification,
 } from "./notify.js";
-import { ensureCredentials } from "./onboard.js";
+import {
+  DASHBOARD_LOGIN_URL,
+  ensureCredentials,
+  getCredentialsStatus,
+  setupCredentials,
+} from "./onboard.js";
 import type { OpenCodePort } from "./ports.js";
+
+/** Tools available even before a full bridge starts (no API key yet). */
+function makeSetupCredentialsTool(opts: {
+  cwd: string;
+  projectName: string;
+}) {
+  return tool({
+    description:
+      "Set up Caspian credentials for OpenCode. Use mode=status first. " +
+      "If not configured: mode=sandbox (instant free key, no signup) OR " +
+      `mode=paste with apiKey from ${DASHBOARD_LOGIN_URL}. ` +
+      "Writes ~/.config/opencode/caspian.env with CASPIAN_BASE_URL + CASPIAN_API_KEY. " +
+      "Never store keys in caspian.json. After setup, restart OpenCode then connect email.",
+    args: {
+      mode: tool.schema
+        .enum(["status", "sandbox", "paste"])
+        .describe(
+          "status = check; sandbox = mint free key; paste = save dashboard API key",
+        ),
+      apiKey: tool.schema
+        .string()
+        .optional()
+        .describe(`Required for mode=paste — project API key from ${DASHBOARD_LOGIN_URL}`),
+      baseUrl: tool.schema
+        .string()
+        .optional()
+        .describe("Optional gateway URL (default https://api.trycaspianai.com)"),
+    },
+    async execute(args) {
+      try {
+        if (args.mode === "status") {
+          const status = getCredentialsStatus({
+            cwd: opts.cwd,
+            baseUrl: args.baseUrl,
+          });
+          return {
+            title: "Caspian credentials",
+            output: [
+              status.configured
+                ? `Configured: yes (source=${status.source}, key=${status.apiKeyMasked})`
+                : "Configured: no",
+              `Base URL: ${status.baseUrl}`,
+              `caspian.env: ${status.paths.opencodeEnv}`,
+              `project .env: ${status.paths.projectEnv}`,
+              `Dashboard (existing key): ${status.dashboardLoginUrl}`,
+              "",
+              ...status.nextSteps,
+            ].join("\n"),
+          };
+        }
+
+        const result = await setupCredentials({
+          mode: args.mode,
+          apiKey: args.apiKey,
+          baseUrl: args.baseUrl,
+          cwd: opts.cwd,
+          projectName: opts.projectName,
+        });
+        return {
+          title: "Caspian credentials saved",
+          output: [
+            result.message,
+            `Key: ${result.apiKeyMasked}`,
+            `Base URL: ${result.baseUrl}`,
+            `Wrote: ${result.paths.opencodeEnv}`,
+            `Wrote: ${result.paths.projectEnv}`,
+            "",
+            "RESTART REQUIRED: quit and relaunch OpenCode so the plugin loads these credentials.",
+            "Then run /caspian:connect-email (or caspian_connect_email).",
+          ].join("\n"),
+        };
+      } catch (err) {
+        return {
+          title: "Caspian credentials",
+          output: `Failed: ${String(err)}`,
+        };
+      }
+    },
+  });
+}
 
 function loadRawConfig(): Record<string, unknown> {
   const path = join(homedir(), ".config", "opencode", "caspian.json");
@@ -94,9 +179,17 @@ export const CaspianPlugin: Plugin = async (input) => {
       await log(
         client,
         "warn",
-        "No CASPIAN_API_KEY and autoOnboard is off — plugin idle. Run: caspian init && caspian connect email",
+        "No CASPIAN_API_KEY and autoOnboard is off — setup tools only. Use caspian_setup_credentials.",
       );
-      return {};
+      const idle: Hooks = {
+        tool: {
+          caspian_setup_credentials: makeSetupCredentialsTool({
+            cwd: directory,
+            projectName: config.displayName || "opencode",
+          }),
+        },
+      };
+      return idle;
     }
 
     if (onboarded.created) {
@@ -123,15 +216,24 @@ export const CaspianPlugin: Plugin = async (input) => {
     config.apiKey = onboarded.apiKey;
     config.baseUrl = onboarded.baseUrl;
   } catch (err) {
-    await log(client, "error", "Onboarding failed — plugin idle", {
+    await log(client, "error", "Onboarding failed — setup tools only", {
       err: String(err),
     });
     void showOpenCodeToast(client, {
       title: "Caspian onboard failed",
-      message: "Could not create sandbox credentials. Check network / gateway.",
+      message:
+        "Auto sandbox mint failed. Use /caspian:connect-email → sandbox or paste a key from the dashboard.",
       variant: "error",
     });
-    return {};
+    const idle: Hooks = {
+      tool: {
+        caspian_setup_credentials: makeSetupCredentialsTool({
+          cwd: directory,
+          projectName: config.displayName || "opencode",
+        }),
+      },
+    };
+    return idle;
   }
 
   const bridge = new CaspianOpenCodeBridge({
@@ -185,6 +287,10 @@ export const CaspianPlugin: Plugin = async (input) => {
 
   return {
     tool: {
+      caspian_setup_credentials: makeSetupCredentialsTool({
+        cwd: directory,
+        projectName: config.displayName || "opencode",
+      }),
       caspian_reply_email: tool({
         description:
           "Reply on the CURRENT Caspian conversation for this OpenCode session " +
@@ -714,8 +820,9 @@ export const CaspianPlugin: Plugin = async (input) => {
       caspian_connect_email: tool({
         description:
           "Connect Caspian email (or reuse existing) and enable email in " +
-          "~/.config/opencode/caspian.json channels. Tell the user to restart " +
-          "OpenCode if restartRequired is true so admit picks up channels.",
+          "~/.config/opencode/caspian.json channels. If credentials are missing, " +
+          "direct the user through caspian_setup_credentials (sandbox or paste from dashboard) first. " +
+          "Tell the user to restart OpenCode if restartRequired is true.",
         args: {
           displayName: tool.schema
             .string()
@@ -724,6 +831,22 @@ export const CaspianPlugin: Plugin = async (input) => {
         },
         async execute(args) {
           try {
+            const status = getCredentialsStatus({ cwd: directory });
+            if (!status.configured) {
+              return {
+                title: "Caspian connect email — need credentials",
+                output: [
+                  "No Caspian API key yet. Pick one:",
+                  "",
+                  `A) Instant sandbox (no signup): caspian_setup_credentials mode=sandbox`,
+                  `B) Existing account: sign in at ${DASHBOARD_LOGIN_URL}, copy a project API key,`,
+                  `   then caspian_setup_credentials mode=paste apiKey=…`,
+                  "",
+                  `Files that will be written: ${status.paths.opencodeEnv}`,
+                  "Then RESTART OpenCode and run /caspian:connect-email again.",
+                ].join("\n"),
+              };
+            }
             const result = await bridge.connectEmailChannel({
               displayName: args.displayName,
             });
@@ -747,7 +870,12 @@ export const CaspianPlugin: Plugin = async (input) => {
           } catch (err) {
             return {
               title: "Caspian connect email",
-              output: `Failed: ${String(err)}`,
+              output: [
+                `Failed: ${String(err)}`,
+                "",
+                "If this looks like an auth error, re-run caspian_setup_credentials",
+                `(sandbox or paste a key from ${DASHBOARD_LOGIN_URL}), restart OpenCode, retry.`,
+              ].join("\n"),
             };
           }
         },
@@ -876,45 +1004,7 @@ export const CaspianPlugin: Plugin = async (input) => {
   };
 };
 
+// OpenCode's plugin loader treats EVERY export as a plugin function.
+// Non-function exports cause: "Plugin export is not a function".
+// Helpers live in ./api (and individual modules) — do not re-export them here.
 export default CaspianPlugin;
-
-export { CaspianOpenCodeBridge } from "./bridge.js";
-export { resolveConfig } from "./config.js";
-export { ensureCredentials, mintSandboxKey, initViaCli } from "./onboard.js";
-export { handleInbound } from "./pipeline.js";
-export {
-  admits,
-  toEnvelope,
-  formatInboundPrompt,
-  formatEmailPrompt,
-} from "./email.js";
-export { sendEmail, formatOutboundText } from "./outbound.js";
-export {
-  sessionMapKey,
-  sessionTitle,
-  DEFAULT_THREADING,
-} from "./threading.js";
-export {
-  appendSessionFooter,
-  extractSessionId,
-  stripSessionFooter,
-} from "./session-footer.js";
-export {
-  formatInboxSnapshot,
-  listInbox,
-} from "./inbox.js";
-export {
-  DEFAULT_THINKING,
-  extractAssistantText,
-  thinkingEnabledForChannel,
-} from "./thinking.js";
-export {
-  TELEGRAM_BOT_DM_NOTE,
-  normalizeTelegramRecipient,
-  sendTelegram,
-} from "./telegram-send.js";
-export {
-  DISCORD_CHANNEL_NOTE,
-  normalizeDiscordRecipient,
-  sendDiscord,
-} from "./discord-send.js";

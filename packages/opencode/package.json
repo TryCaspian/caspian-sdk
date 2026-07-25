@@ -1,6 +1,6 @@
 {
   "name": "caspian-opencode-plugin",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "description": "OpenCode plugin — bidirectional Caspian messaging (email, Telegram, Discord) with a reliability-critical path",
   "type": "module",
   "license": "Apache-2.0",
@@ -37,6 +37,7 @@
     "RELIABILITY.md",
     "LICENSE"
   ],
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -44,6 +45,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js",
+      "default": "./dist/api.js"
     }
   },
   "bin": "./bin/setup.js",

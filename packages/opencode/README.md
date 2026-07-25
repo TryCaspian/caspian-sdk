@@ -20,22 +20,35 @@ bunx caspian-opencode-plugin setup --project
 # 2) Restart OpenCode
 ```
 
-That’s it. OpenCode pulls the package from npm on startup
+That’s it. OpenCode pulls the **plugin** (tools/hooks) from npm on startup
 ([plugin docs](https://opencode.ai/docs/plugins/)). You should see toasts:
 **Caspian ready** → **Caspian inbox ready** (with your agent email).
 
-| Scope | Config written | Commands copied to |
-|---|---|---|
-| `setup` (default) | `~/.config/opencode/opencode.json` | `~/.config/opencode/commands/` |
-| `setup --project` | `./opencode.json` | `./.opencode/commands/` |
+| Scope | Config | Commands | Skills |
+|---|---|---|---|
+| `setup` (default) | `~/.config/opencode/opencode.json` | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
+| `setup --project` | `./opencode.json` | `./.opencode/commands/` | `./.opencode/skills/` |
 
 What setup does:
 
-1. Adds `"plugin": ["caspian-opencode-plugin"]` to `opencode.json`
+1. Adds `"plugin": ["caspian-opencode-plugin"]` to `opencode.json` (tools/hooks)
 2. Merges `/caspian:*` command templates
-3. Copies command markdown (slash commands are **not** auto-loaded from npm packages)
+3. Copies **slash commands** and **skills** into OpenCode discovery paths
 
-Skills and tools ship inside the package and load automatically after restart.
+OpenCode only discovers skills/commands from those folders — not from inside the
+npm tarball ([skills docs](https://opencode.ai/docs/skills/)). Always run `setup`
+once after install or upgrade.
+
+If you use **`opencode.jsonc`** (common with oh-my-opencode / custom providers),
+setup registers the plugin there too. Tools only appear when
+`caspian-opencode-plugin` is in the config file OpenCode actually loads — skills
+alone are not enough.
+
+**Tools missing after setup?** Check OpenCode’s log for
+`failed to load plugin … caspian-opencode-plugin`. OpenCode requires the package
+entry to export **only** plugin functions (no helper constants). Use
+`caspian-opencode-plugin@>=0.1.4`. Then fully quit and relaunch OpenCode (or clear
+`~/.cache/opencode/packages/caspian-opencode-plugin*`).
 
 ### Manual install (no setup CLI)
 
@@ -60,7 +73,7 @@ After restart:
 |---|---|
 | `/caspian:inbox` | List connections + recent messages |
 | `/caspian:email` | Send or reply by email |
-| `/caspian:connect-email` | Ensure email is connected + admitted |
+| `/caspian:connect-email` | Credentials (sandbox **or** [dashboard](https://dashboard.trycaspianai.com/login) paste) → connect inbox → admit email |
 | `/caspian:connect-telegram` | Connect Telegram (`TELEGRAM_BOT_TOKEN` in `.env`) |
 | `/caspian:telegram @user hi` | Send a Telegram DM |
 | `/caspian:connect-discord` | Connect Discord (OAuth or bot token) |

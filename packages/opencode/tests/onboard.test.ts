@@ -3,10 +3,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DASHBOARD_LOGIN_URL,
   ensureCredentials,
+  getCredentialsStatus,
   initViaCli,
+  maskApiKey,
   mintSandboxKey,
   parseDotEnv,
+  setupCredentials,
   writeDotEnv,
 } from "../src/onboard.ts";
 
@@ -190,6 +194,69 @@ describe("ensureCredentials", () => {
         .CASPIAN_API_KEY,
     ).toBe("comm_minted");
 
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  });
+});
+
+describe("setupCredentials / status", () => {
+  test("status explains sandbox vs dashboard when missing", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "caspian-oc-st-"));
+    const configDir = mkdtempSync(join(tmpdir(), "caspian-oc-stc-"));
+    const status = getCredentialsStatus({
+      cwd: projectDir,
+      opencodeConfigDir: configDir,
+      env: {} as NodeJS.ProcessEnv,
+    });
+    expect(status.configured).toBe(false);
+    expect(status.dashboardLoginUrl).toBe(DASHBOARD_LOGIN_URL);
+    expect(status.nextSteps.some((l) => l.includes("sandbox"))).toBe(true);
+    expect(status.nextSteps.some((l) => l.includes("dashboard"))).toBe(true);
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("paste writes caspian.env with default base URL", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "caspian-oc-paste-"));
+    const configDir = mkdtempSync(join(tmpdir(), "caspian-oc-pastec-"));
+    const env = {} as NodeJS.ProcessEnv;
+    const result = await setupCredentials({
+      mode: "paste",
+      apiKey: "comm_from_dashboard_abcdefgh",
+      cwd: projectDir,
+      opencodeConfigDir: configDir,
+      env,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.restartRequired).toBe(true);
+    expect(result.apiKeyMasked).toBe(maskApiKey("comm_from_dashboard_abcdefgh"));
+    const oc = parseDotEnv(readFileSync(join(configDir, "caspian.env"), "utf-8"));
+    expect(oc.CASPIAN_API_KEY).toBe("comm_from_dashboard_abcdefgh");
+    expect(oc.CASPIAN_BASE_URL).toBe("https://api.trycaspianai.com");
+    expect(env.CASPIAN_API_KEY).toBe("comm_from_dashboard_abcdefgh");
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("sandbox mints and persists", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "caspian-oc-sb-"));
+    const configDir = mkdtempSync(join(tmpdir(), "caspian-oc-sbc-"));
+    const result = await setupCredentials({
+      mode: "sandbox",
+      cwd: projectDir,
+      opencodeConfigDir: configDir,
+      env: {} as NodeJS.ProcessEnv,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ project_id: "p", api_key: "comm_sandbox_tool" }),
+          { status: 200 },
+        ),
+    });
+    expect(result.source).toBe("sandbox-api");
+    expect(
+      parseDotEnv(readFileSync(join(configDir, "caspian.env"), "utf-8"))
+        .CASPIAN_API_KEY,
+    ).toBe("comm_sandbox_tool");
     rmSync(projectDir, { recursive: true, force: true });
     rmSync(configDir, { recursive: true, force: true });
   });

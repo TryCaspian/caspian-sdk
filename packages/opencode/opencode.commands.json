@@ -28,12 +28,12 @@
     "template": "Use the caspian-toast-test skill.\n\nCall tool caspian_test_toast now to show an OpenCode TUI toast (and system notification unless system=false).\nParse optional args: title, message, variant (info|success|warning|error), system.\nReport whether toast/system succeeded from the tool output.\n\nArguments:\n$ARGUMENTS"
   },
   "caspian:connect-email": {
-    "description": "Connect Caspian email and enable email in caspian.json",
-    "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_email\n3. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit reloads caspian.json\n\nArguments:\n$ARGUMENTS"
+    "description": "Connect Caspian email (sandbox key or dashboard paste) and enable email",
+    "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_setup_credentials mode=status\n2. If not configured: ask sandbox (mode=sandbox) OR paste API key from https://dashboard.trycaspianai.com/login (mode=paste apiKey=…)\n3. If RESTART REQUIRED after setup → quit/relaunch OpenCode, then rerun\n4. Call caspian_connections\n5. Call caspian_connect_email\n6. If RESTART REQUIRED for channels → quit/relaunch so admit includes email\n\nArguments:\n$ARGUMENTS"
   },
   "caspian-connect-email": {
-    "description": "Alias: connect Caspian email",
-    "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_connections\n2. Call caspian_connect_email\n3. If RESTART REQUIRED, tell the user to quit and relaunch OpenCode so admit reloads caspian.json\n\nArguments:\n$ARGUMENTS"
+    "description": "Alias: connect Caspian email (sandbox or dashboard key)",
+    "template": "Use the caspian-connect-email skill.\n\n1. Call caspian_setup_credentials mode=status\n2. If not configured: ask sandbox (mode=sandbox) OR paste API key from https://dashboard.trycaspianai.com/login (mode=paste apiKey=…)\n3. If RESTART REQUIRED after setup → quit/relaunch OpenCode, then rerun\n4. Call caspian_connections\n5. Call caspian_connect_email\n6. If RESTART REQUIRED for channels → quit/relaunch so admit includes email\n\nArguments:\n$ARGUMENTS"
   },
   "caspian:connect-telegram": {
     "description": "Connect Caspian Telegram and enable telegram in caspian.json",
