@@ -244,6 +244,18 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
         )
+    if name == "fake-teams":
+        from .fakes.fake_teams import FakeTeamsProvider
+
+        return FakeTeamsProvider()
+    if name == "teams":
+        from .teams import TeamsProvider
+
+        return TeamsProvider(
+            app_id=settings.teams_app_id,
+            app_secret=settings.teams_app_secret,
+            base_url=settings.teams_base_url,
+        )
     # Plugin providers: third-party or private channel packages can register
     # their own builders under the "caspian.providers" entry-point group, so a
     # new channel can be added without forking. Each builder has the signature
