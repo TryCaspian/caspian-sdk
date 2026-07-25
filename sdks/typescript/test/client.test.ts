@@ -1027,6 +1027,17 @@ describe("handleWebhook", () => {
     }
   });
 
+  it("dispatches nothing when a batch contains a malformed event", async () => {
+    const { client } = makeClient({});
+    const seen: unknown[] = [];
+    client.onMessage((m) => seen.push(m));
+    const body = JSON.stringify([messageEvent(1, "c", "hi"), "garbage"]);
+    await expect(
+      client.handleWebhook({ body, headers: await signedHeaders(body), secret: SECRET }),
+    ).rejects.toThrow(TypeError);
+    expect(seen).toEqual([]);
+  });
+
   it("accepts Request with explicit secret (Cloudflare env style)", async () => {
     const { client } = makeClient({});
     const seen: (string | null)[] = [];

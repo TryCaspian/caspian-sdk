@@ -1185,13 +1185,17 @@ export class CommClient {
 
     const payload = JSON.parse(new TextDecoder().decode(raw));
     const events = Array.isArray(payload) ? payload : [payload];
-    const seen = new Set<string | number>();
-    let processed = 0;
-    let duplicates = 0;
+    // Validate the whole payload before dispatching anything: a malformed
+    // batch must not leave some events processed and then throw.
     for (const event of events) {
       if (!isRecord(event)) {
         throw new TypeError("Webhook event must be an object");
       }
+    }
+    const seen = new Set<string | number>();
+    let processed = 0;
+    let duplicates = 0;
+    for (const event of events) {
       const eventId = (event.id ?? event.seq) as string | number | undefined;
       if (eventId !== undefined && eventId !== null) {
         if (seen.has(eventId)) {

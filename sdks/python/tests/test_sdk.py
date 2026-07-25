@@ -823,6 +823,19 @@ def test_handle_webhook_rejects_non_object_event():
         client.close()
 
 
+def test_handle_webhook_malformed_batch_dispatches_nothing():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    body = json.dumps([_message_event(1, "conv_1", "hi"), "garbage"]).encode()
+    try:
+        with pytest.raises(ValueError, match="must be an object"):
+            client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert seen == []
+
+
 def test_handle_webhook_ignores_unknown_event_types():
     client = _client(lambda request: httpx.Response(404))
     seen = []

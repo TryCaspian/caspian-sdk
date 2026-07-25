@@ -1101,11 +1101,13 @@ class CommClient:
             raise WebhookVerificationError()
         payload = json.loads(raw)
         events = payload if isinstance(payload, list) else [payload]
+        # Validate the whole payload before dispatching anything: a malformed
+        # batch must not leave some events processed and then raise.
+        if not all(isinstance(event, dict) for event in events):
+            raise ValueError("Webhook event must be an object")
         seen: set = set()
         processed = duplicates = 0
         for event in events:
-            if not isinstance(event, dict):
-                raise ValueError("Webhook event must be an object")
             event_id = event.get("id") if event.get("id") is not None else event.get("seq")
             if event_id is not None:
                 if event_id in seen:
