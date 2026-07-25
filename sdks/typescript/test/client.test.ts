@@ -9,6 +9,7 @@ import {
   Interaction,
   Message,
   Reaction,
+  WebhookVerificationError,
 } from "../src/index.js";
 
 /** Build a client whose fetch is driven by a route table. */
@@ -872,5 +873,81 @@ describe("CommClient", () => {
     expect(last).toBe(2);
     expect(count).toBe(2); // both dispatched despite throwing
     errorSpy.mockRestore();
+  });
+});
+
+describe("handleWebhook", () => {
+  const SECRET = "whsec_test";
+
+  async function signedHeaders(body: string, secret = SECRET, prefix = "") {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+    const hex = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+    return { "X-Caspian-Signature": prefix + hex };
+  }
+
+  it("verifies the signature and dispatches the message", async () => {
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => {
+      seen.push(m.text);
+    });
+    const body = JSON.stringify(messageEvent(1, "c", "hi"));
+    const result = await client.handleWebhook({
+      body,
+      headers: await signedHeaders(body),
+      secret: SECRET,
+    });
+    expect(result).toEqual({ processed: 1, duplicates: 0 });
+    expect(seen).toEqual(["hi"]);
+  });
+
+  it("rejects a bad or missing signature", async () => {
+    const { client } = makeClient({});
+    const seen: unknown[] = [];
+    client.onMessage((m) => seen.push(m));
+    const body = JSON.stringify(messageEvent(1, "c", "hi"));
+    await expect(
+      client.handleWebhook({ body, headers: await signedHeaders(body, "wrong"), secret: SECRET }),
+    ).rejects.toThrow(WebhookVerificationError);
+    await expect(
+      client.handleWebhook({ body, headers: {}, secret: SECRET }),
+    ).rejects.toThrow(WebhookVerificationError);
+    expect(seen).toEqual([]);
+  });
+
+  it("skips duplicate event ids", async () => {
+    const { client } = makeClient({});
+    const seen: unknown[] = [];
+    client.onMessage((m) => seen.push(m));
+    const body = JSON.stringify({ id: "evt_1", ...messageEvent(1, "c", "hi") });
+    const headers = await signedHeaders(body);
+    const first = await client.handleWebhook({ body, headers, secret: SECRET });
+    const second = await client.handleWebhook({ body, headers, secret: SECRET });
+    expect(first.processed).toBe(1);
+    expect(second).toEqual({ processed: 0, duplicates: 1 });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("accepts a batch of events and a sha256= prefixed signature", async () => {
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => {
+      seen.push(m.text);
+    });
+    const body = JSON.stringify([messageEvent(1, "c", "one"), messageEvent(2, "c", "two")]);
+    const result = await client.handleWebhook({
+      body,
+      headers: await signedHeaders(body, SECRET, "sha256="),
+      secret: SECRET,
+    });
+    expect(result).toEqual({ processed: 2, duplicates: 0 });
+    expect(seen).toEqual(["one", "two"]);
   });
 });

@@ -15,6 +15,9 @@ Usage:
     client.listen()
 """
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
@@ -116,6 +119,15 @@ class InsufficientCreditError(CommError):
                     amount_cents = body["amount_cents"]
                     break
         return self._client.top_up(amount_cents or 2000)
+
+
+class WebhookVerificationError(CommError):
+    """Raised when an inbound webhook delivery is missing a valid signature
+    (HTTP 401). The delivery did not come from the gateway, or the webhook
+    secret is wrong."""
+
+    def __init__(self, detail: str = "Invalid webhook signature") -> None:
+        super().__init__(401, detail)
 
 
 @dataclass
@@ -382,6 +394,8 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        
+        self._seen_webhook_ids: set = set()
 
     def close(self) -> None:
         self._http.close()
@@ -1044,6 +1058,52 @@ class CommClient:
             "",
         ]
         print("\n".join(lines), file=sys.stderr, flush=True)
+
+    def handle_webhook(
+        self,
+        body: bytes | str,
+        headers: dict[str, str],
+        secret: str | None = None,
+    ) -> dict:
+        """Handle one pushed event delivery from the gateway (serverless mode).
+
+        Use this instead of ``listen()`` where each invocation is request-scoped
+        (Lambda, Cloudflare Workers, Vercel functions). It verifies the
+        HMAC-SHA256 signature (``x-caspian-signature`` header: hex digest of the
+        raw body keyed with the webhook secret from ``set_webhook``), dispatches
+        the event(s) to the same handlers ``listen()`` uses, and returns — no
+        poll loop, no long-lived connection.
+
+        ``secret`` falls back to CASPIAN_WEBHOOK_SECRET (env or ./.env). Event
+        ids already seen by this client instance are skipped, so a redelivery
+        within the process is handled once. Accepts a single event object or a
+        list of events. Returns ``{"processed": n, "duplicates": m}``.
+        """
+        secret = _config(secret, "CASPIAN_WEBHOOK_SECRET")
+        if not secret:
+            raise WebhookVerificationError(
+                "No webhook secret: pass secret or set CASPIAN_WEBHOOK_SECRET"
+            )
+        raw = body.encode() if isinstance(body, str) else body
+        signature = {k.lower(): v for k, v in headers.items()}.get("x-caspian-signature", "")
+        if signature.startswith("sha256="):
+            signature = signature[len("sha256="):]
+        expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not signature or not hmac.compare_digest(signature, expected):
+            raise WebhookVerificationError()
+        payload = json.loads(raw)
+        events = payload if isinstance(payload, list) else [payload]
+        processed = duplicates = 0
+        for event in events:
+            event_id = event.get("id", event.get("seq")) if isinstance(event, dict) else None
+            if event_id is not None:
+                if event_id in self._seen_webhook_ids:
+                    duplicates += 1
+                    continue
+                self._seen_webhook_ids.add(event_id)
+            self._dispatch_event(event)
+            processed += 1
+        return {"processed": processed, "duplicates": duplicates}
 
     def dispatch_pending(self, after_seq: int = 0) -> int:
         """Process all currently available events once. Returns the last seen seq.

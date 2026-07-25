@@ -1,5 +1,7 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
+import hashlib
+import hmac
 import json
 import threading
 
@@ -10,6 +12,7 @@ from caspian_sdk import (
     CommClient,
     CommError,
     InsufficientCreditError,
+    WebhookVerificationError,
 )
 from caspian_sdk.client import _MessageScheduler
 
@@ -671,3 +674,71 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+WEBHOOK_SECRET = "whsec_test"
+
+
+def _signed_headers(body: bytes, secret: str = WEBHOOK_SECRET, prefix: str = "") -> dict:
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return {"X-Caspian-Signature": prefix + sig}
+
+
+def test_handle_webhook_verifies_and_dispatches():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    body = json.dumps(_message_event(1, "conv_1", "hi")).encode()
+    try:
+        result = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert result == {"processed": 1, "duplicates": 0}
+    assert [m.text for m in seen] == ["hi"]
+
+
+def test_handle_webhook_rejects_bad_or_missing_signature():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    body = json.dumps(_message_event(1, "conv_1", "hi")).encode()
+    try:
+        with pytest.raises(WebhookVerificationError):
+            client.handle_webhook(body, _signed_headers(body, secret="wrong"), WEBHOOK_SECRET)
+        with pytest.raises(WebhookVerificationError):
+            client.handle_webhook(body, {}, WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert seen == []
+
+
+def test_handle_webhook_skips_duplicate_event_ids():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    event = {"id": "evt_1", **_message_event(1, "conv_1", "hi")}
+    body = json.dumps(event).encode()
+    try:
+        first = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+        second = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert first["processed"] == 1
+    assert second == {"processed": 0, "duplicates": 1}
+    assert len(seen) == 1
+
+
+def test_handle_webhook_accepts_batch_and_prefixed_signature():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    events = [_message_event(1, "conv_1", "one"), _message_event(2, "conv_1", "two")]
+    body = json.dumps(events).encode()
+    try:
+        result = client.handle_webhook(
+            body, _signed_headers(body, prefix="sha256="), WEBHOOK_SECRET
+        )
+    finally:
+        client.close()
+    assert result == {"processed": 2, "duplicates": 0}
+    assert [m.text for m in seen] == ["one", "two"]

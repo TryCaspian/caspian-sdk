@@ -87,3 +87,16 @@ export class InsufficientCreditError extends CommError {
     return this.client.topUp(amountCents ?? 2000);
   }
 }
+
+/**
+ * Raised when an inbound webhook delivery is missing a valid signature (HTTP
+ * 401). The delivery did not come from the gateway, or the webhook secret is
+ * wrong.
+ */
+export class WebhookVerificationError extends CommError {
+  constructor(detail = "Invalid webhook signature") {
+    super(401, detail);
+    this.name = "WebhookVerificationError";
+    Object.setPrototypeOf(this, WebhookVerificationError.prototype);
+  }
+}

@@ -160,6 +160,20 @@ export interface Media {
 
 export type ConcurrencyStrategy = "queue" | "debounce" | "drop" | "parallel";
 
+export interface HandleWebhookOptions {
+  /** Raw request body — the exact bytes that were signed. */
+  body: string | Uint8Array;
+  /** Request headers (any casing; `x-caspian-signature` is the one read). */
+  headers: Record<string, string>;
+  /** Webhook secret from setWebhook; falls back to CASPIAN_WEBHOOK_SECRET (env or ./.env). */
+  secret?: string;
+}
+
+export interface WebhookResult {
+  processed: number;
+  duplicates: number;
+}
+
 export interface ListenOptions {
   /** Start from this event seq instead of "newest at startup". */
   fromSeq?: number;

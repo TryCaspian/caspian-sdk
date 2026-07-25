@@ -1,5 +1,10 @@
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import {
+  AccountRequiredError,
+  CommError,
+  InsufficientCreditError,
+  WebhookVerificationError,
+} from "./errors.js";
 import type {
   Agent,
   AutopayOptions,
@@ -12,10 +17,12 @@ import type {
   Customer,
   Domain,
   EventRecord,
+  HandleWebhookOptions,
   ListenOptions,
   LoginOptions,
   Media,
   SpendLimitsOptions,
+  WebhookResult,
   WhatsappOnboarding,
 } from "./types.js";
 
@@ -26,6 +33,26 @@ const logger = {
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
+}
+
+async function hmacSha256Hex(secret: string, body: Uint8Array): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, body);
+  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Constant-time compare; hex digests are fixed-length so the length check leaks nothing. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -303,6 +330,9 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  // ponytail: per-process dedup set, unbounded over a long-lived process;
+  // cross-invocation dedup belongs to the state-adapter layer, not here.
+  private readonly seenWebhookIds = new Set<string | number>();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -1097,6 +1127,56 @@ export class CommClient {
       "",
     ];
     process.stderr.write(lines.join("\n") + "\n");
+  }
+
+  /**
+   * Handle one pushed event delivery from the gateway (serverless mode).
+   *
+   * Use this instead of listen() where each invocation is request-scoped
+   * (Lambda, Cloudflare Workers, Vercel functions). It verifies the HMAC-SHA256
+   * signature (`x-caspian-signature` header: hex digest of the raw body keyed
+   * with the webhook secret from setWebhook), dispatches the event(s) to the
+   * same handlers listen() uses, and returns — no poll loop, no long-lived
+   * connection.
+   *
+   * Event ids already seen by this client instance are skipped, so a
+   * redelivery within the process is handled once. Accepts a single event
+   * object or a list of events.
+   */
+  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult> {
+    const secret = config(opts.secret, "CASPIAN_WEBHOOK_SECRET");
+    if (!secret) {
+      throw new WebhookVerificationError(
+        "No webhook secret: pass secret or set CASPIAN_WEBHOOK_SECRET",
+      );
+    }
+    const raw = typeof opts.body === "string" ? new TextEncoder().encode(opts.body) : opts.body;
+    let signature = "";
+    for (const [key, value] of Object.entries(opts.headers)) {
+      if (key.toLowerCase() === "x-caspian-signature") signature = value;
+    }
+    if (signature.startsWith("sha256=")) signature = signature.slice("sha256=".length);
+    const expected = await hmacSha256Hex(secret, raw);
+    if (!signature || !timingSafeEqual(signature, expected)) {
+      throw new WebhookVerificationError();
+    }
+    const payload = JSON.parse(new TextDecoder().decode(raw));
+    const events = Array.isArray(payload) ? payload : [payload];
+    let processed = 0;
+    let duplicates = 0;
+    for (const event of events) {
+      const eventId = isRecord(event) ? ((event.id ?? event.seq) as string | number | undefined) : undefined;
+      if (eventId !== undefined && eventId !== null) {
+        if (this.seenWebhookIds.has(eventId)) {
+          duplicates++;
+          continue;
+        }
+        this.seenWebhookIds.add(eventId);
+      }
+      await this.dispatchEvent(event as EventRecord);
+      processed++;
+    }
+    return { processed, duplicates };
   }
 
   /**
