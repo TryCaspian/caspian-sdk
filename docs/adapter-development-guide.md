@@ -37,7 +37,7 @@ declared on the protocol. This means your adapter can wrap any transport (HTTP
 API, WebSocket, serial port, …) as long as it exposes the same four core
 methods.
 
-```
+```text
 server/src/comm_gateway/
 ├── providers/
 │   ├── base.py              # ChannelProvider protocol + data classes
@@ -227,10 +227,11 @@ from .base import WebhookVerificationError, lower_headers
 
 def parse_webhook(self, payload, headers, credentials=None):
     secret = (credentials or {}).get("webhook_secret")
-    if secret:
-        received = lower_headers(headers).get("x-platform-signature") or ""
-        if not hmac.compare_digest(received, secret):
-            raise WebhookVerificationError("signature mismatch")
+    if not secret:
+        raise WebhookVerificationError("webhook secret is not configured")
+    received = lower_headers(headers).get("x-platform-signature") or ""
+    if not hmac.compare_digest(received, secret):
+        raise WebhookVerificationError("signature mismatch")
     ...
 ```
 
@@ -549,7 +550,7 @@ Use these as starting points depending on how your platform's transport works:
 
 Before opening your PR, verify:
 
-- [ ] Adapter class satisfies the `ChannelProvider` protocol (all four methods + three attributes).
+- [ ] Adapter class satisfies the `ChannelProvider` protocol (four attributes — `name`, `channel`, `capabilities`, `connect_credentials` — plus four methods).
 - [ ] `capabilities` frozenset declares only genuinely supported capabilities.
 - [ ] `parse_webhook` verifies the platform's webhook signature (or documents why not).
 - [ ] `parse_webhook` raises `WebhookVerificationError` on invalid payloads.

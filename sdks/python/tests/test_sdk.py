@@ -176,19 +176,18 @@ def test_insufficient_credit_top_up_uses_suggested_amount():
         )
 
     client = _client(handler)
-    with pytest.raises(InsufficientCreditError) as excinfo:
-        try:
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
             client.reply("m1", text="hi")
-        finally:
-            pass
-    err = excinfo.value
-    assert isinstance(err, InsufficientCreditError)
-    result = err.top_up()
-    client.close()
+        err = excinfo.value
+        assert isinstance(err, InsufficientCreditError)
+        result = err.top_up()
 
-    assert result == {"checkout_url": "https://pay/1"}
-    topup_call = next(c for c in calls if c[1] == "/v1/billing/topup")
-    assert topup_call[2] == {"amount_cents": 5000}
+        assert result == {"checkout_url": "https://pay/1"}
+        topup_call = next(c for c in calls if c[1] == "/v1/billing/topup")
+        assert topup_call[2] == {"amount_cents": 5000}
+    finally:
+        client.close()
 
 
 def test_monthly_cap_reached_maps_from_429():
