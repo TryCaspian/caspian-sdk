@@ -35,24 +35,24 @@ function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
 }
 
-async function hmacSha256Hex(secret: string, body: Uint8Array): Promise<string> {
+/** ponytail: verify HMAC-SHA256 using the platform crypto API. */
+async function verifyHmac(
+  secret: string,
+  body: Uint8Array,
+  signatureHex: string,
+): Promise<boolean> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"],
+    ["verify"],
   );
-  const sig = await crypto.subtle.sign("HMAC", key, body);
-  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** Constant-time compare; hex digests are fixed-length so the length check leaks nothing. */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+  const sigBytes = Uint8Array.from(
+    { length: signatureHex.length / 2 },
+    (_, i) => parseInt(signatureHex.slice(i * 2, i * 2 + 2), 16),
+  );
+  return crypto.subtle.verify("HMAC", key, sigBytes, body);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -330,9 +330,6 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
-  // ponytail: per-process dedup set, unbounded over a long-lived process;
-  // cross-invocation dedup belongs to the state-adapter layer, not here.
-  private readonly seenWebhookIds = new Set<string | number>();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -1133,45 +1130,69 @@ export class CommClient {
    * Handle one pushed event delivery from the gateway (serverless mode).
    *
    * Use this instead of listen() where each invocation is request-scoped
-   * (Lambda, Cloudflare Workers, Vercel functions). It verifies the HMAC-SHA256
-   * signature (`x-caspian-signature` header: hex digest of the raw body keyed
-   * with the webhook secret from setWebhook), dispatches the event(s) to the
-   * same handlers listen() uses, and returns — no poll loop, no long-lived
-   * connection.
+   * (Lambda, Cloudflare Workers, Vercel functions). Verifies the HMAC-SHA256
+   * signature, dispatches the event(s) to the same handlers listen() uses,
+   * and returns -- no poll loop, no long-lived connection.
    *
-   * Event ids already seen by this client instance are skipped, so a
-   * redelivery within the process is handled once. Accepts a single event
-   * object or a list of events.
+   * Duplicate event ids within the same invocation are processed once.
+   * Accepts a single event object or a list of events.
    */
-  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult> {
-    const secret = config(opts.secret, "CASPIAN_WEBHOOK_SECRET");
-    if (!secret) {
+  async handleWebhook(request: Request): Promise<WebhookResult>;
+  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult>;
+  async handleWebhook(
+    requestOrOpts: Request | HandleWebhookOptions,
+  ): Promise<WebhookResult> {
+    let raw: Uint8Array;
+    let headers: Record<string, string>;
+    let secret: string | undefined;
+
+    if (requestOrOpts instanceof Request) {
+      raw = new Uint8Array(await requestOrOpts.arrayBuffer());
+      headers = {};
+      requestOrOpts.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else {
+      raw =
+        typeof requestOrOpts.body === "string"
+          ? new TextEncoder().encode(requestOrOpts.body)
+          : requestOrOpts.body;
+      headers = requestOrOpts.headers;
+      secret = requestOrOpts.secret;
+    }
+
+    const resolved = config(secret, "CASPIAN_WEBHOOK_SECRET");
+    if (!resolved) {
       throw new WebhookVerificationError(
         "No webhook secret: pass secret or set CASPIAN_WEBHOOK_SECRET",
       );
     }
-    const raw = typeof opts.body === "string" ? new TextEncoder().encode(opts.body) : opts.body;
-    let signature = "";
-    for (const [key, value] of Object.entries(opts.headers)) {
-      if (key.toLowerCase() === "x-caspian-signature") signature = value;
+
+    let sigHeader = "";
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === "x-caspian-signature") sigHeader = value;
     }
-    if (signature.startsWith("sha256=")) signature = signature.slice("sha256=".length);
-    const expected = await hmacSha256Hex(secret, raw);
-    if (!signature || !timingSafeEqual(signature, expected)) {
+    if (sigHeader.startsWith("sha256=")) sigHeader = sigHeader.slice("sha256=".length);
+    if (!sigHeader || !(await verifyHmac(resolved, raw, sigHeader))) {
       throw new WebhookVerificationError();
     }
+
     const payload = JSON.parse(new TextDecoder().decode(raw));
     const events = Array.isArray(payload) ? payload : [payload];
+    const seen = new Set<string | number>();
     let processed = 0;
     let duplicates = 0;
     for (const event of events) {
-      const eventId = isRecord(event) ? ((event.id ?? event.seq) as string | number | undefined) : undefined;
+      const eventId =
+        isRecord(event)
+          ? ((event.id ?? event.seq) as string | number | undefined)
+          : undefined;
       if (eventId !== undefined && eventId !== null) {
-        if (this.seenWebhookIds.has(eventId)) {
+        if (seen.has(eventId)) {
           duplicates++;
           continue;
         }
-        this.seenWebhookIds.add(eventId);
+        seen.add(eventId);
       }
       await this.dispatchEvent(event as EventRecord);
       processed++;

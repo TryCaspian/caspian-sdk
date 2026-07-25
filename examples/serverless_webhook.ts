@@ -21,12 +21,8 @@ client.onMessage(async (message) => {
 });
 
 export async function POST(request: Request): Promise<Response> {
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
   try {
-    const result = await client.handleWebhook({ body: await request.text(), headers });
+    const result = await client.handleWebhook(request);
     return Response.json(result);
   } catch (err) {
     if (err instanceof WebhookVerificationError) {

@@ -697,6 +697,42 @@ def test_handle_webhook_verifies_and_dispatches():
     assert [m.text for m in seen] == ["hi"]
 
 
+def test_handle_webhook_dispatches_interaction_and_reaction():
+    from caspian_sdk import Interaction, Reaction
+
+    client = _client(lambda request: httpx.Response(404))
+    interactions: list[Interaction] = []
+    reactions: list[Reaction] = []
+    client.on_interaction(interactions.append)
+    client.on_reaction(reactions.append)
+    inter_event = {
+        "id": "e1",
+        "type": "interaction.received",
+        "data": {
+            "connection_id": "c", "customer_id": "cu", "agent_id": "a",
+            "conversation_id": "conv", "value": "yes",
+            "source_message": {"id": "m1"}, "sender": {"address": "u"},
+        },
+    }
+    reaction_event = {
+        "id": "e2",
+        "type": "reaction.received",
+        "data": {
+            "connection_id": "c", "customer_id": "cu", "agent_id": "a",
+            "emoji": "👍", "action": "added",
+            "source_message": {"id": "m1"}, "sender": {"address": "u"},
+        },
+    }
+    body = json.dumps([inter_event, reaction_event]).encode()
+    try:
+        result = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert result == {"processed": 2, "duplicates": 0}
+    assert len(interactions) == 1 and interactions[0].value == "yes"
+    assert len(reactions) == 1 and reactions[0].emoji == "👍"
+
+
 def test_handle_webhook_rejects_bad_or_missing_signature():
     client = _client(lambda request: httpx.Response(404))
     seen = []
@@ -712,20 +748,83 @@ def test_handle_webhook_rejects_bad_or_missing_signature():
     assert seen == []
 
 
-def test_handle_webhook_skips_duplicate_event_ids():
+def test_handle_webhook_dedup_is_invocation_local():
     client = _client(lambda request: httpx.Response(404))
     seen = []
     client.on_message(seen.append)
     event = {"id": "evt_1", **_message_event(1, "conv_1", "hi")}
     body = json.dumps(event).encode()
     try:
+        # same invocation: duplicate is skipped
         first = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+        # separate invocation: same id is processed again
         second = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
     finally:
         client.close()
-    assert first["processed"] == 1
-    assert second == {"processed": 0, "duplicates": 1}
-    assert len(seen) == 1
+    assert first == {"processed": 1, "duplicates": 0}
+    assert second == {"processed": 1, "duplicates": 0}
+    assert len(seen) == 2
+
+
+def test_handle_webhook_dedup_within_batch():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    events = [
+        {"id": "dup", **_message_event(1, "c", "first")},
+        {"id": "dup", **_message_event(2, "c", "second")},
+        _message_event(3, "c", "third"),
+    ]
+    body = json.dumps(events).encode()
+    try:
+        result = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert result == {"processed": 2, "duplicates": 1}
+    assert [m.text for m in seen] == ["first", "third"]
+
+
+def test_handle_webhook_rejects_invalid_json():
+    client = _client(lambda request: httpx.Response(404))
+    body = b"not json"
+    try:
+        with pytest.raises((json.JSONDecodeError, ValueError)):
+            client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+
+
+def test_handle_webhook_ignores_unknown_event_types():
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    event = {"id": "e1", "type": "unknown.type", "data": {}}
+    body = json.dumps(event).encode()
+    try:
+        result = client.handle_webhook(body, _signed_headers(body), WEBHOOK_SECRET)
+    finally:
+        client.close()
+    assert result == {"processed": 1, "duplicates": 0}
+    assert seen == []
+
+
+def test_handle_webhook_base64_encoded_body():
+    import base64 as b64
+
+    client = _client(lambda request: httpx.Response(404))
+    seen = []
+    client.on_message(seen.append)
+    plaintext = json.dumps(_message_event(1, "conv_1", "hi")).encode()
+    encoded = b64.b64encode(plaintext).decode()
+    try:
+        result = client.handle_webhook(
+            encoded, _signed_headers(plaintext), WEBHOOK_SECRET,
+            is_base64_encoded=True,
+        )
+    finally:
+        client.close()
+    assert result == {"processed": 1, "duplicates": 0}
+    assert [m.text for m in seen] == ["hi"]
 
 
 def test_handle_webhook_accepts_batch_and_prefixed_signature():

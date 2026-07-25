@@ -879,7 +879,7 @@ describe("CommClient", () => {
 describe("handleWebhook", () => {
   const SECRET = "whsec_test";
 
-  async function signedHeaders(body: string, secret = SECRET, prefix = "") {
+  async function signedHex(body: string, secret = SECRET) {
     const key = await crypto.subtle.importKey(
       "raw",
       new TextEncoder().encode(secret),
@@ -888,16 +888,17 @@ describe("handleWebhook", () => {
       ["sign"],
     );
     const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
-    const hex = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
-    return { "X-Caspian-Signature": prefix + hex };
+    return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function signedHeaders(body: string, secret = SECRET, prefix = "") {
+    return { "X-Caspian-Signature": prefix + (await signedHex(body, secret)) };
   }
 
   it("verifies the signature and dispatches the message", async () => {
     const { client } = makeClient({});
     const seen: (string | null)[] = [];
-    client.onMessage((m) => {
-      seen.push(m.text);
-    });
+    client.onMessage((m) => seen.push(m.text));
     const body = JSON.stringify(messageEvent(1, "c", "hi"));
     const result = await client.handleWebhook({
       body,
@@ -906,6 +907,60 @@ describe("handleWebhook", () => {
     });
     expect(result).toEqual({ processed: 1, duplicates: 0 });
     expect(seen).toEqual(["hi"]);
+  });
+
+  it("accepts a Request object directly", async () => {
+    process.env.CASPIAN_WEBHOOK_SECRET = SECRET;
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => seen.push(m.text));
+    const body = JSON.stringify(messageEvent(1, "c", "hi"));
+    const req = new Request("https://gw.test/webhook", {
+      method: "POST",
+      headers: await signedHeaders(body),
+      body,
+    });
+    const result = await client.handleWebhook(req);
+    expect(result).toEqual({ processed: 1, duplicates: 0 });
+    expect(seen).toEqual(["hi"]);
+    delete process.env.CASPIAN_WEBHOOK_SECRET;
+  });
+
+  it("dispatches interaction and reaction events", async () => {
+    const { client } = makeClient({});
+    const interactions: Interaction[] = [];
+    const reactions: Reaction[] = [];
+    client.onInteraction((i) => interactions.push(i));
+    client.onReaction((r) => reactions.push(r));
+    const events = [
+      {
+        id: "e1",
+        type: "interaction.received",
+        data: {
+          connection_id: "c", customer_id: "cu", agent_id: "a",
+          conversation_id: "conv", value: "yes",
+          source_message: { id: "m1" }, sender: { address: "u" },
+        },
+      },
+      {
+        id: "e2",
+        type: "reaction.received",
+        data: {
+          connection_id: "c", customer_id: "cu", agent_id: "a",
+          emoji: "👍", action: "added",
+          source_message: { id: "m1" }, sender: { address: "u" },
+        },
+      },
+    ];
+    const body = JSON.stringify(events);
+    const result = await client.handleWebhook({
+      body, headers: await signedHeaders(body), secret: SECRET,
+    });
+    expect(result).toEqual({ processed: 2, duplicates: 0 });
+    expect(interactions).toHaveLength(1);
+    expect(interactions[0].value).toBe("yes");
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0].emoji).toBe("👍");
   });
 
   it("rejects a bad or missing signature", async () => {
@@ -922,7 +977,7 @@ describe("handleWebhook", () => {
     expect(seen).toEqual([]);
   });
 
-  it("skips duplicate event ids", async () => {
+  it("dedup is invocation-local", async () => {
     const { client } = makeClient({});
     const seen: unknown[] = [];
     client.onMessage((m) => seen.push(m));
@@ -930,17 +985,59 @@ describe("handleWebhook", () => {
     const headers = await signedHeaders(body);
     const first = await client.handleWebhook({ body, headers, secret: SECRET });
     const second = await client.handleWebhook({ body, headers, secret: SECRET });
-    expect(first.processed).toBe(1);
-    expect(second).toEqual({ processed: 0, duplicates: 1 });
-    expect(seen).toHaveLength(1);
+    expect(first).toEqual({ processed: 1, duplicates: 0 });
+    expect(second).toEqual({ processed: 1, duplicates: 0 });
+    expect(seen).toHaveLength(2);
   });
 
-  it("accepts a batch of events and a sha256= prefixed signature", async () => {
+  it("deduplicates within a batch", async () => {
     const { client } = makeClient({});
     const seen: (string | null)[] = [];
-    client.onMessage((m) => {
-      seen.push(m.text);
+    client.onMessage((m) => seen.push(m.text));
+    const events = [
+      { id: "dup", ...messageEvent(1, "c", "first") },
+      { id: "dup", ...messageEvent(2, "c", "second") },
+      messageEvent(3, "c", "third"),
+    ];
+    const body = JSON.stringify(events);
+    const result = await client.handleWebhook({
+      body, headers: await signedHeaders(body), secret: SECRET,
     });
+    expect(result).toEqual({ processed: 2, duplicates: 1 });
+    expect(seen).toEqual(["first", "third"]);
+  });
+
+  it("rejects invalid JSON", async () => {
+    const { client } = makeClient({});
+    const body = "not json";
+    await expect(
+      client.handleWebhook({ body, headers: await signedHeaders(body), secret: SECRET }),
+    ).rejects.toThrow(SyntaxError);
+  });
+
+  it("accepts Uint8Array body", async () => {
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => seen.push(m.text));
+    const text = JSON.stringify(messageEvent(1, "c", "hi"));
+    const body = new TextEncoder().encode(text);
+    const key = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(SECRET),
+      { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, body);
+    const hex = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+    const result = await client.handleWebhook({
+      body, headers: { "X-Caspian-Signature": hex }, secret: SECRET,
+    });
+    expect(result).toEqual({ processed: 1, duplicates: 0 });
+    expect(seen).toEqual(["hi"]);
+  });
+
+  it("accepts a batch with sha256= prefix", async () => {
+    const { client } = makeClient({});
+    const seen: (string | null)[] = [];
+    client.onMessage((m) => seen.push(m.text));
     const body = JSON.stringify([messageEvent(1, "c", "one"), messageEvent(2, "c", "two")]);
     const result = await client.handleWebhook({
       body,

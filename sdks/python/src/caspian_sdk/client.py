@@ -15,6 +15,7 @@ Usage:
     client.listen()
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -394,8 +395,6 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
-        
-        self._seen_webhook_ids: set = set()
 
     def close(self) -> None:
         self._http.close()
@@ -1064,6 +1063,8 @@ class CommClient:
         body: bytes | str,
         headers: dict[str, str],
         secret: str | None = None,
+        *,
+        is_base64_encoded: bool = False,
     ) -> dict:
         """Handle one pushed event delivery from the gateway (serverless mode).
 
@@ -1071,13 +1072,13 @@ class CommClient:
         (Lambda, Cloudflare Workers, Vercel functions). It verifies the
         HMAC-SHA256 signature (``x-caspian-signature`` header: hex digest of the
         raw body keyed with the webhook secret from ``set_webhook``), dispatches
-        the event(s) to the same handlers ``listen()`` uses, and returns — no
+        the event(s) to the same handlers ``listen()`` uses, and returns -- no
         poll loop, no long-lived connection.
 
-        ``secret`` falls back to CASPIAN_WEBHOOK_SECRET (env or ./.env). Event
-        ids already seen by this client instance are skipped, so a redelivery
-        within the process is handled once. Accepts a single event object or a
-        list of events. Returns ``{"processed": n, "duplicates": m}``.
+        ``secret`` falls back to CASPIAN_WEBHOOK_SECRET (env or ./.env).
+        Duplicate event ids within the same invocation are processed once.
+        Accepts a single event object or a list of events.
+        Returns ``{"processed": n, "duplicates": m}``.
         """
         secret = _config(secret, "CASPIAN_WEBHOOK_SECRET")
         if not secret:
@@ -1085,22 +1086,29 @@ class CommClient:
                 "No webhook secret: pass secret or set CASPIAN_WEBHOOK_SECRET"
             )
         raw = body.encode() if isinstance(body, str) else body
-        signature = {k.lower(): v for k, v in headers.items()}.get("x-caspian-signature", "")
-        if signature.startswith("sha256="):
-            signature = signature[len("sha256="):]
+        if is_base64_encoded:
+            raw = base64.b64decode(raw)
+        sig_header = {
+            k.lower(): v for k, v in headers.items()
+        }.get("x-caspian-signature", "")
+        if sig_header.startswith("sha256="):
+            sig_header = sig_header[len("sha256="):]
         expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-        if not signature or not hmac.compare_digest(signature, expected):
+        if not sig_header or not hmac.compare_digest(sig_header, expected):
             raise WebhookVerificationError()
         payload = json.loads(raw)
         events = payload if isinstance(payload, list) else [payload]
+        seen: set = set()
         processed = duplicates = 0
         for event in events:
-            event_id = event.get("id", event.get("seq")) if isinstance(event, dict) else None
+            event_id = (
+                event.get("id", event.get("seq")) if isinstance(event, dict) else None
+            )
             if event_id is not None:
-                if event_id in self._seen_webhook_ids:
+                if event_id in seen:
                     duplicates += 1
                     continue
-                self._seen_webhook_ids.add(event_id)
+                seen.add(event_id)
             self._dispatch_event(event)
             processed += 1
         return {"processed": processed, "duplicates": duplicates}

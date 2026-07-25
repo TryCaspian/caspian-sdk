@@ -1,6 +1,6 @@
 """Serverless webhook mode: one pushed event per invocation (AWS Lambda shown).
 
-No poll loop — point the gateway at this function's URL once:
+No poll loop -- point the gateway at this function's URL once:
 
     client.set_webhook("https://<your-function-url>", secret="<random secret>")
 
@@ -24,9 +24,12 @@ def handle(message):
 
 
 def lambda_handler(event, context):
-    # API Gateway / Function URL proxy event: body is the raw signed payload.
     try:
-        result = client.handle_webhook(event["body"] or "", event["headers"])
+        result = client.handle_webhook(
+            event["body"] or "",
+            event["headers"],
+            is_base64_encoded=event.get("isBase64Encoded", False),
+        )
     except WebhookVerificationError as exc:
         return {"statusCode": exc.status_code, "body": exc.detail}
     return {"statusCode": 200, "body": json.dumps(result)}
