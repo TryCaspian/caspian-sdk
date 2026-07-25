@@ -1,0 +1,32 @@
+[project]
+name = "comm-gateway"
+version = "0.1.0"
+description = "Provider-neutral communication gateway for AI agents"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.12"
+dependencies = [
+  "boto3>=1.34,<2",
+  "cryptography>=42,<47",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "posthog>=3.7,<7",
+  "psycopg2-binary>=2.9.12",
+  "pydantic-settings>=2.10,<3",
+  "sqlalchemy>=2.0.40,<3",
+  "uvicorn[standard]>=0.35,<1",
+  "websockets>=13,<17",
+  # channel-specific runtime deps: Telnyx SMS signature verify (PyNaCl),
+  # Telegram user-account MTProto (telethon), GSM modem serial (pyserial)
+  "PyNaCl>=1.5,<2",
+  "telethon>=1.36,<2",
+  "pyserial>=3.5,<4",
+]
+
+[project.scripts]
+comm-gateway = "comm_gateway.main:run"
+comm-worker = "comm_gateway.worker:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
