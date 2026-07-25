@@ -58,6 +58,8 @@ npm run typecheck    # tsc --noEmit
 
 ## Adding a new channel adapter
 
+> **📖 Full walkthrough:** see the [Adapter Development Guide](./docs/adapter-development-guide.md) for detailed patterns, code examples, and a pre-PR checklist.
+
 1. Implement the provider interface in a new module under `server/src/comm_gateway/providers/`.
 2. Register it in `registry.py` (or ship it as your own package via the `caspian.providers` entry-point group — no fork needed).
 3. Add an in-memory fake that consumes the platform's real inbound payload shape, so integrations can be tested offline.
