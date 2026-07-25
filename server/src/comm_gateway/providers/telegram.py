@@ -16,6 +16,7 @@ their bots never overlap.
 
 import hmac
 import json
+import re
 from collections.abc import Mapping
 
 import httpx
@@ -42,6 +43,7 @@ ALLOWED_UPDATES = ["message", "edited_message", "callback_query", "message_react
 # Callback data we render on our buttons is prefixed so we can tell our own taps
 # apart (see blocks.to_telegram). Decoding strips it back to the agent's value.
 CALLBACK_PREFIX = "caspian:"
+COMMAND_RE = re.compile(r"^/([A-Za-z0-9_]+)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$", re.DOTALL)
 
 
 def bot_id_from_token(token: str) -> str:
@@ -146,17 +148,31 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
     chat = message["chat"]
     chat_id = chat["id"]
     sender = message.get("from") or {}
+    provider_message_id = f"{chat_id}:{message['message_id']}"
+    common = {
+        "external_event_id": f"{bot_id}:{data['update_id']}",
+        "provider_inbox_id": bot_id,
+        "provider_message_id": provider_message_id,
+        "provider_thread_id": str(chat_id),
+        "sender_address": sender.get("username") or str(sender.get("id", "")) or None,
+        "sender_name": _sender_name(sender),
+        "chat_type": chat.get("type"),
+    }
+    match = COMMAND_RE.match(text.strip()) if isinstance(text, str) else None
+    if match and not edited:
+        return [
+            InboundMessage(
+                kind="command",
+                command=match.group(1),
+                text=match.group(2) or "",
+                **common,
+            )
+        ]
     return [
         InboundMessage(
-            external_event_id=f"{bot_id}:{data['update_id']}",
-            provider_inbox_id=bot_id,
-            provider_message_id=f"{chat_id}:{message['message_id']}",
-            provider_thread_id=str(chat_id),
-            sender_address=sender.get("username") or str(sender.get("id", "")) or None,
-            sender_name=_sender_name(sender),
+            **common,
             text=text,
             media=media,
-            chat_type=chat.get("type"),
             edited=edited,
         )
     ]
@@ -179,6 +195,7 @@ class TelegramProvider:
             Capability.INTERACTIONS,
             Capability.MEDIA,
             Capability.REACTIONS,
+            Capability.COMMANDS,
         }
     )
 

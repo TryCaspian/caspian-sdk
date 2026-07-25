@@ -18,7 +18,7 @@ from ..base import (
 )
 from ..discord import DiscordProvider, parse_gateway_message
 from ..meta_messaging import InstagramProvider, parse_messaging_webhook
-from ..slack import SlackProvider, parse_event
+from ..slack import SlackProvider, parse_event, parse_slash_command
 
 
 class FakeDiscordProvider:
@@ -199,6 +199,14 @@ class FakeSlackProvider:
         self.reactions.append({"channel": ch, "ts": ts, "emoji": emoji})
 
     def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+        content_type = {key.lower(): value for key, value in headers.items()}.get(
+            "content-type", ""
+        )
+        if "application/x-www-form-urlencoded" in content_type:
+            from urllib.parse import parse_qs
+
+            data = {key: values[-1] for key, values in parse_qs(payload.decode()).items()}
+            return parse_slash_command(data)
         try:
             data = json.loads(payload)
         except ValueError as exc:

@@ -54,6 +54,41 @@ def test_requests_carry_bearer_auth():
     assert seen["path"] == "/v1/customers"
 
 
+def test_on_command_dispatches_and_replies_to_conversation():
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        replies.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_command(seen.append)
+    try:
+        client._dispatch_event(
+            {
+                "type": "command.received",
+                "data": {
+                    "connection_id": "conn_1",
+                    "customer_id": "cus_1",
+                    "agent_id": "agt_1",
+                    "conversation_id": "conv_1",
+                    "command": "help",
+                    "text": "details",
+                    "sender": {"address": "U1"},
+                },
+            }
+        )
+        result = seen[0].reply("Working on it")
+    finally:
+        client.close()
+
+    assert seen[0].command == "help"
+    assert seen[0].text == "details"
+    assert result == {"ok": True}
+    assert replies == [{"text": "Working on it", "html": None, "blocks": None, "media": None}]
+
+
 def test_error_maps_to_comm_error_with_detail():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(422, json={"detail": "bot_token is required"})

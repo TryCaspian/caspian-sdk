@@ -1,9 +1,29 @@
 from comm_gateway.providers.fakes.fake_telegram import FakeTelegramProvider
+from comm_gateway.providers.telegram import parse_update
 from comm_gateway.providers.telegram import SECRET_HEADER
 
 
 def _telegram_provider(app) -> FakeTelegramProvider:
     return app.state.providers["fake-telegram"]
+
+
+def test_telegram_bot_command_is_normalized_separately_from_messages():
+    event = parse_update(
+        {
+            "update_id": 42,
+            "message": {
+                "message_id": 7,
+                "chat": {"id": 123, "type": "private"},
+                "from": {"id": 9, "username": "customer"},
+                "text": "/help details",
+            },
+        },
+        "999",
+    )[0]
+
+    assert event.kind == "command"
+    assert event.command == "help"
+    assert event.text == "details"
 
 
 def _provision_connection(client, run_jobs) -> dict:

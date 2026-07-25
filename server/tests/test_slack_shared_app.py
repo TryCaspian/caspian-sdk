@@ -10,7 +10,7 @@ from comm_gateway.config import Settings
 from comm_gateway.jobs import run_pending_jobs
 from comm_gateway.main import create_app
 from comm_gateway.providers.fakes.fake_social import FakeSlackProvider
-from comm_gateway.providers.slack import SlackProvider
+from comm_gateway.providers.slack import SlackProvider, parse_slash_command
 from fastapi.testclient import TestClient
 
 API_KEY = "comm_slack_shared"
@@ -26,6 +26,26 @@ def _app():
 
 def _run(app):
     run_pending_jobs(app.state.session_factory, app.state.providers)
+
+
+def test_slash_command_normalizes_app_and_workspace_routing():
+    event = parse_slash_command(
+        {
+            "api_app_id": "A123",
+            "team_id": "T123",
+            "channel_id": "C123",
+            "user_id": "U123",
+            "user_name": "customer",
+            "command": "/triage",
+            "text": "urgent",
+            "trigger_id": "trigger-1",
+        }
+    )[0]
+
+    assert event.kind == "command"
+    assert event.command == "triage"
+    assert event.text == "urgent"
+    assert event.provider_inbox_id == "A123:T123"
 
 
 def test_webhook_rejects_stale_timestamp():

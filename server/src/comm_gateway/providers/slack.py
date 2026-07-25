@@ -12,6 +12,7 @@ import hmac
 import json
 import time
 from collections.abc import Mapping
+from urllib.parse import parse_qs
 
 import httpx
 
@@ -126,6 +127,31 @@ def parse_event(data: dict) -> list[InboundMessage]:
     ]
 
 
+def parse_slash_command(data: Mapping[str, str]) -> list[InboundMessage]:
+    """Normalize a Slack form-encoded slash command."""
+    command = (data.get("command") or "").strip()
+    channel = data.get("channel_id") or ""
+    team = data.get("team_id") or ""
+    if not (command and channel and team):
+        return []
+    app_id = data.get("api_app_id") or ""
+    trigger = data.get("trigger_id") or data.get("command_id") or f"{team}:{channel}:{command}"
+    return [
+        InboundMessage(
+            kind="command",
+            external_event_id=trigger,
+            provider_inbox_id=f"{app_id}:{team}",
+            provider_message_id=trigger,
+            provider_thread_id=channel,
+            sender_address=data.get("user_id") or None,
+            sender_name=data.get("user_name") or None,
+            text=data.get("text") or "",
+            chat_type="slash_command",
+            command=command.lstrip("/"),
+        )
+    ]
+
+
 def parse_block_actions(payload: dict) -> list[InboundMessage]:
     """Normalize a Slack `block_actions` interactivity payload into an interaction.
 
@@ -175,6 +201,7 @@ class SlackProvider:
             Capability.SEND,
             Capability.INTERACTIONS,
             Capability.REACTIONS,
+            Capability.COMMANDS,
             Capability.MEDIA,
         }
     )
@@ -454,14 +481,20 @@ class SlackProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
+        content_type = lower_headers(headers).get("content-type", "")
         try:
-            data = json.loads(payload)
-        except ValueError as exc:
-            raise WebhookVerificationError("invalid JSON payload") from exc
+            if "application/x-www-form-urlencoded" in content_type:
+                data = {key: values[-1] for key, values in parse_qs(payload.decode()).items()}
+            else:
+                data = json.loads(payload)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise WebhookVerificationError("invalid Slack payload") from exc
         self._verify_signature(payload, headers, data, credentials)
         if data.get("type") == "url_verification":
             # handled in the route (returns the challenge); no messages here
             return []
+        if "application/x-www-form-urlencoded" in content_type:
+            return parse_slash_command(data)
         return parse_event(data)
 
     @staticmethod

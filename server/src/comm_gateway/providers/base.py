@@ -45,6 +45,7 @@ class Capability:
     SEE_BOTS = "see_bots"  # receive messages authored by other bots
     SECRET_CHATS = "secret_chats"  # end-to-end secret chats
     OTP = "otp"  # receives 3rd-party codes (real-SIM reliable, CPaaS best-effort); gateway extracts
+    COMMANDS = "commands"  # slash/bot commands
     INTERACTIONS = "interactions"  # button taps / message components round-trip back to the agent
     MEDIA = "media"  # send and/or receive file attachments (images, documents, ...)
     REACTIONS = "reactions"  # add emoji reactions and receive reaction events
@@ -128,6 +129,7 @@ class InboundMessage:
     # For kind="reaction": {"emoji": ..., "source_message_id": ...,
     # "action": "added" | "removed"}.
     reaction: dict | None = None
+    command: str | None = None  # normalized slash/bot command name
     # File attachments received with a message (kind="message"). Each item is a
     # dict: {"url"|"data", "mime_type", "name", "size"}.
     media: list[dict] = field(default_factory=list)

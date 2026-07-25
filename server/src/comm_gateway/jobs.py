@@ -325,6 +325,42 @@ def _process_reaction(session: Session, connection: Connection, data: dict) -> N
     )
 
 
+def _process_command(session: Session, connection: Connection, data: dict) -> None:
+    """Emit a command event without storing the command as a normal message."""
+    conversation = session.execute(
+        select(Conversation).where(
+            Conversation.connection_id == connection.id,
+            Conversation.provider_thread_id == data["provider_thread_id"],
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
+        conversation = Conversation(
+            id=new_id("conv"),
+            project_id=connection.project_id,
+            connection_id=connection.id,
+            subject=None,
+            provider_thread_id=data["provider_thread_id"],
+        )
+        session.add(conversation)
+        session.flush()
+    source = _source_message(session, connection, data.get("provider_message_id"))
+    emit_event(
+        session,
+        connection.project_id,
+        "command.received",
+        {
+            "customer_id": connection.customer_id,
+            "agent_id": connection.agent_id,
+            "connection_id": connection.id,
+            "conversation_id": conversation.id,
+            "command": data.get("command") or "",
+            "text": data.get("text") or "",
+            "source_message": message_out(source) if source else None,
+            "sender": {"address": data.get("sender_address"), "name": data.get("sender_name")},
+        },
+    )
+
+
 def _process_provider_event(session: Session, providers: dict, payload: dict) -> None:
     provider_event = session.get(ProviderEvent, payload["provider_event_id"])
     if provider_event is None or provider_event.processed:
@@ -355,6 +391,10 @@ def _process_provider_event(session: Session, providers: dict, payload: dict) ->
         return
     if kind == "reaction":
         _process_reaction(session, connection, data)
+        provider_event.processed = True
+        return
+    if kind == "command":
+        _process_command(session, connection, data)
         provider_event.processed = True
         return
 
