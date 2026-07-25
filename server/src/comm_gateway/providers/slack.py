@@ -176,6 +176,7 @@ class SlackProvider:
             Capability.INTERACTIONS,
             Capability.REACTIONS,
             Capability.MEDIA,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
@@ -420,6 +421,24 @@ class SlackProvider:
         # already_reacted is a success for our purposes (the reaction is present).
         if not data.get("ok") and data.get("error") != "already_reacted":
             raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/chat.update",
+            json={"channel": channel, "ts": ts, "text": text},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Slack chat.update failed: {data.get('error')}")
 
     def _verify_signature(
         self, payload: bytes, headers: Mapping[str, str], data: dict, credentials

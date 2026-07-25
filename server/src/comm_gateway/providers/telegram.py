@@ -179,6 +179,7 @@ class TelegramProvider:
             Capability.INTERACTIONS,
             Capability.MEDIA,
             Capability.REACTIONS,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
@@ -227,6 +228,17 @@ class TelegramProvider:
         token = self._token(credentials)
         self._call(token, "sendChatAction",
                    {"chat_id": provider_thread_id, "action": "typing"})
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        token = self._token(credentials)
+        chat_id, message_id = split_composite_id(provider_message_id)
+        self._call(token, "editMessageText",
+                   {"chat_id": chat_id, "message_id": int(message_id), "text": text})
 
     def react(
         self, provider_message_id: str, emoji: str,
