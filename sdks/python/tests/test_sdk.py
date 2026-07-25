@@ -813,12 +813,12 @@ def test_handle_webhook_rejects_invalid_json():
 
 def test_handle_webhook_rejects_non_object_event():
     client = _client(lambda request: httpx.Response(404))
-    for payload in [b"null", b'"string"', b"42"]:
-        try:
+    try:
+        for payload in [b"null", b'"string"', b"42"]:
             with pytest.raises(ValueError, match="must be an object"):
                 client.handle_webhook(payload, _signed_headers(payload), WEBHOOK_SECRET)
-        finally:
-            client.close()
+    finally:
+        client.close()
 
 
 def test_handle_webhook_ignores_unknown_event_types():
