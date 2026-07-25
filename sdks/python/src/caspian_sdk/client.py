@@ -1106,7 +1106,7 @@ class CommClient:
         for event in events:
             if not isinstance(event, dict):
                 raise ValueError("Webhook event must be an object")
-            event_id = event.get("id", event.get("seq"))
+            event_id = event.get("id") if event.get("id") is not None else event.get("seq")
             if event_id is not None:
                 if event_id in seen:
                     duplicates += 1

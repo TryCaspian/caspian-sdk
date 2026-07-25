@@ -27,9 +27,11 @@ def lambda_handler(event, context):
     try:
         result = client.handle_webhook(
             event["body"] or "",
-            event["headers"],
+            event.get("headers") or {},
             is_base64_encoded=event.get("isBase64Encoded", False),
         )
     except WebhookVerificationError as exc:
         return {"statusCode": exc.status_code, "body": exc.detail}
+    except (ValueError, KeyError) as exc:
+        return {"statusCode": 400, "body": str(exc)}
     return {"statusCode": 200, "body": json.dumps(result)}

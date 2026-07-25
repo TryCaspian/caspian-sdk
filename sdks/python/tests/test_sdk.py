@@ -745,6 +745,8 @@ def test_handle_webhook_rejects_bad_or_missing_signature():
             client.handle_webhook(body, {}, WEBHOOK_SECRET)
         with pytest.raises(WebhookVerificationError):
             client.handle_webhook(body, {"X-Caspian-Signature": "zz" * 32}, WEBHOOK_SECRET)
+        with pytest.raises(WebhookVerificationError):
+            client.handle_webhook(body, {"X-Caspian-Signature": "\xff" * 32}, WEBHOOK_SECRET)
     finally:
         client.close()
     assert seen == []
