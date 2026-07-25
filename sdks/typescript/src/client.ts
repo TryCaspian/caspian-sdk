@@ -355,6 +355,9 @@ export class StreamResponse {
       this.replyAttempted = true;
       const result = await this.client.reply(this.messageId, this.buffer);
       this.outboundId = (result as Record<string, unknown>).id as string ?? null;
+      if (this.outboundId === null) {
+        throw new Error("reply() succeeded but returned no message id; cannot continue streaming edits");
+      }
       this.lastEdit = now;
       this.lastSentText = this.buffer;
     } else if (now - this.lastEdit >= this.throttleMs && this.buffer !== this.lastSentText) {

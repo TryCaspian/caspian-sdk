@@ -433,6 +433,10 @@ class StreamResponse:
             self._reply_attempted = True
             result = self._client.reply(self._message_id, text=self._buffer)
             self._outbound_id = result.get("id")
+            if self._outbound_id is None:
+                raise RuntimeError(
+                    "reply() succeeded but returned no message id; cannot continue streaming edits"
+                )
             self._last_edit = now
             self._last_sent_text = self._buffer
         elif now - self._last_edit >= self._throttle:

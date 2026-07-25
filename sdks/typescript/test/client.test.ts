@@ -981,7 +981,7 @@ describe("CommClient", () => {
     expect(edits).toHaveLength(0);
   });
 
-  it("reply returning no id does not cause duplicate sends on later appends", async () => {
+  it("reply returning no id throws instead of silently dropping later appends", async () => {
     const bodies: any[] = [];
     const { client } = makeClient({
       "POST /v1/messages/m1/reply": (req) =>
@@ -989,10 +989,7 @@ describe("CommClient", () => {
     });
     const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
     const s = msg.stream(0);
-    await s.append("a");
-    await s.append("b");
-    await s.append("c");
-    await s.close();
+    await expect(s.append("a")).rejects.toThrow("no message id");
     const replies = bodies.filter((b) => b.path === "/reply");
     expect(replies).toHaveLength(1);
   });

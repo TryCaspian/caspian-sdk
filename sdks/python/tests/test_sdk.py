@@ -836,7 +836,7 @@ def test_stream_final_flush_skips_when_unchanged():
     assert all_texts[-1] != all_texts[-2] or len(edit_calls) == 1
 
 
-def test_stream_no_duplicate_reply_when_id_missing():
+def test_stream_raises_when_reply_returns_no_id():
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -852,10 +852,11 @@ def test_stream_no_duplicate_reply_when_id_missing():
         sender=None, subject=None, text="hi", html=None, media=[], _client=client,
     )
     try:
-        with msg.stream(throttle=0) as s:
-            s.append("a")
-            s.append("b")
-            s.append("c")
+        with pytest.raises(RuntimeError, match="no message id"):
+            with msg.stream(throttle=0) as s:
+                s.append("a")
+                s.append("b")
+                s.append("c")
     finally:
         client.close()
     reply_calls = [c for c in calls if "/reply" in c]
