@@ -244,6 +244,17 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
         )
+    if name == "fake-zulip":
+        from .fakes.fake_zulip import FakeZulipProvider
+
+        return FakeZulipProvider()
+    if name == "zulip":
+        from .zulip import ZulipProvider
+
+        return ZulipProvider(
+            webhook_token=settings.zulip_webhook_token,
+            base_url=settings.zulip_base_url,
+        )
     # Plugin providers: third-party or private channel packages can register
     # their own builders under the "caspian.providers" entry-point group, so a
     # new channel can be added without forking. Each builder has the signature
