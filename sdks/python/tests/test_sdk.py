@@ -808,14 +808,13 @@ def test_account_required_login_delegates_to_client():
 
     client = _client(handler)
     try:
-        try:
+        with pytest.raises(AccountRequiredError) as excinfo:
             client.connect_x(access_token="a", user_id="1")
-        except AccountRequiredError as err:
-            res = err.login(poll_interval=0.01)
-            assert res["status"] == "approved"
-            assert calls == ["start", "token"]
+        res = excinfo.value.login(poll_interval=0.01)
     finally:
         client.close()
+    assert res["status"] == "approved"
+    assert calls == ["start", "token"]
 
 
 def test_insufficient_credit_top_up_uses_explicit_amount():
@@ -833,14 +832,13 @@ def test_insufficient_credit_top_up_uses_explicit_amount():
 
     client = _client(handler)
     try:
-        try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
             client.reply("m1", text="hi")
-        except InsufficientCreditError as err:
-            res = err.top_up(amount_cents=3500)
-            assert res["checkout_url"] == "https://stripe.com/pay"
-            assert topup_calls == [{"amount_cents": 3500}]
+        res = excinfo.value.top_up(amount_cents=3500)
     finally:
         client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 3500}]
 
 
 def test_insufficient_credit_top_up_uses_suggested_amount_from_payment_options():
@@ -863,14 +861,13 @@ def test_insufficient_credit_top_up_uses_suggested_amount_from_payment_options()
 
     client = _client(handler)
     try:
-        try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
             client.reply("m1", text="hi")
-        except InsufficientCreditError as err:
-            res = err.top_up()
-            assert res["checkout_url"] == "https://stripe.com/pay"
-            assert topup_calls == [{"amount_cents": 5000}]
+        res = excinfo.value.top_up()
     finally:
         client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 5000}]
 
 
 def test_insufficient_credit_top_up_fallback_when_no_payment_options():
@@ -888,14 +885,13 @@ def test_insufficient_credit_top_up_fallback_when_no_payment_options():
 
     client = _client(handler)
     try:
-        try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
             client.reply("m1", text="hi")
-        except InsufficientCreditError as err:
-            res = err.top_up()
-            assert res["checkout_url"] == "https://stripe.com/pay"
-            assert topup_calls == [{"amount_cents": 2000}]
+        res = excinfo.value.top_up()
     finally:
         client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 2000}]
 
 
 def test_non_json_error_body_hits_value_error_fallback():
