@@ -135,6 +135,14 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             verify_token=settings.instagram_verify_token,
             base_url=f"https://graph.facebook.com/{settings.graph_version}",
         )
+    if name == "fake-teams":
+        from .fake_teams import FakeTeamsProvider
+
+        return FakeTeamsProvider()
+    if name == "teams":
+        from .teams import TeamsProvider
+
+        return TeamsProvider(login_base_url=settings.teams_login_base_url)
     if name == "fake-facebook":
         from .fake_social import FakeFacebookProvider
 

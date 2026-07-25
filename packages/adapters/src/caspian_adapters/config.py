@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     modem_serial_port: str = ""
     modem_msisdn: str = ""
 
+    # Microsoft Teams (Bot Framework / Azure Bot Service). app_id + app_password
+    # are per-connection (supplied at connect time, like Telegram's bot_token);
+    # this is only the login/JWKS host, overridable for non-public Azure clouds.
+    teams_login_base_url: str = "https://login.microsoftonline.com"
+
     discord_base_url: str = "https://discord.com/api/v10"
     # Shared Discord bot for one-click install (OAuth). Developers add this ONE
     # bot to their server; messages route by guild_id to their agent.
