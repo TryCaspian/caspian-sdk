@@ -104,6 +104,17 @@ class XConnectionCreate(BaseModel):
     username: str | None = None  # @screen_name, for display
 
 
+class LinkedInConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    access_token: str | None = None
+    organization_urn: str | None = None
+    tracked_posts: str | None = None
+    webhook_secret: str | None = None
+
+
 class PhoneConnectionCreate(BaseModel):
     customer_id: str | None = None
     agent_id: str | None = None

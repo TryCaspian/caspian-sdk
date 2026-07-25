@@ -718,6 +718,31 @@ class CommClient:
             access_secret=access_secret, username=username, **kwargs,
         )
 
+    def connect_linkedin(
+        self,
+        access_token: str,
+        organization_urn: str,
+        tracked_posts: str | None = None,
+        webhook_secret: str | None = None,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
+    ) -> dict:
+        """Connect a LinkedIn organization for posts and comment replies.
+
+        ``tracked_posts`` is a comma-separated list of post URNs to monitor.
+        """
+        return self._connect(
+            "linkedin",
+            customer_id,
+            agent_id,
+            access_token=access_token,
+            organization_urn=organization_urn,
+            tracked_posts=tracked_posts,
+            webhook_secret=webhook_secret,
+            **kwargs,
+        )
+
     def install_x(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """One-click connect of an X account as a DM bot - no tokens to paste.
 

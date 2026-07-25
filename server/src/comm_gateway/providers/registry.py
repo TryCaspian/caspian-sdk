@@ -232,6 +232,21 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.github_webhook_secret,
             base_url=settings.github_api_base,
         )
+    if name == "fake-linkedin":
+        from .fakes.fake_linkedin import FakeLinkedInProvider
+
+        return FakeLinkedInProvider()
+    if name == "linkedin":
+        from .linkedin import LinkedInProvider
+
+        return LinkedInProvider(
+            access_token=settings.linkedin_access_token,
+            organization_urn=settings.linkedin_organization_urn,
+            tracked_posts=settings.linkedin_tracked_posts,
+            webhook_secret=settings.linkedin_webhook_secret,
+            base_url=settings.linkedin_api_base,
+            version=settings.linkedin_version,
+        )
     if name == "x":
         from .x import XProvider
 

@@ -42,6 +42,7 @@ from ..schemas import (
     EmailConnectionCreate,
     EventOut,
     InitiateCreate,
+    LinkedInConnectionCreate,
     MessageCreate,
     MessageOut,
     PhoneConnectionCreate,
@@ -615,6 +616,17 @@ def create_x_connection(
     agent replies to inbound DMs and can post tweets, never cold-DMs.
     """
     return _create_connection(request, session, project, body, channel="x")
+
+
+@router.post("/connections/linkedin", response_model=ConnectionOut, status_code=201)
+def create_linkedin_connection(
+    body: LinkedInConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    """Connect a LinkedIn organization for posting and comment replies."""
+    return _create_connection(request, session, project, body, channel="linkedin")
 
 
 @router.post("/connections/x/install", response_model=ConnectionOut, status_code=201)

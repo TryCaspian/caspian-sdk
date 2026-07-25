@@ -695,6 +695,30 @@ export class CommClient {
     });
   }
 
+  /** Connect a LinkedIn organization for posts and comment replies. */
+  connectLinkedIn(
+    opts: ConnectOptions & {
+      accessToken: string;
+      organizationUrn: string;
+      trackedPosts?: string;
+      webhookSecret?: string;
+    },
+  ): Promise<Connection> {
+    const {
+      accessToken,
+      organizationUrn,
+      trackedPosts,
+      webhookSecret,
+      ...rest
+    } = opts;
+    return this.connect("linkedin", rest, {
+      access_token: accessToken,
+      organization_urn: organizationUrn,
+      tracked_posts: trackedPosts ?? null,
+      webhook_secret: webhookSecret ?? null,
+    });
+  }
+
   /**
    * One-click connect of an X account as a DM bot — no tokens to paste. Returns a
    * connection with an `authorize_url` ("Sign in with X").

@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_api_base: str = "https://api.github.com"
 
+    linkedin_access_token: str = ""
+    linkedin_organization_urn: str = ""
+    linkedin_tracked_posts: str = ""
+    linkedin_webhook_secret: str = ""
+    linkedin_api_base: str = "https://api.linkedin.com"
+    linkedin_version: str = "202605"
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""

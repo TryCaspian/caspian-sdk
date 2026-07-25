@@ -32,6 +32,7 @@ npx tsx examples/autoreply.ts          # TypeScript example
 | [`slack_support_bot.py`](./slack_support_bot.py) | One-click install + replies with rich message blocks | Slack | Open the printed install URL |
 | [`slack_slow_agent.py`](./slack_slow_agent.py) | `listen(ack=)` so a slow handler survives Slack's timing | Slack | Bring-your-own Slack app creds |
 | [`telegram_reminders.py`](./telegram_reminders.py) | Agent-initiated reminder via `send_message` | Telegram | Telegram bot token |
+| [`linkedin_autoreply.py`](./linkedin_autoreply.py) | Organization post comment auto-reply | LinkedIn | LinkedIn Community Management API access |
 | [`reminder.py`](./reminder.py) | Proactive cold-start with `initiate()` | SMS | Bring-your-own carrier (Twilio/Telnyx) |
 
 Bring-your-own credentials are passed as keyword arguments to the matching
