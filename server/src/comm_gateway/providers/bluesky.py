@@ -490,7 +490,10 @@ class BlueskyProvider:
             )
             notifications.extend(page)
 
-            if boundary and any(
+            if boundary is None:
+                break
+
+            if any(
                 isinstance(notification.get("indexedAt"), str)
                 and notification["indexedAt"] <= boundary
                 for notification in page
@@ -535,11 +538,12 @@ class BlueskyProvider:
         current_cursor: str | None,
     ) -> str | None:
         """Return the newest indexedAt timestamp."""
-        timestamps = [
-            indexed_at
-            for notification in notifications
-            if isinstance(indexed_at := notification.get("indexedAt"), str) and indexed_at
-        ]
+        timestamps: list[str] = []
+
+        for notification in notifications:
+            indexed_at = notification.get("indexedAt")
+            if isinstance(indexed_at, str) and indexed_at:
+                timestamps.append(indexed_at)
 
         if current_cursor is not None:
             timestamps.append(current_cursor)
@@ -675,9 +679,11 @@ class BlueskyProvider:
         received_token = lower_headers(headers).get(
             TOKEN_HEADER,
             "",
-        )
+        ).encode("utf-8")
 
-        if not hmac.compare_digest(received_token, self._webhook_secret):
+        expected_token = self._webhook_secret.encode("utf-8")
+
+        if not hmac.compare_digest(received_token, expected_token):
             raise WebhookVerificationError(WEBHOOK_TOKEN_MISMATCH_ERROR)
 
         try:

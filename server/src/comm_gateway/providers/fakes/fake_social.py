@@ -371,9 +371,14 @@ class FakeBlueskyProvider:
     def __init__(self) -> None:
         self.did = "did:plc:fake-bluesky"
         self.handle = "fake.bsky.social"
+        self.webhook_secret = "fake-bluesky-webhook-secret"
         self.sent: list[dict] = []
         self.replies: list[dict] = []
         self._seq = 0
+
+        self._provider = BlueskyProvider(
+            webhook_secret=self.webhook_secret,
+        )
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         credentials = request.credentials or {}
@@ -473,13 +478,11 @@ class FakeBlueskyProvider:
         headers,
         credentials=None,
     ) -> list[InboundMessage]:
-        provider = BlueskyProvider()
-        return provider.parse_webhook(
+        return self._provider.parse_webhook(
             payload,
             headers,
             credentials=credentials,
         )
-
     def webhook_payload(
         self,
         *,

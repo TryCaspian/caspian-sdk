@@ -162,6 +162,14 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             handle=settings.macmini_imessage_handle,
             webhook_secret=settings.macmini_webhook_secret,
         )
+    if name == "fake-bluesky":
+        from .fakes.fake_social import FakeBlueskyProvider
+
+        return FakeBlueskyProvider()
+    if name == "bluesky":
+        from .bluesky import BlueskyProvider
+
+        return BlueskyProvider()
     if name == "fake-discord":
         from .fakes.fake_social import FakeDiscordProvider
 
