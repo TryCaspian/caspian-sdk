@@ -92,7 +92,7 @@ def create_app(
         listener_stop = None
         if settings.inline_worker:
             stop = _start_inline_worker(session_factory, providers)
-            if "discord" in providers or "x" in providers:
+            if "discord" in providers or "x" or "bluesky" in providers:
                 from .listeners import run_listeners
 
                 listener_stop = run_listeners(session_factory, settings)
