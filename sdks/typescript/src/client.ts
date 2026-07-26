@@ -1159,6 +1159,71 @@ export class CommClient {
     }
   }
 
+  /**
+   * Entrypoint for serverless runtimes that receive webhook POSTs from the
+   * gateway. Accepts the raw request body (string or bytes) and the request
+   * headers, parses the event, and dispatches it through the same pipeline
+   * used by {@link listen}.
+   *
+   * The gateway delivers a single JSON object matching the polling format:
+   *
+   * ```json
+   * { "id": "...", "type": "message.received", "occurred_at": "...", "data": { ... } }
+   * ```
+   *
+   * Throws {@link CommError} (400) on a JSON parse failure.
+   * Unknown event types are silently ignored, matching `listen()` behaviour.
+   */
+  async handleWebhook(
+    body: string | Uint8Array,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    const raw = typeof body === "string" ? body : new TextDecoder().decode(body);
+    // Step 1 — Verify webhook signature.
+    // TODO: obtain the configured webhook secret and call _verifyWebhookSignature(raw, headers, secret).
+    // Step 2 — Parse the gateway payload.
+    let event: EventRecord;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      event = { seq: 0, ...parsed } as EventRecord;
+    } catch (err) {
+      throw new CommError(400, `invalid webhook payload: ${(err as Error).message}`);
+    }
+    // Step 3 — Dispatch through the same path used by listen().
+    await this.dispatchEvent(event);
+  }
+
+  /**
+   * Verify an `x-caspian-signature` header against the raw body and secret.
+   *
+   * The gateway signs deliveries as:
+   *   `x-caspian-signature: sha256=<HMAC-SHA256-hex(secret, raw_body)>`
+   *
+   * Throws {@link CommError} (400) on a missing or mismatched signature.
+   *
+   * @internal Exposed as a static for unit testing; not part of the public API.
+   */
+  static async _verifyWebhookSignature(
+    body: string,
+    headers: Record<string, string>,
+    secret: string,
+  ): Promise<void> {
+    const lowerHeaders: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) lowerHeaders[k.toLowerCase()] = v;
+    const received = lowerHeaders["x-caspian-signature"] ?? "";
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
+    const expected = "sha256=" + Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    if (received !== expected) {
+      throw new CommError(400, "webhook signature verification failed");
+    }
+  }
+
   private async latestSeq(signal?: AbortSignal): Promise<number> {
     while (!signal?.aborted) {
       try {

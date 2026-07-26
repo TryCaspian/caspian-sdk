@@ -671,3 +671,200 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+# ---------------------------------------------------------------------------
+# handle_webhook() tests
+# ---------------------------------------------------------------------------
+
+def _webhook_message_body(
+    msg_id: str = "msg_1",
+    conversation_id: str = "conv_1",
+    connection_id: str = "conn_1",
+    customer_id: str = "cus_1",
+    agent_id: str = "agt_1",
+    text: str = "hello",
+) -> bytes:
+    """Minimal message.received payload as the gateway delivers it (no seq)."""
+    return json.dumps({
+        "id": "evt_1",
+        "type": "message.received",
+        "occurred_at": "2024-01-01T00:00:00",
+        "data": {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "message": {
+                "id": msg_id,
+                "conversation_id": conversation_id,
+                "connection_id": connection_id,
+                "text": text,
+            },
+        },
+    }).encode()
+
+
+def test_handle_webhook_message_dispatches_handler():
+    """A message.received webhook reaches the registered on_message handler
+    exactly once, and the Message object carries the expected field values."""
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        # typing() and any reply calls hit the mock; always succeed.
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(transport)
+    seen = []
+    client.on_message(seen.append)
+    try:
+        client.handle_webhook(_webhook_message_body(), {})
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+    msg = seen[0]
+    assert msg.id == "msg_1"
+    assert msg.conversation_id == "conv_1"
+    assert msg.connection_id == "conn_1"
+    assert msg.customer_id == "cus_1"
+    assert msg.agent_id == "agt_1"
+    assert msg.text == "hello"
+
+
+def test_handle_webhook_message_body_as_str():
+    """handle_webhook() accepts a str body as well as bytes."""
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(transport)
+    seen = []
+    client.on_message(seen.append)
+    try:
+        client.handle_webhook(_webhook_message_body().decode(), {})
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+
+
+def test_handle_webhook_interaction_dispatches_handler():
+    """An interaction.received webhook reaches the registered on_interaction
+    handler exactly once."""
+    from caspian_sdk import Interaction
+
+    body = json.dumps({
+        "id": "evt_2",
+        "type": "interaction.received",
+        "occurred_at": "2024-01-01T00:00:00",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "conversation_id": "conv_1",
+            "value": "btn_yes",
+            "source_message": {"id": "msg_9"},
+            "sender": {"address": "u@example.com"},
+        },
+    }).encode()
+
+    client = _client(lambda r: httpx.Response(200, json={"ok": True}))
+    seen: list[Interaction] = []
+    client.on_interaction(seen.append)
+    try:
+        client.handle_webhook(body, {})
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+    assert seen[0].value == "btn_yes"
+    assert seen[0].source_message == {"id": "msg_9"}
+
+
+def test_handle_webhook_reaction_dispatches_handler():
+    """A reaction.received webhook reaches the registered on_reaction handler
+    exactly once."""
+    from caspian_sdk import Reaction
+
+    body = json.dumps({
+        "id": "evt_3",
+        "type": "reaction.received",
+        "occurred_at": "2024-01-01T00:00:00",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "emoji": "tada",
+            "action": "added",
+            "source_message": {"id": "msg_9"},
+            "sender": {"address": "u@example.com"},
+        },
+    }).encode()
+
+    client = _client(lambda r: httpx.Response(200, json={"ok": True}))
+    seen: list[Reaction] = []
+    client.on_reaction(seen.append)
+    try:
+        client.handle_webhook(body, {})
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+    assert seen[0].emoji == "tada"
+    assert seen[0].action == "added"
+
+
+def test_handle_webhook_invalid_json_raises_comm_error():
+    """Malformed JSON body raises CommError(400)."""
+    client = _client(lambda r: httpx.Response(200, json={}))
+    try:
+        with pytest.raises(CommError) as excinfo:
+            client.handle_webhook(b"{not valid json}", {})
+    finally:
+        client.close()
+
+    assert excinfo.value.status_code == 400
+    assert "invalid webhook payload" in excinfo.value.detail
+
+
+def test_handle_webhook_unknown_event_type_is_silent():
+    """An unrecognised event type is silently ignored — no handler is invoked
+    and no exception propagates to the caller."""
+    body = json.dumps({
+        "id": "evt_99",
+        "type": "connection.active",
+        "occurred_at": "2024-01-01T00:00:00",
+        "data": {},
+    }).encode()
+
+    client = _client(lambda r: httpx.Response(200, json={}))
+    invoked = []
+    client.on_message(lambda m: invoked.append(m))
+    client.on_interaction(lambda i: invoked.append(i))
+    client.on_reaction(lambda r: invoked.append(r))
+    try:
+        client.handle_webhook(body, {})   # must not raise
+    finally:
+        client.close()
+
+    assert invoked == []
+
+
+def test_handle_webhook_delegates_to_dispatch_event():
+    """Regression: handle_webhook() must route through _dispatch_event().
+
+    If the implementation ever introduces a parallel dispatch path and stops
+    calling _dispatch_event(), this test will fail regardless of whether
+    individual handler tests still pass.
+    """
+    client = _client(lambda r: httpx.Response(200, json={"ok": True}))
+    dispatched = []
+    client._dispatch_event = dispatched.append   # replace with a recorder
+    try:
+        body = _webhook_message_body()
+        client.handle_webhook(body, {})
+    finally:
+        client.close()
+
+    assert len(dispatched) == 1
+    event = dispatched[0]
+    assert event["type"] == "message.received"
+    assert event["data"]["message"]["id"] == "msg_1"

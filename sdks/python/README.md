@@ -120,6 +120,27 @@ except CommError as err:
 - **`InsufficientCreditError`** (HTTP 402 / 429) — `reason`, `balance_cents`, `payment_options`; `.top_up()` mints a refill link.
 - **`CommError`** — base class for every other non-2xx response.
 
+## Serverless / webhook mode
+
+`client.listen()` polls the event stream in a long-running loop. For serverless
+runtimes (AWS Lambda, Google Cloud Functions, Vercel, etc.) the gateway can push
+events to your endpoint instead. Register your handlers exactly as you would for
+polling, then pass each inbound POST to `handle_webhook()`:
+
+```python
+@client.on_message
+def handle(message):
+    message.reply(f"You said: {message.text}")
+
+# In your framework route handler — e.g. Flask, FastAPI, Django:
+client.handle_webhook(request.data, dict(request.headers))
+```
+
+`handle_webhook()` parses exactly one event from the raw body and dispatches it
+through the same registered handlers used by `listen()`. The two modes are
+interchangeable: the same `on_message` / `on_interaction` / `on_reaction`
+handlers work with both. Invalid JSON raises `CommError(400)`.
+
 ## Overlapping messages
 
 `listen()` uses a separate queue for each conversation, so a slow reply in one

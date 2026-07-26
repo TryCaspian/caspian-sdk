@@ -15,17 +15,20 @@ Usage:
     client.listen()
 """
 
+import hashlib
+import hmac
+import json
 import logging
 import os
 import sys
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Literal
+from typing import Any, Literal, overload
 
 import httpx
 
@@ -46,6 +49,10 @@ def _dotenv() -> dict[str, str]:
     return values
 
 
+@overload
+def _config(explicit: str | None, env_key: str, default: str) -> str: ...
+@overload
+def _config(explicit: str | None, env_key: str, default: None = ...) -> str | None: ...
 def _config(explicit: str | None, env_key: str, default: str | None = None) -> str | None:
     """Resolve a value from an explicit arg, env, or ./.env. Prefers the branded
     CASPIAN_* name, falling back to the legacy COMM_* one for back-compat."""
@@ -388,7 +395,7 @@ class CommClient:
 
     def _request(
         self, method: str, path: str, *, json: dict | None = None, params: dict | None = None
-    ):
+    ) -> Any:
         response = self._http.request(
             method,
             path,
@@ -1114,6 +1121,60 @@ class CommClient:
                     seq = event["seq"]  # advance after the scheduler accepts the event
         finally:
             scheduler.close()
+
+    @staticmethod
+    def _verify_webhook_signature(
+        body: bytes,
+        headers: Mapping[str, str],
+        secret: str,
+    ) -> None:
+        """Verify the ``x-caspian-signature`` header against *body* and *secret*.
+
+        The gateway signs deliveries as::
+
+            x-caspian-signature: sha256=<HMAC-SHA256-hex(secret, raw_body)>
+
+        Raises :exc:`CommError` (400) on a missing or mismatched signature.
+        """
+        lower_headers = {k.lower(): v for k, v in headers.items()}
+        received = lower_headers.get("x-caspian-signature", "")
+        expected = "sha256=" + hmac.new(
+            secret.encode(), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(received, expected):
+            raise CommError(400, "webhook signature verification failed")
+
+    def handle_webhook(
+        self,
+        body: bytes | str,
+        headers: Mapping[str, str],
+    ) -> None:
+        """Entrypoint for serverless runtimes that receive webhook POSTs.
+
+        Accepts the raw request *body* (bytes or string) and the request
+        *headers*, and dispatches any recognised events through the same
+        pipeline used by :meth:`listen`.
+
+        The gateway delivers a single JSON object whose shape matches the
+        records returned by ``GET /v1/events``::
+
+            {"id": "...", "type": "message.received", "occurred_at": "...", "data": {...}}
+
+        Raises :exc:`CommError` (400) on a JSON parse failure.
+        Raises :exc:`CommError` (400) when a webhook secret is configured and
+        the ``x-caspian-signature`` header is absent or does not match.
+        """
+        raw = body if isinstance(body, bytes) else body.encode()
+        # Step 1 — Verify webhook signature.
+        # TODO: obtain the configured webhook secret and pass it here.
+        # self._verify_webhook_signature(raw, headers, <secret>)
+        # Step 2 — Parse the gateway payload into an event dict.
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CommError(400, f"invalid webhook payload: {exc}") from exc
+        # Step 3 — Dispatch through the same path used by listen().
+        self._dispatch_event(event)
 
     def _latest_seq(self) -> int:
         """Newest seq at startup, retrying transient failures instead of crashing."""

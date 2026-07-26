@@ -874,3 +874,154 @@ describe("CommClient", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// handleWebhook() tests
+// ---------------------------------------------------------------------------
+
+/** Minimal message.received body as the gateway delivers it (no seq field). */
+function webhookMessageBody(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    id: "evt_1",
+    type: "message.received",
+    occurred_at: "2024-01-01T00:00:00",
+    data: {
+      customer_id: "cus_1",
+      agent_id: "agt_1",
+      message: {
+        id: "msg_1",
+        conversation_id: "conv_1",
+        connection_id: "conn_1",
+        text: "hello",
+      },
+    },
+    ...overrides,
+  });
+}
+
+describe("handleWebhook()", () => {
+  it("dispatches a message.received body to the onMessage handler", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/msg_1/typing": () => json({ ok: true }),
+    });
+    const seen: Message[] = [];
+    client.onMessage((m) => { seen.push(m); });
+
+    await client.handleWebhook(webhookMessageBody(), {});
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].id).toBe("msg_1");
+    expect(seen[0].conversationId).toBe("conv_1");
+    expect(seen[0].connectionId).toBe("conn_1");
+    expect(seen[0].customerId).toBe("cus_1");
+    expect(seen[0].agentId).toBe("agt_1");
+    expect(seen[0].text).toBe("hello");
+  });
+
+  it("accepts a Uint8Array body as well as a string", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/msg_1/typing": () => json({ ok: true }),
+    });
+    const seen: Message[] = [];
+    client.onMessage((m) => { seen.push(m); });
+
+    await client.handleWebhook(new TextEncoder().encode(webhookMessageBody()), {});
+
+    expect(seen).toHaveLength(1);
+  });
+
+  it("dispatches an interaction.received body to the onInteraction handler", async () => {
+    const body = JSON.stringify({
+      id: "evt_2",
+      type: "interaction.received",
+      occurred_at: "2024-01-01T00:00:00",
+      data: {
+        connection_id: "conn_1",
+        customer_id: "cus_1",
+        agent_id: "agt_1",
+        conversation_id: "conv_1",
+        value: "btn_yes",
+        source_message: { id: "msg_9" },
+        sender: { address: "u@example.com" },
+      },
+    });
+    const { client } = makeClient({});
+    const seen: Interaction[] = [];
+    client.onInteraction((i) => { seen.push(i); });
+
+    await client.handleWebhook(body, {});
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].value).toBe("btn_yes");
+    expect(seen[0].sourceMessage?.id).toBe("msg_9");
+  });
+
+  it("dispatches a reaction.received body to the onReaction handler", async () => {
+    const body = JSON.stringify({
+      id: "evt_3",
+      type: "reaction.received",
+      occurred_at: "2024-01-01T00:00:00",
+      data: {
+        connection_id: "conn_1",
+        customer_id: "cus_1",
+        agent_id: "agt_1",
+        emoji: "tada",
+        action: "added",
+        source_message: { id: "msg_9" },
+        sender: { address: "u@example.com" },
+      },
+    });
+    const { client } = makeClient({});
+    const seen: Reaction[] = [];
+    client.onReaction((r) => { seen.push(r); });
+
+    await client.handleWebhook(body, {});
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].emoji).toBe("tada");
+    expect(seen[0].action).toBe("added");
+  });
+
+  it("throws CommError(400) for invalid JSON", async () => {
+    const { client } = makeClient({});
+    await expect(client.handleWebhook("{not valid json}", {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("invalid webhook payload"),
+    });
+  });
+
+  it("silently ignores unknown event types", async () => {
+    const body = JSON.stringify({
+      id: "evt_99",
+      type: "connection.active",
+      occurred_at: "2024-01-01T00:00:00",
+      data: {},
+    });
+    const { client } = makeClient({});
+    const invoked: unknown[] = [];
+    client.onMessage((m) => { invoked.push(m); });
+    client.onInteraction((i) => { invoked.push(i); });
+    client.onReaction((r) => { invoked.push(r); });
+
+    await expect(client.handleWebhook(body, {})).resolves.toBeUndefined();
+    expect(invoked).toHaveLength(0);
+  });
+
+  it("delegates to dispatchEvent — regression guard for reuse", async () => {
+    const { client } = makeClient({
+      "POST /v1/messages/msg_1/typing": () => json({ ok: true }),
+    });
+    const dispatched: unknown[] = [];
+    // Replace dispatchEvent on the instance to prove the delegation.
+    (client as any).dispatchEvent = async (event: unknown) => {
+      dispatched.push(event);
+    };
+
+    await client.handleWebhook(webhookMessageBody(), {});
+
+    expect(dispatched).toHaveLength(1);
+    expect((dispatched[0] as any).type).toBe("message.received");
+    expect((dispatched[0] as any).data.message.id).toBe("msg_1");
+  });
+});
+

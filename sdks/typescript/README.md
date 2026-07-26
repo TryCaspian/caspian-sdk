@@ -100,6 +100,27 @@ client.listen({ signal: ac.signal });
 // later: ac.abort();
 ```
 
+## Serverless / webhook mode
+
+`client.listen()` polls the event stream in a long-running loop. For serverless
+runtimes (AWS Lambda, Google Cloud Functions, Vercel, etc.) the gateway can push
+events to your endpoint instead. Register your handlers exactly as you would for
+polling, then pass each inbound POST to `handleWebhook()`:
+
+```ts
+client.onMessage(async (message) => {
+  await message.reply(`You said: ${message.text}`);
+});
+
+// In your framework route handler — e.g. Next.js, Hono, Express:
+await client.handleWebhook(await request.text(), Object.fromEntries(request.headers));
+```
+
+`handleWebhook()` parses exactly one event from the raw body and dispatches it
+through the same registered handlers used by `listen()`. The two modes are
+interchangeable: the same `onMessage` / `onInteraction` / `onReaction` handlers
+work with both. Invalid JSON throws `CommError` with status 400.
+
 ## Overlapping messages
 
 `listen()` uses a separate queue for each conversation, so a slow reply in one
