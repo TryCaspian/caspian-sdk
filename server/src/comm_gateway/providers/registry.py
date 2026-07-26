@@ -255,6 +255,18 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
         )
+    if name == "fake-reddit":
+        from .fakes.fake_reddit import FakeRedditProvider
+        return FakeRedditProvider()
+    if name == "reddit":
+        from .reddit import RedditProvider
+        return RedditProvider(
+            client_id=settings.reddit_client_id,
+            client_secret=settings.reddit_client_secret,
+            user_agent=settings.reddit_user_agent,
+            base_url=settings.reddit_base_url,
+            auth_url=settings.reddit_auth_url,
+        )
     # Plugin providers: third-party or private channel packages can register
     # their own builders under the "caspian.providers" entry-point group, so a
     # new channel can be added without forking. Each builder has the signature
