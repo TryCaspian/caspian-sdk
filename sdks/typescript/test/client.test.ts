@@ -489,7 +489,7 @@ describe("CommClient", () => {
     expect(seen).toEqual(["first"]);
   });
 
-  it("listen parallel allows handlers in one conversation to overlap", async () => {
+  it("listen parallel still serializes one conversation", async () => {
     const ac = new AbortController();
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {
@@ -534,7 +534,7 @@ describe("CommClient", () => {
 
     expect(firstStarted).toBe(true);
     expect(secondFinished).toBe(true);
-    expect(seen).toEqual(["second", "first"]);
+    expect(seen).toEqual(["first", "second"]);
   });
 
   it("listen validates overlap options", async () => {

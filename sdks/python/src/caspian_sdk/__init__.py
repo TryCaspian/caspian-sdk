@@ -9,6 +9,12 @@ from .client import (
     Message,
     Reaction,
 )
+from .state import (
+    InMemoryStateAdapter,
+    RedisStateAdapter,
+    StateAdapter,
+    StateLockTimeoutError,
+)
 
 __all__ = [
     "AccountRequiredError",
@@ -17,7 +23,11 @@ __all__ = [
     "ConcurrencyStrategy",
     "InsufficientCreditError",
     "Interaction",
+    "InMemoryStateAdapter",
     "Message",
     "Reaction",
+    "RedisStateAdapter",
+    "StateAdapter",
+    "StateLockTimeoutError",
     "blocks",
 ]

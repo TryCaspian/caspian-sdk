@@ -21,6 +21,9 @@ dependencies = [
   "pydantic>=2.11,<3",
 ]
 
+[project.optional-dependencies]
+redis = ["redis>=5"]
+
 [project.urls]
 Homepage = "https://trycaspianai.com"
 Documentation = "https://api.trycaspianai.com/SKILL.md"

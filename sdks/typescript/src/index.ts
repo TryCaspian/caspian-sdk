@@ -1,6 +1,18 @@
 export { CommClient, Message, Interaction, Reaction } from "./client.js";
 export type { MessageHandler, InteractionHandler, ReactionHandler } from "./client.js";
-export { CommError, AccountRequiredError, InsufficientCreditError } from "./errors.js";
+export {
+  CommError,
+  AccountRequiredError,
+  InsufficientCreditError,
+  StateLockTimeoutError,
+} from "./errors.js";
+export { InMemoryStateAdapter, RedisStateAdapter } from "./state.js";
+export type {
+  RedisStateClient,
+  RedisStateOptions,
+  StateAdapter,
+  StateLock,
+} from "./state.js";
 export type {
   Agent,
   AutopayOptions,

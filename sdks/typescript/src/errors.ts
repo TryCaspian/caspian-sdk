@@ -87,3 +87,11 @@ export class InsufficientCreditError extends CommError {
     return this.client.topUp(amountCents ?? 2000);
   }
 }
+
+export class StateLockTimeoutError extends CommError {
+  constructor(conversationId: string) {
+    super(503, `Timed out acquiring state lock for conversation ${conversationId}`);
+    this.name = "StateLockTimeoutError";
+    Object.setPrototypeOf(this, StateLockTimeoutError.prototype);
+  }
+}
