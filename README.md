@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/91107?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-91107" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91107/daily?language=Python" alt="TryCaspian%2Fcaspian-sdk | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <a href="https://trycaspianai.com">Website</a>
   ·
   <a href="https://pypi.org/project/caspian-sdk/">PyPI</a>
