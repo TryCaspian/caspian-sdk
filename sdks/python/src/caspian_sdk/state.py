@@ -9,7 +9,6 @@ from threading import Lock
 from typing import Protocol
 
 
-
 class StateLockTimeoutError(RuntimeError):
     def __init__(self, conversation_id: str) -> None:
         self.conversation_id = conversation_id

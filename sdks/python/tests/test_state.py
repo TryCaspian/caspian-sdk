@@ -4,7 +4,6 @@ from contextlib import contextmanager
 
 import httpx
 import pytest
-
 from caspian_sdk import (
     CommClient,
     InMemoryStateAdapter,
