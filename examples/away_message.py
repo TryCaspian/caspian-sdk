@@ -27,7 +27,7 @@ print(f"Email connection active: {connection['address']}")
 
 AWAY_MESSAGE = (
     "Thanks for reaching out. I'm away right now and will reply as soon as "
-    "I'm back. This is the only automated reply you'll get for this thread."
+    "I'm back. This is the only automated reply you'll get during this session."
 )
 
 already_replied: set[str] = set()
@@ -40,9 +40,9 @@ def handle(message):
         print(f"Skipping duplicate reply to {sender}")
         return
 
-    already_replied.add(sender)
     print(f"Sending away-message to {sender}")
     message.reply(AWAY_MESSAGE)
+    already_replied.add(sender)
 
 
 print("Listening for inbound messages (Ctrl+C to stop)")
