@@ -224,7 +224,10 @@ def _pick_channel(requested: str | None) -> str:
 
 
 def _email_body(args) -> dict:
-    body: dict = {"display_name": args.name}
+    body: dict = {}
+    if args.name:
+        body["display_name"] = args.name
+
     domain = args.domain
     username = args.username
     if domain is None and username is None and sys.stdin.isatty():
@@ -317,9 +320,13 @@ def _connect_one(channel: str, args) -> None:
         token = args.bot_token or _ask(f"Paste the bot token (create one at {where})")
         if not token:
             sys.exit(f"{channel} needs a bot token.")
-        body = {"display_name": args.name, "bot_token": token}
+        body = {"bot_token": token}
+        if args.name:
+            body["display_name"] = args.name
     else:
-        body = {"display_name": args.name}
+        body = {}
+        if args.name:
+            body["display_name"] = args.name
 
     connection = _request("POST", f"/v1/connections/{channel}", json_body=body)
     if channel in OAUTH_CHANNELS:
