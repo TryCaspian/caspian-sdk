@@ -1023,5 +1023,48 @@ describe("handleWebhook()", () => {
     expect((dispatched[0] as any).type).toBe("message.received");
     expect((dispatched[0] as any).data.message.id).toBe("msg_1");
   });
+
+  it("throws CommError(400) for a non-object JSON payload (array)", async () => {
+    const { client } = makeClient({});
+    await expect(client.handleWebhook("[]", {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("expected a JSON object"),
+    });
+  });
+
+  it("throws CommError(400) for a non-object JSON payload (string)", async () => {
+    const { client } = makeClient({});
+    await expect(client.handleWebhook('"hello"', {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("expected a JSON object"),
+    });
+  });
+
+  it("throws CommError(400) for a non-object JSON payload (number)", async () => {
+    const { client } = makeClient({});
+    await expect(client.handleWebhook("123", {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("expected a JSON object"),
+    });
+  });
+
+  it("throws CommError(400) for a known event type missing 'data'", async () => {
+    const { client } = makeClient({});
+    const body = JSON.stringify({ type: "message.received" });
+    await expect(client.handleWebhook(body, {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("missing 'data'"),
+    });
+  });
+
+  it("throws CommError(400) for a known event type with non-object 'data'", async () => {
+    const { client } = makeClient({});
+    const body = JSON.stringify({ type: "message.received", data: 123 });
+    await expect(client.handleWebhook(body, {})).rejects.toMatchObject({
+      statusCode: 400,
+      detail: expect.stringContaining("'data' must be an object"),
+    });
+  });
+
 });
 

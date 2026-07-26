@@ -1173,6 +1173,19 @@ class CommClient:
             event = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise CommError(400, f"invalid webhook payload: {exc}") from exc
+        # Step 2b — Validate envelope structure.
+        _KNOWN_EVENT_TYPES = {"message.received", "interaction.received", "reaction.received"}
+        if not isinstance(event, dict):
+            raise CommError(400, "invalid webhook payload: expected a JSON object")
+        if not isinstance(event.get("type"), str):
+            raise CommError(400, "invalid webhook payload: missing or non-string 'type'")
+        if event["type"] in _KNOWN_EVENT_TYPES:
+            if "data" not in event:
+                raise CommError(400, f"invalid webhook payload: '{event['type']}' missing 'data'")
+            if not isinstance(event["data"], dict):
+                raise CommError(
+                    400, f"invalid webhook payload: '{event['type']}' 'data' must be an object"
+                )
         # Step 3 — Dispatch through the same path used by listen().
         self._dispatch_event(event)
 

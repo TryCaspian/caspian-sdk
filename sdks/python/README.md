@@ -131,9 +131,29 @@ polling, then pass each inbound POST to `handle_webhook()`:
 @client.on_message
 def handle(message):
     message.reply(f"You said: {message.text}")
+```
 
-# In your framework route handler — e.g. Flask, FastAPI, Django:
-client.handle_webhook(request.data, dict(request.headers))
+**Flask**
+```python
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    client.handle_webhook(request.data, dict(request.headers))
+    return "", 200
+```
+
+**FastAPI**
+```python
+@app.post("/webhook")
+async def webhook(request: Request):
+    body = await request.body()
+    client.handle_webhook(body, dict(request.headers))
+```
+
+**Django**
+```python
+def webhook(request):
+    client.handle_webhook(request.body, dict(request.headers))
+    return HttpResponse(status=200)
 ```
 
 `handle_webhook()` parses exactly one event from the raw body and dispatches it

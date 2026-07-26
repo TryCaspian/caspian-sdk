@@ -1182,13 +1182,29 @@ export class CommClient {
     // Step 1 — Verify webhook signature.
     // TODO: obtain the configured webhook secret and call _verifyWebhookSignature(raw, headers, secret).
     // Step 2 — Parse the gateway payload.
-    let event: EventRecord;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      event = { seq: 0, ...parsed } as EventRecord;
+      parsed = JSON.parse(raw);
     } catch (err) {
       throw new CommError(400, `invalid webhook payload: ${(err as Error).message}`);
     }
+    // Step 2b — Validate envelope structure.
+    const KNOWN_EVENT_TYPES = new Set(["message.received", "interaction.received", "reaction.received"]);
+    if (!isRecord(parsed) || Array.isArray(parsed)) {
+      throw new CommError(400, "invalid webhook payload: expected a JSON object");
+    }
+    if (typeof parsed.type !== "string") {
+      throw new CommError(400, "invalid webhook payload: missing or non-string 'type'");
+    }
+    if (KNOWN_EVENT_TYPES.has(parsed.type)) {
+      if (!("data" in parsed)) {
+        throw new CommError(400, `invalid webhook payload: '${parsed.type}' missing 'data'`);
+      }
+      if (!isRecord(parsed.data)) {
+        throw new CommError(400, `invalid webhook payload: '${parsed.type}' 'data' must be an object`);
+      }
+    }
+    const event: EventRecord = { seq: 0, type: parsed.type, ...parsed };
     // Step 3 — Dispatch through the same path used by listen().
     await this.dispatchEvent(event);
   }

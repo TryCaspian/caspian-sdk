@@ -111,9 +111,28 @@ polling, then pass each inbound POST to `handleWebhook()`:
 client.onMessage(async (message) => {
   await message.reply(`You said: ${message.text}`);
 });
+```
 
-// In your framework route handler — e.g. Next.js, Hono, Express:
-await client.handleWebhook(await request.text(), Object.fromEntries(request.headers));
+**Fetch API / Next.js Route Handler**
+```ts
+export async function POST(request: Request) {
+  const body = await request.text();
+  await client.handleWebhook(body, Object.fromEntries(request.headers));
+  return new Response(null, { status: 200 });
+}
+```
+
+**Express**
+
+Webhook verification requires the original raw request body. Configure
+`express.raw()` (not `express.json()`) on your webhook route so the body
+arrives as a `Buffer` rather than a parsed object:
+
+```ts
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  await client.handleWebhook(req.body, req.headers as Record<string, string>);
+  res.sendStatus(200);
+});
 ```
 
 `handleWebhook()` parses exactly one event from the raw body and dispatches it

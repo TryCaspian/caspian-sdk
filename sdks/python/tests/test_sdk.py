@@ -868,3 +868,42 @@ def test_handle_webhook_delegates_to_dispatch_event():
     event = dispatched[0]
     assert event["type"] == "message.received"
     assert event["data"]["message"]["id"] == "msg_1"
+
+
+def test_handle_webhook_non_object_payload_raises_comm_error():
+    """A JSON payload that is not an object (array, string, number) raises CommError(400)."""
+    client = _client(lambda r: httpx.Response(200, json={}))
+    try:
+        for bad in (b"[]", b'"hello"', b"123"):
+            with pytest.raises(CommError) as excinfo:
+                client.handle_webhook(bad, {})
+            assert excinfo.value.status_code == 400
+            assert "expected a JSON object" in excinfo.value.detail
+    finally:
+        client.close()
+
+
+def test_handle_webhook_known_type_missing_data_raises_comm_error():
+    """A supported event type with no 'data' field raises CommError(400)."""
+    client = _client(lambda r: httpx.Response(200, json={}))
+    try:
+        body = json.dumps({"type": "message.received"}).encode()
+        with pytest.raises(CommError) as excinfo:
+            client.handle_webhook(body, {})
+        assert excinfo.value.status_code == 400
+        assert "missing 'data'" in excinfo.value.detail
+    finally:
+        client.close()
+
+
+def test_handle_webhook_known_type_non_object_data_raises_comm_error():
+    """A supported event type whose 'data' is not an object raises CommError(400)."""
+    client = _client(lambda r: httpx.Response(200, json={}))
+    try:
+        body = json.dumps({"type": "message.received", "data": 123}).encode()
+        with pytest.raises(CommError) as excinfo:
+            client.handle_webhook(body, {})
+        assert excinfo.value.status_code == 400
+        assert "'data' must be an object" in excinfo.value.detail
+    finally:
+        client.close()
