@@ -109,13 +109,21 @@ def parse_event(data: dict) -> list[InboundMessage]:
                 },
             )
         ]
-    if event_type != "message" or event.get("bot_id") or event.get("subtype"):
+    # "message" covers DMs + channel messages (Events API / message.* scopes).
+    # "app_mention" covers an @-mention in a channel where the app isn't
+    # subscribed to message.channels — same shape (channel/ts/user/text), so
+    # treat it as a message. bot_id/subtype (edits, joins, our own posts) skip.
+    if event_type not in ("message", "app_mention") or event.get("bot_id") or event.get("subtype"):
         return []
     channel = event["channel"]
     ts = event["ts"]
     return [
         InboundMessage(
-            external_event_id=data.get("event_id") or f"{channel}:{ts}",
+            # Dedup by channel:ts (unique per message). A channel @-mention can
+            # arrive as BOTH a "message" and an "app_mention" event (different
+            # event_ids, same ts) when the app subscribes to both — keying on ts
+            # collapses them so the agent replies once, not twice.
+            external_event_id=f"{channel}:{ts}",
             provider_inbox_id=_inbox_id(data),
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,

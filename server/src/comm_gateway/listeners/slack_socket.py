@@ -91,6 +91,9 @@ class SlackSocketClient:
 
     async def _dispatch(self, ws, frame: dict) -> None:
         ftype = frame.get("type")
+        etype = (frame.get("payload") or {}).get("event", {}).get("type")
+        log.debug("slack socket %s frame: %s%s", self._conn_id, ftype,
+                  f"/{etype}" if etype else "")
         if ftype == "hello":
             return
         if ftype == "disconnect":
