@@ -19,6 +19,7 @@ client = CommClient(api_key="YOUR_KEY")
 inbox = client.connect_email()
 print("Agent address:", inbox["address"])
 
+# on_message accepts both sync and async handlers.
 @client.on_message
 def handle(message):
     # The same handler answers every channel you connect.

@@ -14,7 +14,8 @@ Usage:
 
     client.listen()
 """
-
+import asyncio
+import inspect
 import logging
 import os
 import sys
@@ -1025,7 +1026,9 @@ class CommClient:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
-                handler(message)
+                result = handler(message)
+                if inspect.iscoroutine(result):
+                    asyncio.run(result)
             except AccountRequiredError as exc:
                 # Paid channel used before the developer signed in. Surface the
                 # one-time sign-in prompt loudly (e.g. in Claude Code).

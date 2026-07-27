@@ -470,6 +470,23 @@ def test_message_carries_media_to_handler():
         client.close()
     assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
 
+def test_on_message_accepts_async_handler():
+    client = _client(lambda request: httpx.Response(200, json={}))
+
+    called = False
+
+    @client.on_message
+    async def handle(message):
+        nonlocal called
+        called = True
+
+    try:
+        client._dispatch_event(_message_event(1, "conv_1", "hello"))
+    finally:
+        client.close()
+
+    assert called
+
 
 def test_queue_serializes_each_conversation_and_keeps_others_moving():
     client = _client(lambda request: httpx.Response(200, json={}))
