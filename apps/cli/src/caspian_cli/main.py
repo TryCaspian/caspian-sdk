@@ -318,6 +318,15 @@ def _connect_one(channel: str, args) -> None:
         if not token:
             sys.exit(f"{channel} needs a bot token.")
         body = {"display_name": args.name, "bot_token": token}
+    elif channel == "bluesky":
+        body = {
+            "display_name": args.name,
+            "identifier": _ask("Bluesky handle or email (e.g. myagent.bsky.social)"),
+            "app_password": _ask(
+                "Bluesky app password (bsky.app -> Settings -> Privacy and "
+                "security -> App passwords)"
+            ),
+        }
     else:
         body = {"display_name": args.name}
 

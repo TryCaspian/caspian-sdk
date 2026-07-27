@@ -44,7 +44,7 @@
 
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
 ## Get started in 30 seconds
 
@@ -92,7 +92,7 @@ client.listen()  # one loop, every channel
 > standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
 > or just use the SDK directly (below); nothing else about the flow changes.
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **TypeScript** — same contract, zero runtime dependencies:
 

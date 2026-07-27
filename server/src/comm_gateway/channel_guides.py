@@ -63,12 +63,59 @@ _GUIDES: dict[str, str] = {
 
     "voice": """## Voice
 - This is SPOKEN aloud. Write for the ear: short sentences, no markdown, no URLs, no code. Spell out anything ambiguous.""",
+
+    "bluesky": """## Bluesky
+- Short-form, plain text — no markdown rendering. Keep replies concise (a post is capped at 300 characters).
+- Reply directly to the user's message; the SDK threads it. Conversational, friendly tone.
+- Don't add hashtags or @-handles unless the user asks.""",
+}
+
+
+# Setup guides: how a DEVELOPER connects a channel (credentials + where to get
+# them), distinct from the behaviour guides above (how the agent should reply).
+# Surfaced on GET /v1/channels and GET /v1/channels/{channel}/guide so onboarding
+# is self-serve.
+_SETUP: dict[str, str] = {
+    "bluesky": """### Connect Bluesky (via the Caspian SDK)
+Install:  pip install caspian-sdk   (or: uv add caspian-sdk)
+
+Point the SDK at THIS gateway (the base URL is the host serving this endpoint).
+The channel list/guide are public, but creating a connection is authenticated —
+you need a project API key (ask the human, or set CASPIAN_API_KEY):
+    from caspian_sdk import CommClient
+    client = CommClient()   # reads CASPIAN_BASE_URL + CASPIAN_API_KEY from env
+
+Per-connection credentials (ask the human for these two):
+- `identifier`   — the account's Bluesky handle (e.g. `myagent.bsky.social`) or email.
+- `app_password` — a Bluesky App Password (NOT the account login password).
+
+Create the app password: log in at https://bsky.app -> Settings -> Privacy and
+Security -> App Passwords -> Add App Password -> copy it (`xxxx-xxxx-xxxx-xxxx`).
+
+Connect, then receive & reply:
+    customer = client.create_customer("My Co")
+    agent    = client.create_agent("My Agent")
+    conn = client.connect_bluesky(identifier="myagent.bsky.social",
+                                  app_password="xxxx-xxxx-xxxx-xxxx")
+
+    @client.on_message
+    def handle(message):
+        message.reply("...")   # your answer to message.text
+
+    client.listen()   # polls for inbound (no webhook to configure)
+
+Capabilities: receive, reply, send.""",
 }
 
 
 def guide_for(channel: str) -> str | None:
     """The behaviour guide for one channel, or None if there isn't one."""
     return _GUIDES.get(channel)
+
+
+def setup_for(channel: str) -> str | None:
+    """The connect/setup guide for one channel, or None if there isn't one."""
+    return _SETUP.get(channel)
 
 
 def combined_guide(channels: list[str]) -> str:
