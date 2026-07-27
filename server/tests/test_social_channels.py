@@ -302,3 +302,69 @@ def test_discord_requires_an_identity(social_app, sc):
     r = sc.post("/v1/connections/discord", json={})
     assert r.status_code == 422
     assert "bot_token or a webhook_url" in r.json()["detail"]
+
+
+def test_discord_edit_flow(social_app, sc):
+    sc.post("/v1/connections/discord", json={"bot_token": DISCORD_TOKEN}).json()
+    _run(social_app)
+    resource = "999"
+
+    provider = social_app.state.providers["fake-discord"]
+    anon = TestClient(social_app)
+    payload = provider.webhook_payload(channel_id="chan42", text="original")
+    anon.post(f"/internal/providers/fake-discord/webhooks/{resource}", json=payload)
+    _run(social_app)
+
+    events = sc.get("/v1/events", params={"type": "message.received"}).json()
+    inbound_id = events[-1]["data"]["message"]["id"]
+
+    sc.post(f"/v1/messages/{inbound_id}/reply", json={"text": "first version"})
+    _run(social_app)
+    assert provider.replies[-1]["text"] == "first version"
+    sent_events = sc.get("/v1/events", params={"type": "message.sent"}).json()
+    outbound_id = sent_events[-1]["data"]["message"]["id"]
+
+    sc.post(f"/v1/messages/{outbound_id}/edit", json={"text": "edited version"})
+    _run(social_app)
+    assert len(provider.edits) == 1
+    assert provider.edits[0]["text"] == "edited version"
+    assert provider.edits[0]["channel"] == "chan42"
+
+
+def test_slack_edit_flow(social_app, sc):
+    conn = sc.post("/v1/connections/slack", json={}).json()
+    provider = social_app.state.providers["fake-slack"]
+    state = None
+    with social_app.state.session_factory() as session:
+        from comm_gateway.models import Connection
+
+        c = session.get(Connection, conn["id"])
+        state = c.provider_credentials["oauth_state"]
+
+    anon = TestClient(social_app)
+    anon.get(
+        "/v1/oauth/fake-slack/callback",
+        params={"code": "abc", "state": state},
+        follow_redirects=True,
+    )
+    _run(social_app)
+
+    anon.post(
+        "/internal/providers/fake-slack/webhooks",
+        json=provider.webhook_payload(channel="C99", text="question"),
+    )
+    _run(social_app)
+    events = sc.get("/v1/events", params={"type": "message.received"}).json()
+    inbound_id = events[-1]["data"]["message"]["id"]
+
+    sc.post(f"/v1/messages/{inbound_id}/reply", json={"text": "answer v1"})
+    _run(social_app)
+    assert provider.replies[-1]["text"] == "answer v1"
+    sent_events = sc.get("/v1/events", params={"type": "message.sent"}).json()
+    outbound_id = sent_events[-1]["data"]["message"]["id"]
+
+    sc.post(f"/v1/messages/{outbound_id}/edit", json={"text": "answer v2"})
+    _run(social_app)
+    assert len(provider.edits) == 1
+    assert provider.edits[0]["text"] == "answer v2"
+    assert provider.edits[0]["ok"] is True

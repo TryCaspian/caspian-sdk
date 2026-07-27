@@ -35,6 +35,7 @@ class FakeTelegramProvider:
         self.bot_id = str(9_000_000 + secrets.randbelow(1_000_000))
         self.sent: list[dict] = []
         self.replies: list[dict] = []
+        self.edits: list[dict] = []
         self._webhook_secret = webhook_secret
         self._update_seq = 0
 
@@ -81,6 +82,15 @@ class FakeTelegramProvider:
             provider_message_id=f"{chat_id}:{secrets.randbelow(100000)}",
             provider_thread_id=chat_id,
         )
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        chat_id, _, message_id = provider_message_id.partition(":")
+        self.edits.append({"chat_id": chat_id, "message_id": message_id, "text": text})
 
     def parse_webhook(
         self,

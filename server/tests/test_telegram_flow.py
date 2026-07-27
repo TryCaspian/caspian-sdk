@@ -176,3 +176,49 @@ def test_non_text_updates_are_ignored(app, client, run_jobs):
     run_jobs()
     events = client.get("/v1/events", params={"type": "message.received"}).json()
     assert events == []
+
+
+def test_edit_flow(app, client, run_jobs):
+    _provision_connection(client, run_jobs)
+    provider = _telegram_provider(app)
+
+    payload = provider.webhook_payload(chat_id=777, text="Question")
+    client.post("/internal/providers/fake-telegram/webhooks", json=payload)
+    run_jobs()
+    events = client.get("/v1/events", params={"type": "message.received"}).json()
+    inbound_id = events[0]["data"]["message"]["id"]
+
+    response = client.post(f"/v1/messages/{inbound_id}/reply", json={"text": "Original"})
+    assert response.status_code == 201
+    reply = response.json()
+    run_jobs()
+    assert len(provider.replies) == 1
+    outbound_id = reply["id"]
+
+    edit_response = client.post(f"/v1/messages/{outbound_id}/edit", json={"text": "Updated"})
+    assert edit_response.status_code == 200
+    edited = edit_response.json()
+    assert edited["text"] == "Updated"
+    run_jobs()
+    assert len(provider.edits) == 1
+    assert provider.edits[0]["text"] == "Updated"
+    assert provider.edits[0]["chat_id"] == "777"
+
+
+def test_edit_rejects_inbound_message(app, client, run_jobs):
+    _provision_connection(client, run_jobs)
+    provider = _telegram_provider(app)
+
+    payload = provider.webhook_payload(chat_id=777, text="Inbound")
+    client.post("/internal/providers/fake-telegram/webhooks", json=payload)
+    run_jobs()
+    events = client.get("/v1/events", params={"type": "message.received"}).json()
+    inbound_id = events[0]["data"]["message"]["id"]
+
+    response = client.post(f"/v1/messages/{inbound_id}/edit", json={"text": "Try edit"})
+    assert response.status_code == 400
+
+
+def test_edit_rejects_unknown_message(client):
+    response = client.post("/v1/messages/msg_unknown/edit", json={"text": "No such message"})
+    assert response.status_code == 404

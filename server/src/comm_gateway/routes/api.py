@@ -39,6 +39,7 @@ from ..schemas import (
     CustomerCreate,
     CustomerOut,
     DiscordConnectionCreate,
+    EditCreate,
     EmailConnectionCreate,
     EventOut,
     InitiateCreate,
@@ -1363,6 +1364,28 @@ def reply_to_message(
     enqueue(session, "send_reply", {"message_id": reply.id, "blocks": body.blocks})
     session.commit()
     return message_out(reply)
+
+
+@router.post("/messages/{outbound_message_id}/edit", response_model=MessageOut, status_code=200)
+def edit_message(
+    outbound_message_id: str,
+    body: EditCreate,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    target = session.get(Message, outbound_message_id)
+    if target is None or target.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if target.direction != "outbound" or not target.provider_message_id:
+        raise HTTPException(
+            status_code=400, detail="Can only edit an outbound message that was sent"
+        )
+    connection = session.get(Connection, target.connection_id)
+    _require_granted(connection, Capability.EDIT_OUTBOUND)
+    target.text = body.text
+    enqueue(session, "edit_message", {"message_id": target.id, "text": body.text})
+    session.commit()
+    return message_out(target)
 
 
 @router.post("/test-emails", response_model=TestEmailOut, status_code=202)
