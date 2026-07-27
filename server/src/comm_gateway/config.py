@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     # endpoint and optional webhook verification secret.
     bluesky_base_url: str = "https://bsky.social"
     bluesky_webhook_secret: str = ""
+    # Reddit deployment settings. Connected accounts provide their own OAuth2
+    # client_id/client_secret/refresh_token; these settings configure the
+    # shared API endpoints, the fallback User-Agent, and the internal-only
+    # webhook token (Reddit itself never calls this route - see reddit.py).
+    reddit_base_url: str = "https://oauth.reddit.com"
+    reddit_token_url: str = "https://www.reddit.com"
+    reddit_webhook_secret: str = ""
+    reddit_user_agent: str = "caspian-sdk/1.0 (channel adapter; https://trycaspianai.com)"
+    reddit_poll_interval: float = 15.0  # seconds between inbox polls per connection
     # Stripe (pay-as-you-go credit; live keys live in SSM SecureString, resolved
     # at startup — only the parameter NAMES sit in .env).
     stripe_secret_key: str = ""

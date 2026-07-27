@@ -137,6 +137,34 @@ def _save_bluesky_cursor(session_factory, conn_id: str, cursor: str) -> None:
         write_credentials(conn, creds)
         session.commit()
 
+def _active_reddit_connections(session_factory) -> list[tuple[str, dict]]:
+    """(connection_id, decrypted credentials) for every active Reddit connection."""
+    out: list[tuple[str, dict]] = []
+    with session_factory() as session:
+        rows = session.execute(
+            select(Connection).where(
+                Connection.provider == "reddit",
+                Connection.status == "active",
+            )
+        ).scalars().all()
+
+        for conn in rows:
+            out.append((conn.id, read_credentials(conn)))
+
+    return out
+
+
+def _save_reddit_cursor(session_factory, conn_id: str, cursor: str) -> None:
+    """Persist the newest-seen Reddit inbox timestamp cursor."""
+    with session_factory() as session:
+        conn = session.get(Connection, conn_id)
+        if conn is None:
+            return
+
+        creds = read_credentials(conn)
+        creds["reddit_cursor"] = cursor
+        write_credentials(conn, creds)
+        session.commit()
 
 def _save_dm_cursor(session_factory, conn_id: str, cursor: str) -> None:
     """Persist the newest-seen dm_event id on the connection so the next poll
@@ -227,6 +255,52 @@ async def _bluesky_poll_loop(session_factory, settings, stop_event: threading.Ev
 
         await asyncio.sleep(interval)
 
+async def _reddit_poll_loop(session_factory, settings, stop_event: threading.Event) -> None:
+    """Poll each active Reddit connection for unread private messages."""
+
+    from ..providers.registry import _build_one
+
+    provider = _build_one("reddit", settings)
+
+    interval = getattr(settings, "reddit_poll_interval", 15.0)
+
+    log.info("started Reddit poller (interval=%ss)", interval)
+
+    while not stop_event.is_set():
+        try:
+            conns = _active_reddit_connections(session_factory)
+        except Exception:
+            log.exception("reddit poller failed to read connections")
+            conns = []
+
+        for conn_id, creds in conns:
+            try:
+                cursor = creds.get("reddit_cursor")
+
+                msgs, new_cursor = await asyncio.to_thread(
+                    provider.poll_inbox,
+                    creds,
+                    cursor,
+                )
+
+                if msgs:
+                    ingest_inbound(session_factory, "reddit", msgs)
+
+                if new_cursor != cursor:
+                    _save_reddit_cursor(
+                        session_factory,
+                        conn_id,
+                        new_cursor,
+                    )
+
+            except Exception:
+                log.exception(
+                    "reddit poll failed for connection %s",
+                    conn_id,
+                )
+
+        await asyncio.sleep(interval)
+        
 async def _run_all(session_factory, settings, stop_event: threading.Event) -> None:
     names = [n.strip() for n in (settings.providers or settings.provider).split(",")]
     tasks = [asyncio.create_task(_reconcile_loop(session_factory, settings, stop_event))]
@@ -241,6 +315,13 @@ async def _run_all(session_factory, settings, stop_event: threading.Event) -> No
         tasks.append(
             asyncio.create_task(
                 _bluesky_poll_loop(session_factory, settings, stop_event)
+            )
+        )
+
+    if "reddit" in names:
+        tasks.append(
+            asyncio.create_task(
+                _reddit_poll_loop(session_factory, settings, stop_event)
             )
         )
     await asyncio.gather(*tasks)

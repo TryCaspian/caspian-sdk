@@ -173,6 +173,19 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             base_url=settings.bluesky_base_url,
             webhook_secret=settings.bluesky_webhook_secret,
         )
+    if name == "fake-reddit":
+        from .fakes.fake_reddit import FakeRedditProvider
+
+        return FakeRedditProvider()
+    if name == "reddit":
+        from .reddit import RedditProvider
+
+        return RedditProvider(
+            base_url=settings.reddit_base_url,
+            token_url=settings.reddit_token_url,
+            webhook_secret=settings.reddit_webhook_secret,
+            user_agent=settings.reddit_user_agent,
+        )
     if name == "fake-discord":
         from .fakes.fake_social import FakeDiscordProvider
 
