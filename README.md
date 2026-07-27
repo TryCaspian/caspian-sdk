@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/91107?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-91107" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91107/daily?language=Python" alt="TryCaspian%2Fcaspian-sdk | Trendshift" width="250" height="55"/></a>
+</p>
+
+<p align="center">
   <a href="https://trycaspianai.com">Website</a>
   ·
   <a href="https://pypi.org/project/caspian-sdk/">PyPI</a>
@@ -43,7 +47,7 @@
 
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
 
 ## Get started in 30 seconds
 
@@ -91,7 +95,7 @@ client.listen()  # one loop, every channel
 > standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
 > or just use the SDK directly (below); nothing else about the flow changes.
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **TypeScript** — same contract, zero runtime dependencies:
 
@@ -178,7 +182,7 @@ flowchart LR
     E[Email] --> A
     M[Instagram · Messenger] --> A
     X[X] --> A
-    A["caspian-adapters<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
+    A["gateway providers<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
     I --> H["your on_message handler"]
     H -->|"message.reply()"| I
 ```
@@ -252,6 +256,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
+| <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
@@ -283,6 +288,14 @@ If your agent needs to talk to humans, this is the layer under it:
 - **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
 - **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
 - **OpenClaw agents** — `clawhub install @trycaspian/caspian` ([the skill](./packages/clawhub-skill)) teaches your agent to wire itself up; [`openclaw-caspian`](./packages/openclaw) is the native channel plugin.
+- **OpenCode agents** — [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) bridges Caspian email / Telegram / Discord into OpenCode sessions:
+
+  ```bash
+  bunx caspian-opencode-plugin setup   # or: setup --project
+  # restart OpenCode
+  ```
+
+  Details: [`packages/opencode`](./packages/opencode).
 - **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
 
 Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
@@ -320,7 +333,8 @@ client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
 <summary><b>Adapters without the SDK</b> — use the channel layer directly</summary>
 
 ```python
-from caspian_adapters import Settings, build_providers
+from comm_gateway.config import Settings
+from comm_gateway.providers.registry import build_providers
 
 providers = build_providers(Settings(
     providers="instagram",
@@ -393,13 +407,31 @@ that can't render blocks; omit it and a clean text fallback is generated for you
 
 | Package | |
 |---|---|
-| [`packages/adapters`](./packages/adapters) | `caspian-adapters` — the channel adapters. One small interface per platform (`provision` / `send` / `reply` / `parse_webhook`), real signature verification, an offline fake per channel. |
+| [`server`](./server) | `comm-gateway` — the self-hostable backend. Channel adapters (`server/src/comm_gateway/providers/`) implement one small interface per platform (`provision` / `send` / `reply` / `parse_webhook`) with real signature verification and an offline fake each. |
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
+| [`packages/opencode`](./packages/opencode) | [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) — OpenCode plugin: Caspian inbox ↔ OpenCode sessions (email, Telegram, Discord). Install: `bunx caspian-opencode-plugin setup`. |
 | [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
+| [`server`](./server) | `comm-gateway` — the backend the client talks to. A self-hostable FastAPI gateway (providers, routing, webhook verification, workers). |
+
+## Self-hosting
+
+The whole stack lives here: the client SDKs above **and** the gateway they talk to, in [`server/`](./server). You can run your own instead of the hosted one.
+
+```bash
+docker compose up
+```
+
+That brings the gateway up on `http://localhost:8000` with Postgres and the in-memory `fake` provider, so you can point the SDK at it right away:
+
+```python
+client = CommClient(base_url="http://localhost:8000", api_key="comm_dev_key_change_me")
+```
+
+Bring your own channel credentials (per connection or via env); billing and analytics stay off unless you configure them. Full guide in [`server/README.md`](./server/README.md).
 
 ## Starter templates
 
@@ -443,4 +475,8 @@ Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0 for this repository. The `caspian-sdk` package on PyPI is MIT.
+The self-hostable server (`server/`, published as `comm-gateway`) is
+**AGPL-3.0-or-later**: run it yourself freely, but if you offer it as a hosted
+service you must publish your changes. The client libraries are permissive
+**MIT** so you can use them in any app: the Python and TypeScript `caspian-sdk`
+packages (`sdks/`) and the `caspian` CLI (`apps/cli`).

@@ -38,13 +38,14 @@ await client.listen(); // one loop, every channel
 | **Email** | `connectEmail()` — default domain or your own |
 | **Slack** | `installSlack()` (one-click) or `connectSlack({...})` (your own app) |
 | **Discord** | `installDiscord()` (one-click) or `connectDiscord({...})` |
+| **GitHub issues / PRs** | `installGitHub()` or `connectGitHub({...})` |
 | **X / Twitter** | `installX()` (one-click) or `connectX({...})` |
 | **WhatsApp** | `connectWhatsapp({...})` (Caspian hosted) |
 | **SMS / phone** | `connectPhone({...})` — own GSM modem, or Caspian hosted |
 | **Telegram** | `connectTelegram({ botToken })` |
 | **iMessage** | `connectImessage()` |
 
-OAuth channels (Slack/Discord/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
+Install channels (Slack/Discord/GitHub/X/Instagram/Facebook) return a connection with an `authorize_url` — hand it to the user; the connection flips to `active` once they approve.
 
 ## Make your agent platform-aware
 
@@ -128,19 +129,41 @@ shared coordination layer.
 
 ## Errors
 
-Non-2xx responses throw a `CommError` with `statusCode` and `detail`:
+Non-2xx responses throw a `CommError` with `statusCode` and `detail`. Paid-channel
+operations can throw two more specific subclasses so you can react precisely:
 
 ```ts
-import { CommError } from "caspian-sdk";
+import { CommError, AccountRequiredError, InsufficientCreditError } from "caspian-sdk";
 
 try {
   await client.connectX({ accessToken, userId });
 } catch (err) {
-  if (err instanceof CommError && err.statusCode === 402) {
-    // Paid channel — sign in first. err.detail explains how.
+  if (err instanceof AccountRequiredError) {
+    // Paid channel needs a one-time developer sign-in first (HTTP 401).
+    // Run the sign-in flow directly:
+    await err.login();
+    // Or inspect the raw device-flow endpoints yourself:
+    console.log(err.loginOptions);
+  } else if (err instanceof InsufficientCreditError) {
+    // Project is out of credit, or hit a spend cap (HTTP 402 / 429).
+    console.log("Current balance (cents):", err.balanceCents);
+
+    // Mint a hosted checkout link — defaults to the gateway's suggested amount:
+    const { checkout_url } = await err.topUp();
+    console.log("Top up here:", checkout_url);
+
+    // Or specify your own amount:
+    // await err.topUp(5000);
+  } else if (err instanceof CommError) {
+    // Any other non-2xx response.
+    console.log(err.statusCode, err.detail);
   }
 }
 ```
+
+- **`AccountRequiredError`** — thrown when a paid channel needs a one-time developer sign-in (HTTP 401). Free channels never raise this. Call `.login()` to run the sign-in, or read `.loginOptions` for the raw endpoints.
+- **`InsufficientCreditError`** — thrown when a paid channel is blocked due to insufficient credit (HTTP 402) or a spend cap (HTTP 429). Use `.balanceCents` and `.paymentOptions` to inspect the situation in code, or call `.topUp(amountCents?)` to mint a checkout link — omit the argument to use the gateway's suggested amount.
+- All other non-2xx responses continue to throw a plain `CommError`.
 
 ## Docs
 

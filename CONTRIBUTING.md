@@ -51,14 +51,14 @@ npm run typecheck    # tsc --noEmit
 
 ## What lives where
 
-- `packages/adapters` — channel adapters. Each adapter implements the small provider interface in `caspian_adapters/base.py`: `provision` / `send` / `reply` / `parse_webhook` (+ optional `typing`, OAuth hooks), a `capabilities` set, and webhook signature verification.
+- `server/src/comm_gateway/providers` — channel adapters. Each adapter implements the small provider interface in `providers/base.py`: `provision` / `send` / `reply` / `parse_webhook` (+ optional `typing`, OAuth hooks), a `capabilities` set, and webhook signature verification.
 - `sdks/python` — the Python `caspian-sdk` client.
 - `sdks/typescript` — the TypeScript / JavaScript `caspian-sdk` client (published to npm).
 - `apps/cli` — the `caspian` CLI. It ships as a separate package `caspian-cli` (`pip install caspian-cli`, or run without installing via `uvx caspian-cli`), while `caspian-sdk` is the library. `comm` is a legacy alias only.
 
 ## Adding a new channel adapter
 
-1. Implement the provider interface in a new module under `packages/adapters/src/caspian_adapters/`.
+1. Implement the provider interface in a new module under `server/src/comm_gateway/providers/`.
 2. Register it in `registry.py` (or ship it as your own package via the `caspian.providers` entry-point group — no fork needed).
 3. Add an in-memory fake that consumes the platform's real inbound payload shape, so integrations can be tested offline.
 4. Add tests: payload normalization, webhook signature verification (accept + reject), and any routing rules.

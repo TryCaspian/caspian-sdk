@@ -92,7 +92,7 @@ provides-extras = ["telegram-user", "modem"]
 
 [[package]]
 name = "caspian-cli"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "httpx" },

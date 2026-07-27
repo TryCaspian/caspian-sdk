@@ -32,15 +32,18 @@ function isRecord(value: unknown): value is Record<string, any> {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      // Detach the abort listener when the timer fires normally: listen()
+      // reuses one long-lived signal for every poll, so leaving the listener
+      // attached would accumulate one dead closure per sleep forever.
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -346,8 +349,12 @@ export class CommClient {
     if (response.status >= 400) {
       let detailValue: unknown;
       let detail: string;
+      // Read the body once as text: response.json() consumes the stream, so a
+      // later response.text() fallback could never run — non-JSON error bodies
+      // (an HTML 502 from a proxy, say) would lose their real detail.
+      const raw = await response.text().catch(() => "");
       try {
-        const body = (await response.json()) as { detail?: unknown };
+        const body = JSON.parse(raw) as { detail?: unknown };
         detailValue = body?.detail;
         if (body && body.detail != null) {
           // FastAPI validation errors put an array/object under `detail`.
@@ -356,7 +363,7 @@ export class CommClient {
           detail = JSON.stringify(body);
         }
       } catch {
-        detail = await response.text().catch(() => response.statusText);
+        detail = raw || response.statusText;
       }
       // A paid channel needs a one-time developer sign-in first.
       if (
@@ -468,6 +475,22 @@ export class CommClient {
   connectTelegram(opts: ConnectOptions & { botToken: string }): Promise<Connection> {
     const { botToken, ...rest } = opts;
     return this.connect("telegram", rest, { bot_token: botToken });
+  }
+
+  /**
+   * Connect a Bluesky account. Pass the handle or DID as `identifier` and an app
+   * password (bsky.app -> Settings -> Privacy and security -> App passwords) as
+   * `appPassword` — never the account's real password. The gateway polls Bluesky
+   * notifications and routes mentions/replies to the connected agent.
+   */
+  connectBluesky(
+    opts: ConnectOptions & { identifier: string; appPassword: string },
+  ): Promise<Connection> {
+    const { identifier, appPassword, ...rest } = opts;
+    return this.connect("bluesky", rest, {
+      identifier,
+      app_password: appPassword,
+    });
   }
 
   /**
@@ -604,6 +627,55 @@ export class CommClient {
         agent_id: opts.agentId ?? null,
         display_name: opts.displayName ?? null,
         icon_url: opts.iconUrl ?? null,
+      },
+    });
+  }
+
+  /**
+   * Start installation of a bring-your-own GitHub App. The App must use the
+   * gateway's setup/webhook URLs and subscribe to issue_comment events.
+   */
+  connectGitHub(
+    opts: ConnectOptions & {
+      githubAppId: string;
+      githubAppSlug: string;
+      githubPrivateKey: string;
+      githubWebhookSecret: string;
+      receiveMode?: "mentions" | "all";
+    },
+  ): Promise<Connection> {
+    const {
+      githubAppId,
+      githubAppSlug,
+      githubPrivateKey,
+      githubWebhookSecret,
+      receiveMode,
+      ...rest
+    } = opts;
+    return this.connect("github", { ...rest, wait: false }, {
+      github_app_id: githubAppId,
+      github_app_slug: githubAppSlug,
+      github_private_key: githubPrivateKey,
+      github_webhook_secret: githubWebhookSecret,
+      receive_mode: receiveMode ?? "mentions",
+    });
+  }
+
+  /** One-click installation of the gateway's shared GitHub App. */
+  installGitHub(
+    opts: {
+      customerId?: string;
+      agentId?: string;
+      displayName?: string;
+      receiveMode?: "mentions" | "all";
+    } = {},
+  ): Promise<Connection> {
+    return this.request("POST", "/v1/connections/github/install", {
+      json: {
+        customer_id: opts.customerId ?? null,
+        agent_id: opts.agentId ?? null,
+        display_name: opts.displayName ?? null,
+        receive_mode: opts.receiveMode ?? "mentions",
       },
     });
   }

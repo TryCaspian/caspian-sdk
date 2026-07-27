@@ -151,7 +151,7 @@ flowchart LR
     E[邮件] --> A
     M[Instagram · Messenger] --> A
     X[X] --> A
-    A["caspian-adapters<br/>签名校验 · 归一化 · 线程"] --> I["同一个智能体身份"]
+    A["gateway providers<br/>签名校验 · 归一化 · 线程"] --> I["同一个智能体身份"]
     I --> H["你的 on_message handler"]
     H -->|"message.reply()"| I
 ```
@@ -296,7 +296,8 @@ client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
 <summary><b>不经过 SDK 直接使用适配器</b></summary>
 
 ```python
-from caspian_adapters import Settings, build_providers
+from comm_gateway.config import Settings
+from comm_gateway.providers.registry import build_providers
 
 providers = build_providers(Settings(
     providers="instagram",
@@ -312,7 +313,7 @@ providers = build_providers(Settings(
 
 | 包 | |
 |---|---|
-| [`packages/adapters`](./packages/adapters) | `caspian-adapters`——渠道适配器。每个平台一个小巧接口（`provision` / `send` / `reply` / `parse_webhook`），真实的签名校验，每个渠道配一个离线 fake。 |
+| [`server`](./server) | `comm-gateway`——可自托管的后端。渠道适配器（`server/src/comm_gateway/providers/`）为每个平台实现一个小接口（`provision` / `send` / `reply` / `parse_webhook`），带真实签名校验与离线 fake。 |
 | [`sdks/python`](./sdks/python) | `caspian-sdk`（PyPI）——Python 客户端：`on_message`、`connect_*()`、`message.reply()`、行为指南。 |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk`（npm）——TypeScript 客户端：同一契约，camelCase API，零运行时依赖，Node 18+。 |
 | [`apps/cli`](./apps/cli) | `caspian`——在终端里初始化项目、连接渠道、追踪事件。 |
