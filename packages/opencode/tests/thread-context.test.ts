@@ -36,6 +36,8 @@ describe("ThreadContextStore bounded growth", () => {
     remember(store, 2001);
     expect(store.getBySession("sess_1")).toBeUndefined();
     expect(store.getBySession("sess_2")).toBeDefined();
+    expect(store.getByConversation("conv_1")).toBeUndefined();
+    expect(store.getByConversation("conv_2")).toBeDefined();
   });
 
   test("re-remembering an existing session does not inflate the map size", () => {
