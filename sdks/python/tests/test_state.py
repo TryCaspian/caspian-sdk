@@ -63,6 +63,24 @@ class RecordingState:
             self.released.append(conversation_id)
 
 
+class FailingState:
+    def __init__(self, failure):
+        self.failure = failure
+
+    def seen(self, _event_id):
+        if self.failure == "seen":
+            raise RuntimeError("state unavailable")
+        return False
+
+    @contextmanager
+    def lock(self, _conversation_id):
+        if self.failure == "lock":
+            raise RuntimeError("state unavailable")
+        yield
+        if self.failure == "release":
+            raise RuntimeError("state unavailable")
+
+
 def test_client_deduplicates_and_locks_all_event_types():
     state = RecordingState()
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
@@ -121,6 +139,32 @@ def test_client_deduplicates_and_locks_all_event_types():
         "reaction-conversation",
     ]
     assert state.released == state.locked
+
+
+@pytest.mark.parametrize("failure", ["seen", "lock", "release"])
+def test_client_skips_state_adapter_failures(failure):
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    client = CommClient(
+        api_key="test",
+        http=httpx.Client(base_url="https://example.test", transport=transport),
+        state=FailingState(failure),
+    )
+    event = {
+        "seq": 1,
+        "type": "message.received",
+        "data": {
+            "message": {
+                "id": "message",
+                "conversation_id": "conversation",
+                "connection_id": "connection",
+            }
+        },
+    }
+
+    try:
+        assert client._dispatch_event(event) is False
+    finally:
+        client.close()
 
 
 def test_in_memory_dedup_expires(monkeypatch):

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { StateLockTimeoutError } from "./errors.js";
 
 export interface StateLock {
@@ -229,7 +231,7 @@ export class RedisStateAdapter implements StateAdapter {
 
   async lock(conversationId: string): Promise<StateLock> {
     const key = `${this.namespace}:lock:${conversationId}`;
-    const token = crypto.randomUUID();
+    const token = randomUUID();
     const deadline = Date.now() + this.lockWaitTimeoutMs;
     while (true) {
       const result = await this.client.set(key, token, { NX: true, PX: this.lockTtlMs });

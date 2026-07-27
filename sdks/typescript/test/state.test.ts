@@ -141,6 +141,54 @@ describe("CommClient state integration", () => {
     ]);
     expect(state.released).toEqual(state.locked);
   });
+
+  it.each(["seen", "lock", "release"] as const)("continues when state %s fails", async (failure) => {
+    const state: StateAdapter = {
+      seen: async () => {
+        if (failure === "seen") throw new Error("state unavailable");
+        return false;
+      },
+      lock: async () => {
+        if (failure === "lock") throw new Error("state unavailable");
+        return {
+          release: async () => {
+            if (failure === "release") throw new Error("state unavailable");
+          },
+        };
+      },
+    };
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      const body =
+        url.pathname === "/v1/events" && url.searchParams.get("after_seq") === "0"
+          ? [
+              {
+                seq: 1,
+                type: "message.received",
+                data: {
+                  message: {
+                    id: "message",
+                    conversation_id: "conversation",
+                    connection_id: "connection",
+                  },
+                },
+              },
+            ]
+          : [];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = new CommClient({
+      apiKey: "test",
+      baseUrl: "https://example.test",
+      fetch: fetchImpl,
+      state,
+    });
+
+    await expect(client.dispatchPending()).resolves.toBe(1);
+  });
 });
 
 describe("InMemoryStateAdapter", () => {
@@ -148,6 +196,14 @@ describe("InMemoryStateAdapter", () => {
     const state = new InMemoryStateAdapter();
     await expect(state.seen("event")).resolves.toBe(false);
     await expect(state.seen("event")).resolves.toBe(true);
+  });
+
+  it("accepts an event again after its deduplication TTL expires", async () => {
+    const state = new InMemoryStateAdapter({ dedupTtlSeconds: 0.01 });
+    await expect(state.seen("event")).resolves.toBe(false);
+    await expect(state.seen("event")).resolves.toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await expect(state.seen("event")).resolves.toBe(false);
   });
 
   it("serializes a conversation in FIFO order", async () => {

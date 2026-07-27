@@ -990,14 +990,26 @@ class CommClient:
 
     def _dispatch_event(self, event: dict) -> bool:
         event_id = self._event_id(event)
-        if event_id is not None and self._state.seen(event_id):
-            return False
+        if event_id is not None:
+            try:
+                if self._state.seen(event_id):
+                    return False
+            except Exception:
+                logger.exception("state dedup failed for event %s; skipping", event_id)
+                return False
         conversation_id = self._conversation_id(event)
         if conversation_id is None:
             self._dispatch_event_unlocked(event)
         else:
-            with self._state.lock(conversation_id):
-                self._dispatch_event_unlocked(event)
+            try:
+                with self._state.lock(conversation_id):
+                    self._dispatch_event_unlocked(event)
+            except Exception:
+                logger.exception(
+                    "state lock failed for conversation %s; skipping",
+                    conversation_id,
+                )
+                return False
         return True
 
     def _dispatch_event_unlocked(self, event: dict) -> None:

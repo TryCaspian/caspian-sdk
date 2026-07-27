@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
 import { InMemoryStateAdapter } from "./state.js";
-import type { StateAdapter } from "./state.js";
+import type { StateAdapter, StateLock } from "./state.js";
 import type {
   Agent,
   AutopayOptions,
@@ -1028,17 +1028,37 @@ export class CommClient {
 
   private async dispatchEvent(event: EventRecord): Promise<boolean> {
     const eventId = this.eventId(event);
-    if (eventId !== undefined && (await this.state.seen(eventId))) return false;
+    if (eventId !== undefined) {
+      try {
+        if (await this.state.seen(eventId)) return false;
+      } catch (err) {
+        logger.error(`state dedup failed for event ${eventId}; skipping`, err);
+        return false;
+      }
+    }
     const conversationId = this.conversationId(event);
     if (conversationId === undefined) {
       await this.dispatchEventUnlocked(event);
       return true;
     }
-    const lock = await this.state.lock(conversationId);
+    let lock: StateLock | undefined;
+    try {
+      lock = await this.state.lock(conversationId);
+    } catch (err) {
+      logger.error(`state lock failed for conversation ${conversationId}; skipping`, err);
+      return false;
+    }
     try {
       await this.dispatchEventUnlocked(event);
+    } catch (err) {
+      logger.error(`event dispatch failed for conversation ${conversationId}; skipping`, err);
+      return false;
     } finally {
-      await lock.release();
+      try {
+        await lock.release();
+      } catch (err) {
+        logger.error(`state lock release failed for conversation ${conversationId}`, err);
+      }
     }
     return true;
   }
