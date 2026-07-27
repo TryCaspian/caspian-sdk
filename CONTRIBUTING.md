@@ -63,6 +63,7 @@ npm run typecheck    # tsc --noEmit
 3. Add an in-memory fake that consumes the platform's real inbound payload shape, so integrations can be tested offline.
 4. Add tests: payload normalization, webhook signature verification (accept + reject), and any routing rules.
 5. Use only the platform's **official API**. Adapters that automate private/unofficial protocols, evade platform enforcement, or enable bulk unsolicited messaging will not be accepted.
+For a complete implementation walkthrough, see [ADAPTER_DEVELOPMENT_GUIDE.md](./ADAPTER_DEVELOPMENT_GUIDE.md).
 
 ## Ground rules
 
