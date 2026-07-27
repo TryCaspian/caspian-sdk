@@ -331,9 +331,14 @@ class SlackProvider:
         if not data.get("ok"):
             raise WebhookVerificationError(f"slack auth.test failed: {data.get('error')}")
         team_id = data.get("team_id", "")
+        # Inbound routes by api_app_id:team_id (see _inbox_id). App-level tokens are
+        # formatted xapp-<ver>-<APP_ID>-<secret>, so the app id is right there —
+        # derive it so provider_resource_id matches what socket events carry.
+        parts = app_token.split("-")
+        app_id = parts[2] if len(parts) > 2 else ""
         return {
             "credentials": {"bot_token": bot_token, "app_token": app_token},
-            "provider_resource_id": f"{team_id}:{data.get('user_id', '')}",
+            "provider_resource_id": f"{app_id}:{team_id}",
             "address": f"slack:{data.get('team') or team_id}",
         }
 
