@@ -11,7 +11,7 @@ Two modes:
 
 For the real mode you also need:
   - CASPIAN_BASE_URL / CASPIAN_API_KEY pointing at a running gateway
-  - The gateway's /webhooks/teams endpoint exposed via ngrok or similar
+  - The gateway's /internal/providers/teams/webhooks endpoint exposed via ngrok or similar
   - That URL registered as the Bot Framework messaging endpoint in Azure
 """
 
@@ -71,6 +71,7 @@ if not args.real:
         content=json.dumps(payload),
         headers={"Content-Type": "application/json"},
     )
+    resp.raise_for_status()
     print(f"Simulated webhook -> HTTP {resp.status_code}")
 
 

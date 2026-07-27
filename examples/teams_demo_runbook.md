@@ -36,7 +36,7 @@ Screenshot these two terminal windows together.
 
 ---
 
-## Real Azure Bot (production proof)
+## Real Azure Bot (manual runbook)
 
 ### Prerequisites
 - Azure Bot registration (create at portal.azure.com → Azure Bot)
