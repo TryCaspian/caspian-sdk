@@ -365,6 +365,30 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
             if existing.status == "pending_oauth":
                 out["authorize_url"] = read_credentials(existing).get("authorize_url")
             return out
+        # Bring-your-own Socket Mode: paste an existing app's bot + app token.
+        # No OAuth, no public webhook — the connection goes active now and the
+        # gateway holds a WebSocket to Slack for inbound (Socket Mode listener).
+        if getattr(body, "slack_bot_token", None) and getattr(body, "slack_app_token", None):
+            prov = provider.socket_mode_provision(body.slack_bot_token, body.slack_app_token)
+            creds = dict(prov["credentials"])
+            if getattr(body, "display_name", None):
+                creds["display_name"] = body.display_name
+            connection = Connection(
+                id=new_id("conn"),
+                project_id=project.id,
+                customer_id=customer.id,
+                agent_id=agent.id,
+                channel=channel,
+                capabilities=_resolve_manifest(provider, getattr(body, "capabilities", None)),
+                status="active",
+                provider=provider.name,
+                provider_resource_id=prov["provider_resource_id"],
+                address=prov["address"],
+                provider_credentials=encrypt_credentials(creds),
+            )
+            session.add(connection)
+            session.commit()
+            return connection_out(connection)
         # bring-your-own app credentials (developer creates their own Slack app)
         app_creds = {
             k: getattr(body, k)

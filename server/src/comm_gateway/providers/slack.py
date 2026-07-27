@@ -310,6 +310,33 @@ class SlackProvider:
             "address": f"slack:{team.get('name') or team.get('id')}",
         }
 
+    def socket_mode_provision(self, bot_token: str, app_token: str) -> dict:
+        """Validate a bring-your-own Socket Mode app and return connection fields.
+
+        No OAuth: the developer pastes an existing app's bot token (``xoxb-``) and
+        app-level token (``xapp-``, scope ``connections:write``). Inbound arrives
+        over a WebSocket the gateway holds (see ``listeners`` Socket Mode client),
+        so nothing changes on the Slack side. We ``auth.test`` the bot token to
+        confirm it and derive the workspace identity used for routing.
+        """
+        if not bot_token.startswith("xoxb-"):
+            raise WebhookVerificationError("slack bot_token must be an xoxb- bot token")
+        if not app_token.startswith("xapp-"):
+            raise WebhookVerificationError(
+                "slack app_token must be an xapp- app-level token (scope connections:write)"
+            )
+        r = self._client.post("/auth.test", headers={"Authorization": f"Bearer {bot_token}"})
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise WebhookVerificationError(f"slack auth.test failed: {data.get('error')}")
+        team_id = data.get("team_id", "")
+        return {
+            "credentials": {"bot_token": bot_token, "app_token": app_token},
+            "provider_resource_id": f"{team_id}:{data.get('user_id', '')}",
+            "address": f"slack:{data.get('team') or team_id}",
+        }
+
     def needs_refresh(self, credentials: Mapping[str, str] | None) -> bool:
         """True when a rotating access token is at/near expiry (120s buffer)."""
         creds = credentials or {}

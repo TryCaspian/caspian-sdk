@@ -614,19 +614,32 @@ class CommClient:
         slack_client_id: str | None = None,
         slack_client_secret: str | None = None,
         slack_signing_secret: str | None = None,
+        bot_token: str | None = None,
+        app_token: str | None = None,
         customer_id=None,
         agent_id=None,
         **kwargs,
     ) -> dict:
-        """Start a Slack install. Bring your own Slack app (create one at
-        api.slack.com/apps and pass its client id/secret/signing secret) so the
-        bot carries your brand. Returns a connection with an `authorize_url`; the
-        workspace owner clicks it to approve, then the connection goes active."""
+        """Connect Slack, two ways:
+
+        - **Bring-your-own tokens (Socket Mode):** pass ``bot_token`` (``xoxb-``)
+          and ``app_token`` (``xapp-``, scope ``connections:write``) from an app
+          you already have. No OAuth, no public webhook, nothing changes on the
+          Slack side; the connection goes active immediately and the gateway
+          holds a socket for inbound.
+        - **OAuth (branded app):** pass ``slack_client_id`` /
+          ``slack_client_secret`` / ``slack_signing_secret`` (create the app at
+          api.slack.com/apps). Returns a connection with an ``authorize_url`` for
+          the workspace owner to approve.
+        """
+        socket = bool(bot_token and app_token)
         return self._connect(
-            "slack", customer_id, agent_id, wait=False,
+            "slack", customer_id, agent_id, wait=socket,
             slack_client_id=slack_client_id,
             slack_client_secret=slack_client_secret,
             slack_signing_secret=slack_signing_secret,
+            slack_bot_token=bot_token,
+            slack_app_token=app_token,
             **kwargs,
         )
 
