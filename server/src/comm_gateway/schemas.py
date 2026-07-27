@@ -102,6 +102,14 @@ class XConnectionCreate(BaseModel):
     access_secret: str | None = None  # OAuth 1.0a token secret (bring-your-own account)
     user_id: str | None = None
     username: str | None = None  # @screen_name, for display
+    
+class BlueskyConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    identifier: str
+    app_password: str
 
 
 class PhoneConnectionCreate(BaseModel):

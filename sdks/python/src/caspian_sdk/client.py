@@ -717,7 +717,7 @@ class CommClient:
             "x", customer_id, agent_id, access_token=access_token, user_id=user_id,
             access_secret=access_secret, username=username, **kwargs,
         )
-
+        
     def install_x(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """One-click connect of an X account as a DM bot - no tokens to paste.
 
@@ -728,7 +728,28 @@ class CommClient:
         connect_x(access_token=...) instead to bring your own account tokens."""
         body = {"customer_id": customer_id, "agent_id": agent_id, **kwargs}
         return self._request("POST", "/v1/connections/x/install", json=body)
+    def connect_bluesky(
+        self,
+        identifier: str,
+        app_password: str,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
+    ) -> dict:
+        """Connect a Bluesky account.
 
+        Pass the Bluesky handle or DID as ``identifier`` and an app password as
+        ``app_password``. The gateway polls Bluesky notifications and routes
+        supported mentions and replies to the connected agent.
+        """
+        return self._connect(
+            "bluesky",
+            customer_id,
+            agent_id,
+            identifier=identifier,
+            app_password=app_password,
+            **kwargs,
+        )
     def connect_instagram(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """Start an Instagram DM install (OAuth). Returns an `authorize_url`."""
         return self._connect("instagram", customer_id, agent_id, wait=False, **kwargs)

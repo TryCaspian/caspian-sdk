@@ -474,6 +474,22 @@ export class CommClient {
   }
 
   /**
+   * Connect a Bluesky account. Pass the handle or DID as `identifier` and an app
+   * password (bsky.app -> Settings -> Privacy and security -> App passwords) as
+   * `appPassword` — never the account's real password. The gateway polls Bluesky
+   * notifications and routes mentions/replies to the connected agent.
+   */
+  connectBluesky(
+    opts: ConnectOptions & { identifier: string; appPassword: string },
+  ): Promise<Connection> {
+    const { identifier, appPassword, ...rest } = opts;
+    return this.connect("bluesky", rest, {
+      identifier,
+      app_password: appPassword,
+    });
+  }
+
+  /**
    * Register a custom subdomain (e.g. agents.example.com). Returns the DNS
    * records to add at the registrar; poll getDomain() until active.
    */

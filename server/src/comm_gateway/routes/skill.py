@@ -26,8 +26,9 @@ The developer may just say "add caspian-sdk" without naming channels. Do this:
 2. Discover which channels are actually connectable RIGHT NOW:
    `curl -s {base}/v1/channels -H "Authorization: Bearer $CASPIAN_API_KEY"`
    That returns the live channels (currently: email, discord, slack, x,
-   telegram, phone/SMS). Phone/SMS is BRING-YOUR-OWN (the developer's own
-   Twilio/Telnyx number - see that section).
+   telegram, phone/SMS, bluesky). Phone/SMS is BRING-YOUR-OWN (the developer's
+   own Twilio/Telnyx number - see that section). Bluesky is BRING-YOUR-OWN too
+   (the developer's own Bluesky handle + an app password - see that section).
    Only offer those. Other channels (WhatsApp, Voice, RCS, Instagram, Facebook,
    iMessage) exist in the SDK but are NOT live on this gateway yet - do NOT try
    to connect them (they 400). If a developer asks for one of those, tell them
@@ -50,8 +51,8 @@ Every channel uses the SAME handler from step 3 - adding one is just another
 If `CASPIAN_API_KEY` is already in the project's `.env`, SKIP this step.
 
 **Free channels need NO signup.** Email, Telegram, Discord, Slack, Instagram,
-Facebook, and the developer's own Twilio/Telnyx number cost nothing — just mint an
-instant key and start building:
+Facebook, Bluesky, and the developer's own Twilio/Telnyx number cost nothing — just
+mint an instant key and start building:
 
 ```bash
 curl -s -X POST {base}/v1/projects/sandbox \\
@@ -527,6 +528,42 @@ connected to another agent.
 To verify: DM the connected account from any other X account - the running
 integration prints the inbound DM and replies within ~10 seconds. Note: X DM
 reads/sends are pay-per-use, so the account needs a small credit balance.
+
+## Adding Bluesky (bring your own account + app password)
+
+Bluesky is BRING-YOUR-OWN and free: the agent posts as the developer's OWN
+Bluesky account. It needs two things only the developer can create - their handle
+and an app password (never the account's real login password). STOP and ask:
+
+> Bluesky connects as your own account. I need two things:
+>   1. Your handle (e.g. myagent.bsky.social) or the account email.
+>   2. An app password: log in at bsky.app -> Settings -> Privacy and security ->
+>      App passwords -> Add App Password, then paste it (xxxx-xxxx-xxxx-xxxx).
+> Use a DEDICATED account if you don't want your personal handle auto-replying.
+
+Do not proceed without both, and never use the account's real password. Once the
+developer provides them:
+
+```python
+bsky = client.connect_bluesky(
+    identifier="<their handle or email>",
+    app_password="<their app password>",
+)
+print("Bluesky account:", bsky["address"])   # the resolved handle
+```
+
+Or via CLI: `caspian connect bluesky` (it prompts for the handle + app password).
+
+The same `on_message` handler answers Bluesky; `message.reply()` posts back in the
+same thread. Inbound arrives by polling (a few seconds' latency, no webhook to set
+up) - the gateway watches the account's mentions. Capabilities: receive, reply,
+send (no cold-initiate). A post is capped at 300 characters and renders NO markdown,
+so keep replies short and plain-text. A 409 means that account is already connected
+to another agent; a 422 naming `identifier`/`app_password` means one was missing.
+
+To verify: from another Bluesky account, mention the connected handle
+(@theirhandle.bsky.social) - the running integration prints the inbound post and
+replies within a few seconds.
 
 ## Notes
 
