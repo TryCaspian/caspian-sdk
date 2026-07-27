@@ -1038,11 +1038,22 @@ def list_channels(request: Request):
     Callers should check capabilities before offering an operation rather than
     assuming every channel behaves like every other.
     """
+    from ..channel_guides import setup_for
+
     return [
         {
             "channel": provider.channel,
             "provider": provider.name,
             "capabilities": sorted(provider.capabilities),
+            # What a developer must supply at connect (surfaced so onboarding is
+            # self-serve: a client can render exactly what each channel needs).
+            "required_credentials": list(
+                getattr(provider, "connect_credentials", ())
+            ),
+            "optional_credentials": list(
+                getattr(provider, "optional_connect_credentials", ())
+            ),
+            "setup": setup_for(provider.channel),
         }
         for provider in request.app.state.providers.values()
     ]
