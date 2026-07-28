@@ -29,6 +29,19 @@ API = "https://api.linear.app"
 MAX_TIMESTAMP_SKEW = 60 * 5  # Reject webhook deliveries older than 5 minutes
 
 
+def verify_linear_timestamp(data: dict) -> None:
+    """Verify that a Linear webhook payload timestamp falls within MAX_TIMESTAMP_SKEW."""
+    if isinstance(data, dict) and "webhookTimestamp" in data:
+        try:
+            raw_ts = float(data["webhookTimestamp"])
+            ts_sec = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
+            skew = abs(time.time() - ts_sec)
+        except (ValueError, TypeError):
+            raise WebhookVerificationError("Linear timestamp invalid") from None
+        if skew > MAX_TIMESTAMP_SKEW:
+            raise WebhookVerificationError("Linear timestamp too old")
+
+
 def parse_linear_comment(data: dict, delivery_id: str = "") -> list[InboundMessage]:
     """Normalize a created Linear ``Comment`` webhook into Caspian's InboundMessage schema."""
     if not isinstance(data, dict):
@@ -158,15 +171,7 @@ class LinearProvider:
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
 
-        if isinstance(data, dict) and "webhookTimestamp" in data:
-            try:
-                raw_ts = float(data["webhookTimestamp"])
-                ts_sec = raw_ts / 1000.0 if raw_ts > 1e11 else raw_ts
-                skew = abs(time.time() - ts_sec)
-            except (ValueError, TypeError):
-                raise WebhookVerificationError("Linear timestamp invalid") from None
-            if skew > MAX_TIMESTAMP_SKEW:
-                raise WebhookVerificationError("Linear timestamp too old")
+        verify_linear_timestamp(data)
 
         delivery_id = header_map.get("linear-delivery", "") or header_map.get("x-delivery", "")
         return parse_linear_comment(data, delivery_id=delivery_id)
@@ -207,8 +212,8 @@ class LinearProvider:
         }
         """
         variables = {"issueId": thread_id, "body": message.text or ""}
-        
-        # Support both Linear Personal API Keys (lin_api_...) and OAuth Bearer Tokens
+
+        # Support Linear Personal API Keys (lin_api_...) and OAuth Bearer Tokens
         if api_key.startswith("Bearer "):
             auth_header = api_key
         elif api_key.startswith("lin_api_"):

@@ -61,7 +61,7 @@ def test_linear_signature_missing_header():
     payload = b'{"type": "Comment", "action": "create"}'
 
     with pytest.raises(WebhookVerificationError, match="signature header missing"):
-        provider._verify_signature(payload, {})
+        provider._verify_signature(payload, headers={})
 
 
 def test_linear_parse_webhook_timestamp_validation():
@@ -220,8 +220,15 @@ def test_linear_send_and_reply_success():
     assert all(r.url.path == "/graphql" for r in requests)
     assert all(r.headers["authorization"] == "lin_api_key_test_123" for r in requests)
 
+    # Validate send GraphQL request query and variables
     req1_json = json.loads(requests[0].content)
+    assert "mutation CreateComment" in req1_json["query"]
     assert req1_json["variables"] == {"issueId": "ENG-42", "body": "Resolving issue via PR"}
+
+    # Validate reply GraphQL request query and variables
+    req2_json = json.loads(requests[1].content)
+    assert "mutation CreateComment" in req2_json["query"]
+    assert req2_json["variables"] == {"issueId": "ENG-42", "body": "Follow up reply"}
 
 
 def test_linear_send_requires_destination():
@@ -285,6 +292,18 @@ def test_fake_linear_provider_round_trip():
     assert len(messages) == 1
     assert messages[0].external_event_id == "fake-delivery"
     assert provider.route_key(payload) == provider.organization_id
+
+    # Test provision synchronizes organization_id
+    prov_res = provider.provision(
+        ProvisionRequest(
+            connection_id="conn_1",
+            customer_id="cust_1",
+            agent_id="agent_1",
+            credentials={"organization_id": "org_sync_999"},
+        )
+    )
+    assert prov_res.provider_resource_id == "org_sync_999"
+    assert provider.organization_id == "org_sync_999"
 
     sent = provider.send("org_123", OutboundMessage(to=["ENG-42"], text="Hello"), {})
     replied = provider.reply("org_123", "ENG-42:1001", OutboundMessage(text="Reply"), {})

@@ -13,7 +13,7 @@ from ..base import (
     lower_headers,
     split_composite_id,
 )
-from ..linear import LinearProvider, parse_linear_comment
+from ..linear import LinearProvider, parse_linear_comment, verify_linear_timestamp
 
 
 class FakeLinearProvider:
@@ -35,6 +35,8 @@ class FakeLinearProvider:
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
         credentials = request.credentials or {}
+        if credentials.get("organization_id"):
+            self.organization_id = credentials["organization_id"]
         return ProvisionResult(
             address=credentials.get("address", "linear:acme"),
             provider_resource_id=credentials.get("organization_id", self.organization_id),
@@ -64,6 +66,7 @@ class FakeLinearProvider:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
+        verify_linear_timestamp(data)
         header_map = lower_headers(headers)
         return parse_linear_comment(
             data,
