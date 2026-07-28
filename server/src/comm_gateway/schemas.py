@@ -89,6 +89,13 @@ class SlackConnectionCreate(BaseModel):
     slack_client_id: str | None = None
     slack_client_secret: str | None = None
     slack_signing_secret: str | None = None
+    # Bring-your-own tokens via Socket Mode: paste an existing app's bot token
+    # (xoxb-) + app-level token (xapp-, scope connections:write). No OAuth, no
+    # public webhook — the gateway holds a WebSocket to Slack for inbound. Use
+    # this to onboard an app that already works (e.g. a Socket Mode app) with no
+    # change on the Slack side.
+    slack_bot_token: str | None = None
+    slack_app_token: str | None = None
 
 
 class XConnectionCreate(BaseModel):
@@ -102,6 +109,14 @@ class XConnectionCreate(BaseModel):
     access_secret: str | None = None  # OAuth 1.0a token secret (bring-your-own account)
     user_id: str | None = None
     username: str | None = None  # @screen_name, for display
+    
+class BlueskyConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    identifier: str
+    app_password: str
 
 
 class PhoneConnectionCreate(BaseModel):

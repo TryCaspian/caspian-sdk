@@ -17,6 +17,7 @@ from ..crypto import read_credentials, write_credentials
 from ..jobs import ingest_inbound
 from ..models import Connection
 from .discord_gateway import DiscordGatewayClient
+from .slack_socket import SlackSocketClient
 
 log = logging.getLogger("comm.listener")
 
@@ -43,6 +44,62 @@ def _active_discord_bots(session_factory) -> dict[str, str]:
             if token and conn.provider_resource_id:
                 out[conn.provider_resource_id] = token
     return out
+
+
+def _active_slack_socket_connections(session_factory) -> dict[str, str]:
+    """conn_id -> app_token for active BYO-token (Socket Mode) Slack connections.
+
+    OAuth Slack connections have no app_token and receive over the webhook, so
+    they're skipped — only bring-your-own-token connections need a held socket.
+    """
+    out: dict[str, str] = {}
+    with session_factory() as session:
+        rows = session.execute(
+            select(Connection).where(
+                Connection.provider == "slack",
+                Connection.status == "active",
+            )
+        ).scalars().all()
+        for conn in rows:
+            app_token = read_credentials(conn).get("app_token")
+            if app_token:
+                out[conn.id] = app_token
+    return out
+
+
+async def _slack_socket_loop(session_factory, settings, stop_event: threading.Event) -> None:
+    """Reconcile a held Socket Mode WebSocket per active BYO-token Slack connection
+    (same shape as the Discord gateway reconciler)."""
+    clients: dict[str, tuple] = {}  # conn_id -> (client, task)
+
+    def sink(inbound) -> None:
+        ingest_inbound(session_factory, "slack", inbound)
+
+    while not stop_event.is_set():
+        try:
+            wanted = _active_slack_socket_connections(session_factory)
+        except Exception:
+            log.exception("slack socket reconcile failed to read connections")
+            wanted = {cid: c._app_token for cid, (c, _) in clients.items()}  # keep current
+
+        for conn_id, app_token in wanted.items():
+            if conn_id not in clients:
+                client = SlackSocketClient(app_token, conn_id, sink)
+                task = asyncio.create_task(client.run())
+                clients[conn_id] = (client, task)
+                log.info("started slack socket listener for connection %s", conn_id)
+        for conn_id in list(clients):
+            if conn_id not in wanted:
+                client, task = clients.pop(conn_id)
+                client.stop()
+                task.cancel()
+                log.info("stopped slack socket listener for connection %s", conn_id)
+
+        await asyncio.sleep(RECONCILE_INTERVAL)
+
+    for client, task in clients.values():
+        client.stop()
+        task.cancel()
 
 
 async def _reconcile_loop(session_factory, settings, stop_event: threading.Event) -> None:
@@ -108,6 +165,35 @@ def _active_x_connections(session_factory) -> list[tuple[str, dict]]:
             out.append((conn.id, read_credentials(conn)))
     return out
 
+def _active_bluesky_connections(session_factory) -> list[tuple[str, dict]]:
+    """(connection_id, decrypted credentials) for every active Bluesky connection."""
+    out: list[tuple[str, dict]] = []
+    with session_factory() as session:
+        rows = session.execute(
+            select(Connection).where(
+                Connection.provider == "bluesky",
+                Connection.status == "active",
+            )
+        ).scalars().all()
+
+        for conn in rows:
+            out.append((conn.id, read_credentials(conn)))
+
+    return out
+
+
+def _save_bluesky_cursor(session_factory, conn_id: str, cursor: str) -> None:
+    """Persist the newest-seen Bluesky notification cursor."""
+    with session_factory() as session:
+        conn = session.get(Connection, conn_id)
+        if conn is None:
+            return
+
+        creds = read_credentials(conn)
+        creds["bluesky_cursor"] = cursor
+        write_credentials(conn, creds)
+        session.commit()
+
 
 def _save_dm_cursor(session_factory, conn_id: str, cursor: str) -> None:
     """Persist the newest-seen dm_event id on the connection so the next poll
@@ -152,12 +238,75 @@ async def _x_dm_poll_loop(session_factory, settings, stop_event: threading.Event
                 log.exception("x DM poll failed for connection %s", conn_id)
         await asyncio.sleep(interval)
 
+async def _bluesky_poll_loop(session_factory, settings, stop_event: threading.Event) -> None:
+    """Poll each active Bluesky connection for mentions and replies."""
+
+    from ..providers.registry import _build_one
+
+    provider = _build_one("bluesky", settings)
+
+    interval = getattr(settings, "bluesky_poll_interval", 10.0)
+
+    log.info("started Bluesky poller (interval=%ss)", interval)
+
+    while not stop_event.is_set():
+        try:
+            conns = _active_bluesky_connections(session_factory)
+        except Exception:
+            log.exception("bluesky poller failed to read connections")
+            conns = []
+
+        for conn_id, creds in conns:
+            try:
+                cursor = creds.get("bluesky_cursor")
+
+                msgs, new_cursor = await asyncio.to_thread(
+                    provider.poll_notifications,
+                    creds,
+                    cursor,
+                )
+
+                if msgs:
+                    ingest_inbound(session_factory, "bluesky", msgs)
+
+                if new_cursor != cursor:
+                    _save_bluesky_cursor(
+                        session_factory,
+                        conn_id,
+                        new_cursor,
+                    )
+
+            except Exception:
+                log.exception(
+                    "bluesky poll failed for connection %s",
+                    conn_id,
+                )
+
+        await asyncio.sleep(interval)
 
 async def _run_all(session_factory, settings, stop_event: threading.Event) -> None:
     names = [n.strip() for n in (settings.providers or settings.provider).split(",")]
     tasks = [asyncio.create_task(_reconcile_loop(session_factory, settings, stop_event))]
     if "x" in names:
-        tasks.append(asyncio.create_task(_x_dm_poll_loop(session_factory, settings, stop_event)))
+        tasks.append(
+        asyncio.create_task(
+            _x_dm_poll_loop(session_factory, settings, stop_event)
+        )
+    )
+
+    if "bluesky" in names:
+        tasks.append(
+            asyncio.create_task(
+                _bluesky_poll_loop(session_factory, settings, stop_event)
+            )
+        )
+
+    if "slack" in names:
+        tasks.append(
+            asyncio.create_task(
+                _slack_socket_loop(session_factory, settings, stop_event)
+            )
+        )
     await asyncio.gather(*tasks)
 
 
