@@ -336,10 +336,11 @@ def test_slack_edit_flow(social_app, sc):
     provider = social_app.state.providers["fake-slack"]
     state = None
     with social_app.state.session_factory() as session:
+        from comm_gateway.crypto import read_credentials
         from comm_gateway.models import Connection
 
         c = session.get(Connection, conn["id"])
-        state = c.provider_credentials["oauth_state"]
+        state = read_credentials(c)["oauth_state"]
 
     anon = TestClient(social_app)
     anon.get(
