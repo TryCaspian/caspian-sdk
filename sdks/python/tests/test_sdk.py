@@ -536,6 +536,36 @@ def test_listen_uses_queue_by_default():
 
     assert seen == ["first", "second"]
 
+import asyncio
+
+
+def test_listen_supports_async_handlers():
+    client = _client(lambda request: httpx.Response(200, json={}))
+
+    called = asyncio.Event()
+    polls = 0
+
+    def events(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls == 1:
+            return [_message_event(1, "conv_1", "hello")]
+        raise KeyboardInterrupt
+
+    @client.on_message
+    async def handle(message):
+        assert message.text == "hello"
+        called.set()
+
+    client.events = events
+
+    with pytest.raises(KeyboardInterrupt):
+        client.listen(from_seq=0, poll_interval=0)
+
+    assert called.is_set()
+
+    client.close()
+
 
 def test_queue_continues_after_handler_error():
     client = _client(lambda request: httpx.Response(200, json={}))

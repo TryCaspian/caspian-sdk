@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, Timer
 from typing import Literal
+import asyncio
+import inspect
 
 import httpx
 
@@ -1025,7 +1027,10 @@ class CommClient:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
-                handler(message)
+                result = handler(message)
+
+                if inspect.iscoroutine(result):
+                    asyncio.run(result)
             except AccountRequiredError as exc:
                 # Paid channel used before the developer signed in. Surface the
                 # one-time sign-in prompt loudly (e.g. in Claude Code).
