@@ -3,6 +3,7 @@ from comm_gateway.config import Settings
 from comm_gateway.main import create_app
 from comm_gateway.providers.fakes.fake import FakeEmailProvider
 from comm_gateway.providers.fakes.fake_telegram import FakeTelegramProvider
+from comm_gateway.providers.fakes.fake_zulip import FakeZulipProvider
 from fastapi.testclient import TestClient
 
 API_KEY = "comm_test_key"
@@ -18,7 +19,11 @@ def app():
     )
     email = FakeEmailProvider()
     telegram = FakeTelegramProvider()
-    return create_app(settings, providers={email.name: email, telegram.name: telegram})
+    zulip = FakeZulipProvider()
+    return create_app(
+        settings,
+        providers={email.name: email, telegram.name: telegram, zulip.name: zulip},
+    )
 
 
 @pytest.fixture()
