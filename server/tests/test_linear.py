@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import time
 
 import httpx
 import pytest
@@ -61,6 +62,34 @@ def test_linear_signature_missing_header():
 
     with pytest.raises(WebhookVerificationError, match="signature header missing"):
         provider._verify_signature(payload, {})
+
+
+def test_linear_parse_webhook_timestamp_validation():
+    provider = LinearProvider(webhook_secret=SECRET)
+    now_ms = int(time.time() * 1000)
+
+    data_recent = {
+        "action": "create",
+        "type": "Comment",
+        "organizationId": "org_123",
+        "webhookTimestamp": now_ms,
+        "data": {"id": "c1", "body": "test", "issue": {"identifier": "ENG-1"}},
+    }
+    payload_recent = json.dumps(data_recent).encode()
+    sig_recent = compute_signature(payload_recent)
+    assert len(provider.parse_webhook(payload_recent, {"Linear-Signature": sig_recent})) == 1
+
+    data_old = {
+        "action": "create",
+        "type": "Comment",
+        "organizationId": "org_123",
+        "webhookTimestamp": now_ms - (600 * 1000),  # 10 minutes ago
+        "data": {"id": "c1", "body": "test", "issue": {"identifier": "ENG-1"}},
+    }
+    payload_old = json.dumps(data_old).encode()
+    sig_old = compute_signature(payload_old)
+    with pytest.raises(WebhookVerificationError, match="timestamp too old"):
+        provider.parse_webhook(payload_old, {"Linear-Signature": sig_old})
 
 
 def test_linear_parse_webhook_comment_created():
@@ -189,7 +218,7 @@ def test_linear_send_and_reply_success():
 
     assert len(requests) == 2
     assert all(r.url.path == "/graphql" for r in requests)
-    assert all(r.headers["authorization"] == "Bearer lin_api_key_test_123" for r in requests)
+    assert all(r.headers["authorization"] == "lin_api_key_test_123" for r in requests)
 
     req1_json = json.loads(requests[0].content)
     assert req1_json["variables"] == {"issueId": "ENG-42", "body": "Resolving issue via PR"}

@@ -10,6 +10,7 @@ from ..base import (
     ProvisionResult,
     SendResult,
     WebhookVerificationError,
+    lower_headers,
     split_composite_id,
 )
 from ..linear import LinearProvider, parse_linear_comment
@@ -63,7 +64,7 @@ class FakeLinearProvider:
             data = json.loads(payload)
         except ValueError as exc:
             raise WebhookVerificationError("invalid JSON payload") from exc
-        header_map = {key.lower(): value for key, value in headers.items()}
+        header_map = lower_headers(headers)
         return parse_linear_comment(
             data,
             delivery_id=header_map.get("linear-delivery", header_map.get("x-delivery", "")),
