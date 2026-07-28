@@ -162,7 +162,13 @@ class BlueskyProvider:
         )
 
         self._sessions: dict[str, _BlueskySession] = {}
-        self._session_lock = threading.Lock()
+        self._session_locks: dict[str, threading.Lock] = {}
+        self._session_locks_lock = threading.Lock()
+
+    def _get_session_lock(self, cache_key: str) -> threading.Lock:
+        """Return the lock protecting a cached session."""
+        with self._session_locks_lock:
+            return self._session_locks.setdefault(cache_key, threading.Lock())
 
     def _create_session(
         self,
@@ -227,8 +233,9 @@ class BlueskyProvider:
     ) -> _BlueskySession:
         """Refresh and replace the cached session for an account."""
         cache_key = self._session_cache_key(credentials)
+        lock = self._get_session_lock(cache_key)
 
-        with self._session_lock:
+        with lock:
             cached_session = self._sessions.get(cache_key)
 
             # Another request may already have refreshed the session.
@@ -239,9 +246,7 @@ class BlueskyProvider:
             ):
                 return cached_session
 
-            if cached_session is None:
-                session = self._parse_session(self._create_session(credentials))
-            elif cached_session.refresh_token is None:
+            if cached_session is None or cached_session.refresh_token is None:
                 session = self._parse_session(self._create_session(credentials))
             else:
                 try:
@@ -346,7 +351,9 @@ class BlueskyProvider:
         """Return a cached session or authenticate the account."""
         cache_key = self._session_cache_key(credentials)
 
-        with self._session_lock:
+        lock = self._get_session_lock(cache_key)
+
+        with lock:
             cached_session = self._sessions.get(cache_key)
 
             if cached_session is not None:
