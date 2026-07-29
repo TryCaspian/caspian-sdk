@@ -1,5 +1,7 @@
 import { config } from "./config.js";
 import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { InMemoryStateAdapter } from "./state.js";
+import type { StateAdapter, StateLock } from "./state.js";
 import type {
   Agent,
   AutopayOptions,
@@ -301,6 +303,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly state: StateAdapter;
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -317,6 +320,7 @@ export class CommClient {
     if (!this.fetchImpl) {
       throw new CommError(0, "global fetch is unavailable — use Node >= 18 or pass options.fetch");
     }
+    this.state = options.state ?? new InMemoryStateAdapter();
   }
 
   // ---- HTTP ----------------------------------------------------------------
@@ -1018,7 +1022,64 @@ export class CommClient {
     }
   }
 
-  private async dispatchEvent(event: EventRecord): Promise<void> {
+  private eventId(event: EventRecord): string | undefined {
+    const value = event.id ?? event.seq;
+    return value === null || value === undefined ? undefined : String(value);
+  }
+
+  private conversationId(event: EventRecord): string | undefined {
+    const data = isRecord(event.data) ? event.data : {};
+    const message = isRecord(data.message) ? data.message : {};
+    const sourceMessage = isRecord(data.source_message) ? data.source_message : {};
+    for (const value of [
+      event.conversation_id,
+      data.conversation_id,
+      message.conversation_id,
+      sourceMessage.conversation_id,
+    ]) {
+      if (value !== null && value !== undefined) return String(value);
+    }
+    return undefined;
+  }
+
+  private async dispatchEvent(event: EventRecord): Promise<boolean> {
+    const eventId = this.eventId(event);
+    if (eventId !== undefined) {
+      try {
+        if (await this.state.seen(eventId)) return false;
+      } catch (err) {
+        logger.error(`state dedup failed for event ${eventId}; skipping`, err);
+        return false;
+      }
+    }
+    const conversationId = this.conversationId(event);
+    if (conversationId === undefined) {
+      await this.dispatchEventUnlocked(event);
+      return true;
+    }
+    let lock: StateLock | undefined;
+    try {
+      lock = await this.state.lock(conversationId);
+    } catch (err) {
+      logger.error(`state lock failed for conversation ${conversationId}; skipping`, err);
+      return false;
+    }
+    try {
+      await this.dispatchEventUnlocked(event);
+    } catch (err) {
+      logger.error(`event dispatch failed for conversation ${conversationId}; skipping`, err);
+      return false;
+    } finally {
+      try {
+        await lock.release();
+      } catch (err) {
+        logger.error(`state lock release failed for conversation ${conversationId}`, err);
+      }
+    }
+    return true;
+  }
+
+  private async dispatchEventUnlocked(event: EventRecord): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
       return;
@@ -1142,7 +1203,7 @@ export class CommClient {
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
     const scheduler = new MessageScheduler(
-      (event) => this.dispatchEvent(event),
+      (event) => this.dispatchEvent(event).then(() => undefined),
       opts.concurrency ?? "queue",
       opts.debounceMs ?? 500,
     );

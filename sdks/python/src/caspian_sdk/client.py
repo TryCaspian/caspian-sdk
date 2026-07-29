@@ -29,6 +29,8 @@ from typing import Literal
 
 import httpx
 
+from .state import InMemoryStateAdapter, StateAdapter
+
 logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
@@ -370,6 +372,7 @@ class CommClient:
         base_url: str | None = None,
         http: httpx.Client | None = None,
         timeout: float = 30.0,
+        state: StateAdapter | None = None,
     ) -> None:
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
@@ -382,6 +385,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        self._state = state if state is not None else InMemoryStateAdapter()
 
     def close(self) -> None:
         self._http.close()
@@ -993,7 +997,56 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
-    def _dispatch_event(self, event: dict) -> None:
+    @staticmethod
+    def _event_id(event: dict) -> str | None:
+        for key in ("id", "seq"):
+            value = event.get(key)
+            if value is not None:
+                return str(value)
+        return None
+
+    @staticmethod
+    def _conversation_id(event: dict) -> str | None:
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        message = data.get("message") if isinstance(data.get("message"), dict) else {}
+        source_message = (
+            data.get("source_message") if isinstance(data.get("source_message"), dict) else {}
+        )
+        for value in (
+            event.get("conversation_id"),
+            data.get("conversation_id"),
+            message.get("conversation_id"),
+            source_message.get("conversation_id"),
+        ):
+            if value is not None:
+                return str(value)
+        return None
+
+    def _dispatch_event(self, event: dict) -> bool:
+        event_id = self._event_id(event)
+        if event_id is not None:
+            try:
+                if self._state.seen(event_id):
+                    return False
+            except Exception:
+                logger.exception("state dedup failed for event %s; skipping", event_id)
+                return False
+        conversation_id = self._conversation_id(event)
+        if conversation_id is None:
+            self._dispatch_event_unlocked(event)
+        else:
+            try:
+                with self._state.lock(conversation_id):
+                    self._dispatch_event_unlocked(event)
+            except Exception:
+                logger.exception(
+                    "state lock failed for conversation %s; skipping",
+                    conversation_id,
+                )
+                return False
+        return True
+
+    def _dispatch_event_unlocked(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
         event_type = event.get("type")

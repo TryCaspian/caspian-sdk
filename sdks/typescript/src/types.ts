@@ -59,6 +59,8 @@ export interface ClientOptions {
   timeout?: number;
   /** Inject a custom fetch (for testing). Defaults to global fetch. */
   fetch?: typeof fetch;
+  /** State adapter for event deduplication and conversation locking. */
+  state?: import("./state.js").StateAdapter;
 }
 
 /** Shared options for every connect_* call. */

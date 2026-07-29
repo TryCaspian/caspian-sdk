@@ -118,6 +118,7 @@ except CommError as err:
 
 - **`AccountRequiredError`** (HTTP 401) — `reason`, `message`, `login_options`; `.login()` runs the sign-in.
 - **`InsufficientCreditError`** (HTTP 402 / 429) — `reason`, `balance_cents`, `payment_options`; `.top_up()` mints a refill link.
+- **`StateLockTimeoutError`** — a shared conversation lock was not acquired in time.
 - **`CommError`** — base class for every other non-2xx response.
 
 ## Overlapping messages
@@ -136,7 +137,7 @@ Choose a different policy when the handler does not need every message:
 | `queue` | Run every message in order for that conversation | The agent must handle every message |
 | `debounce` | Wait for a pause, then run only the latest message | Several quick messages should become one turn |
 | `drop` | Ignore new messages while that conversation is busy | Skipping interruptions is acceptable |
-| `parallel` | Run every message immediately | Handlers are independent; replies may finish out of order |
+| `parallel` | Submit every message immediately; the state lock still serializes one conversation | Different conversations can overlap |
 
 Set the debounce window in milliseconds:
 
@@ -144,8 +145,24 @@ Set the debounce window in milliseconds:
 client.listen(concurrency="debounce", debounce_ms=500)
 ```
 
-The queues live in the client process. Multiple agent processes need their own
-shared coordination layer.
+The default in-memory state is process-local. For multiple workers or serverless
+invocations, use Redis:
+
+```bash
+pip install "caspian-sdk[redis]"
+```
+
+```python
+from caspian_sdk import CommClient, RedisStateAdapter
+
+client = CommClient(
+    api_key="YOUR_KEY",
+    state=RedisStateAdapter.from_url("redis://localhost:6379"),
+)
+```
+
+Redis deduplicates event IDs for 24 hours and serializes handlers for the same
+conversation. Set `lock_ttl_seconds` above your longest handler runtime.
 
 ## Docs
 

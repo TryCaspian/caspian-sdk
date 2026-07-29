@@ -116,7 +116,7 @@ Choose a different policy when the handler does not need every message:
 | `queue` | Run every message in order for that conversation | The agent must handle every message |
 | `debounce` | Wait for a pause, then run only the latest message | Several quick messages should become one turn |
 | `drop` | Ignore new messages while that conversation is busy | Skipping interruptions is acceptable |
-| `parallel` | Run every message immediately | Handlers are independent; replies may finish out of order |
+| `parallel` | Submit every message immediately; the state lock still serializes one conversation | Different conversations can overlap |
 
 Set the debounce window in milliseconds:
 
@@ -124,8 +124,24 @@ Set the debounce window in milliseconds:
 await client.listen({ concurrency: "debounce", debounceMs: 500 });
 ```
 
-The queues live in the client process. Multiple agent processes need their own
-shared coordination layer.
+The default in-memory state is process-local. For multiple workers or serverless
+invocations, install Redis and inject the adapter:
+
+```bash
+npm install redis
+```
+
+```ts
+import { CommClient, RedisStateAdapter } from "caspian-sdk";
+
+const client = new CommClient({
+  apiKey: "YOUR_KEY",
+  state: await RedisStateAdapter.fromUrl("redis://localhost:6379"),
+});
+```
+
+Redis deduplicates event IDs for 24 hours and serializes handlers for the same
+conversation. Set `lockTtlSeconds` above your longest handler runtime.
 
 ## Errors
 
@@ -163,6 +179,7 @@ try {
 
 - **`AccountRequiredError`** — thrown when a paid channel needs a one-time developer sign-in (HTTP 401). Free channels never raise this. Call `.login()` to run the sign-in, or read `.loginOptions` for the raw endpoints.
 - **`InsufficientCreditError`** — thrown when a paid channel is blocked due to insufficient credit (HTTP 402) or a spend cap (HTTP 429). Use `.balanceCents` and `.paymentOptions` to inspect the situation in code, or call `.topUp(amountCents?)` to mint a checkout link — omit the argument to use the gateway's suggested amount.
+- **`StateLockTimeoutError`** — thrown when a shared conversation lock is not acquired in time.
 - All other non-2xx responses continue to throw a plain `CommError`.
 
 ## Docs

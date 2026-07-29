@@ -618,7 +618,7 @@ def test_drop_ignores_messages_while_a_handler_is_running():
     assert seen == ["first"]
 
 
-def test_parallel_allows_handlers_for_one_conversation_to_overlap():
+def test_parallel_serializes_handlers_for_one_conversation():
     client = _client(lambda request: httpx.Response(200, json={}))
     first_started = threading.Event()
     second_finished = threading.Event()
@@ -639,14 +639,15 @@ def test_parallel_allows_handlers_for_one_conversation_to_overlap():
         scheduler.submit(_message_event(1, "conv_1", "first"))
         assert first_started.wait(timeout=1)
         scheduler.submit(_message_event(2, "conv_1", "second"))
-        assert second_finished.wait(timeout=1)
+        assert not second_finished.wait(timeout=0.05)
         release_first.set()
+        assert second_finished.wait(timeout=1)
         scheduler.close()
     finally:
         release_first.set()
         client.close()
 
-    assert set(seen) == {"first", "second"}
+    assert seen == ["first", "second"]
 
 
 def test_listen_rejects_invalid_overlap_options():
