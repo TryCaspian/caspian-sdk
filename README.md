@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="Caspian — one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
+    <img alt="Caspian — the agent communication SDK: one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
   </picture>
 </p>
 
@@ -47,7 +47,9 @@
 
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Caspian is an **agent communication** SDK. Your agent's reasoning decides **what** to say; Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+
+Most agent communication work is agent-to-human, not agent-to-agent. Protocols like A2A and ACP connect agents to each other; Caspian connects your agent to the people it works for, on the channels they already use.
 
 ## Get started in 30 seconds
 

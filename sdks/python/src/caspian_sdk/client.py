@@ -248,128 +248,128 @@ class _MessageScheduler:
             or "unknown"
         )
 
-    def submit(self, event: dict) -> None:
-        if event.get("type") != "message.received":
+    def _safe_dispatch(self, event: dict) -> None:
+        try:
             self._dispatch(event)
-            return
-        key = self._conversation_key(event)
-        if self._strategy == "queue":
-            self._submit_queue(key, event)
-        elif self._strategy == "debounce":
-            self._submit_debounce(key, event)
-        elif self._strategy == "drop":
-            self._submit_drop(key, event)
-        else:
-            self._submit_parallel(event)
+        except Exception as e:
+            logger.exception("Error handling event %s: %s", event.get("type"), e)
 
-    def _submit_parallel(self, event: dict) -> None:
-        with self._lock:
-            if not self._closed:
-                self._executor.submit(self._safe_dispatch, event)
-
-    def _submit_queue(self, key: str, event: dict) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._queues.setdefault(key, deque()).append(event)
-            if key not in self._running:
-                self._running.add(key)
-                self._executor.submit(self._drain_queue, key)
-
-    def _drain_queue(self, key: str) -> None:
-        while True:
-            with self._lock:
-                queue = self._queues.get(key)
-                if not queue:
-                    self._queues.pop(key, None)
-                    self._running.discard(key)
-                    return
-                event = queue.popleft()
-            self._safe_dispatch(event)
-
-    def _submit_debounce(self, key: str, event: dict) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            if timer := self._timers.get(key):
-                timer.cancel()
-            self._pending[key] = event
-            self._timers.pop(key, None)
-            if key not in self._running:
-                self._start_debounce_timer(key)
-
-    def _start_debounce_timer(self, key: str) -> None:
-        event = self._pending[key]
-        timer = Timer(self._debounce_seconds, self._fire_debounce, args=(key, event))
-        timer.daemon = True
-        self._timers[key] = timer
-        timer.start()
-
-    def _fire_debounce(self, key: str, event: dict) -> None:
-        with self._lock:
-            if self._closed or self._pending.get(key) is not event:
-                return
-            self._pending.pop(key)
-            self._timers.pop(key, None)
-            self._running.add(key)
-            self._executor.submit(self._run_debounce, key, event)
-
-    def _run_debounce(self, key: str, event: dict) -> None:
-        while True:
-            self._safe_dispatch(event)
-            with self._lock:
-                self._running.discard(key)
-                next_event = None
-                if self._closed:
-                    next_event = self._pending.pop(key, None)
-                    if timer := self._timers.pop(key, None):
-                        timer.cancel()
-                    if next_event is not None:
-                        self._running.add(key)
-                elif key in self._pending:
-                    self._start_debounce_timer(key)
-                if next_event is None:
-                    return
-                event = next_event
-
-    def _submit_drop(self, key: str, event: dict) -> None:
-        with self._lock:
-            if self._closed or key in self._running:
-                return
-            self._running.add(key)
-            self._executor.submit(self._run_drop, key, event)
-
-    def _run_drop(self, key: str, event: dict) -> None:
+    def _process_single(self, key: str, event: dict) -> None:
         try:
             self._safe_dispatch(event)
         finally:
             with self._lock:
                 self._running.discard(key)
 
-    def _safe_dispatch(self, event: dict) -> None:
-        try:
-            self._dispatch(event)
-        except Exception:
-            logger.exception("event dispatch failed; continuing")
+    def _process_queue(self, key: str, initial_event: dict) -> None:
+        current_event: dict | None = initial_event
+        while current_event:
+            self._safe_dispatch(current_event)
+            with self._lock:
+                if key in self._queues and self._queues[key]:
+                    current_event = self._queues[key].popleft()
+                else:
+                    self._queues.pop(key, None)
+                    self._running.discard(key)
+                    current_event = None
 
-    def close(self) -> None:
+    def _on_debounce_timer(self, key: str) -> None:
+        with self._lock:
+            event = self._pending.pop(key, None)
+            self._timers.pop(key, None)
+            if event is None or self._closed:
+                return
+
+            if key in self._running:
+                # Replace buffered queue with latest debounced message
+                self._queues[key] = deque([event])
+                return
+
+            self._running.add(key)
+
+        self._executor.submit(self._process_queue, key, event)
+
+    def _start_debounce_timer(self, key: str) -> None:
+        if key in self._timers:
+            self._timers[key].cancel()
+
+        timer = Timer(
+            self._debounce_seconds,
+            self._on_debounce_timer,
+            args=(key,),
+        )
+        self._timers[key] = timer
+        timer.start()
+
+    def submit(self, event: dict) -> None:
+        event_type = event.get("type", "")
+
+        # Non-message events dispatch directly
+        if event_type not in ("message.received", "message.created"):
+            try:
+                self._dispatch(event)
+            except Exception as e:
+                logger.exception("Error dispatching non-message event %s: %s", event_type, e)
+            return
+
         with self._lock:
             if self._closed:
                 return
-            # ponytail: overlap state stays in this process. A shared state adapter
-            # is the upgrade path if listen() later coordinates multiple workers.
-            for timer in self._timers.values():
-                timer.cancel()
-            self._timers.clear()
-            for key, event in list(self._pending.items()):
+
+            key = self._conversation_key(event)
+
+            if self._strategy == "parallel":
+                self._executor.submit(self._safe_dispatch, event)
+
+            elif self._strategy == "queue":
                 if key in self._running:
-                    continue
-                self._pending.pop(key)
+                    if key not in self._queues:
+                        self._queues[key] = deque()
+                    self._queues[key].append(event)
+                else:
+                    self._running.add(key)
+                    self._executor.submit(self._process_queue, key, event)
+
+            elif self._strategy == "drop":
+                if key in self._running:
+                    return
                 self._running.add(key)
-                self._executor.submit(self._run_debounce, key, event)
+                self._executor.submit(self._process_single, key, event)
+
+            elif self._strategy == "debounce":
+                self._pending[key] = event
+                self._start_debounce_timer(key)
+
+    def close(self) -> None:
+        to_flush = []
+        with self._lock:
+            if self._closed:
+                return
             self._closed = True
+
+            # 1. Cancel timers and collect pending debounced events
+            for key, timer in list(self._timers.items()):
+                timer.cancel()
+                if key in self._pending:
+                    event = self._pending.pop(key)
+                    to_flush.append((key, event))
+            self._timers.clear()
+
+            # 2. Submit pending debounced items to worker pool
+            for key, event in to_flush:
+                if key in self._running:
+                    self._queues[key] = deque([event])
+                else:
+                    self._running.add(key)
+                    self._executor.submit(self._process_queue, key, event)
+
+        # 3. RELEASE THE LOCK FIRST, then wait for worker threads to finish
         self._executor.shutdown(wait=True)
 
+        with self._lock:
+            self._pending.clear()
+            self._queues.clear()
+            self._running.clear()
 
 class CommClient:
     def __init__(
@@ -1109,19 +1109,21 @@ class CommClient:
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event."""
         event_type = event.get("type")
+        data = event.get("data")
 
+        # Skip malformed/empty payload events cleanly
+        if not data:
+            return
+        
         # Accept both .received and .created event names
         if event_type in ("interaction.received", "interaction.created"):
             self._dispatch_interaction(event["data"])
-            return
-
+            
         if event_type in ("reaction.received", "reaction.created"):
             self._dispatch_reaction(event["data"])
-            return
-
+          
         if event_type in ("message.received", "message.created"):
             self._dispatch_message(event["data"])
-            return
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
