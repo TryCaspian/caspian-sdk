@@ -119,6 +119,16 @@ class BlueskyConnectionCreate(BaseModel):
     app_password: str
 
 
+class RedditConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    # The connected Reddit account's refresh_token, minted once via OAuth
+    # (bring-your-own account, like Telegram's bot_token). Reactive PMs +
+    # first-touch compose; there is no cold/bulk outreach here since compose
+    # requires a specific recipient, not a broadcast list.
+    refresh_token: str | None = None
 class PhoneConnectionCreate(BaseModel):
     customer_id: str | None = None
     agent_id: str | None = None

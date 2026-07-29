@@ -47,6 +47,7 @@ from ..schemas import (
     MessageOut,
     PhoneConnectionCreate,
     ReactCreate,
+    RedditConnectionCreate,
     ReplyCreate,
     SandboxProjectCreate,
     SandboxProjectOut,
@@ -285,22 +286,29 @@ _USERNAME_RE = re.compile(r"[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?")
 
 def _email_taken(session, address: str, customer_id: str) -> bool:
     """True if another customer already holds this email address (live/provisioning)."""
-    taken = session.execute(
-        select(Connection).where(
-            Connection.address == address,
-            Connection.status.in_(["provisioning", "active"]),
+    taken = (
+        session.execute(
+            select(Connection).where(
+                Connection.address == address,
+                Connection.status.in_(["provisioning", "active"]),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     return taken is not None and taken.customer_id != customer_id
 
 
 def _email_free(session, address: str) -> bool:
-    return session.execute(
-        select(Connection.id).where(
-            Connection.address == address,
-            Connection.status.in_(["provisioning", "active"]),
-        )
-    ).first() is None
+    return (
+        session.execute(
+            select(Connection.id).where(
+                Connection.address == address,
+                Connection.status.in_(["provisioning", "active"]),
+            )
+        ).first()
+        is None
+    )
 
 
 def _suggest_email_usernames(session, base: str, domain: str, limit: int = 5) -> list[str]:
@@ -350,16 +358,20 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
     # install callback, not the connect body. Reuse a live connection for the
     # scope, else create a pending one and hand back the authorize URL.
     if getattr(provider, "oauth", False):
-        existing = session.execute(
-            select(Connection).where(
-                Connection.project_id == project.id,
-                Connection.customer_id == customer.id,
-                Connection.agent_id == agent.id,
-                Connection.channel == channel,
-                Connection.provider == provider.name,
-                Connection.status.in_(["pending_oauth", "provisioning", "active"]),
+        existing = (
+            session.execute(
+                select(Connection).where(
+                    Connection.project_id == project.id,
+                    Connection.customer_id == customer.id,
+                    Connection.agent_id == agent.id,
+                    Connection.channel == channel,
+                    Connection.provider == provider.name,
+                    Connection.status.in_(["pending_oauth", "provisioning", "active"]),
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             out = connection_out(existing)
             if existing.status == "pending_oauth":
@@ -419,12 +431,14 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
             capabilities=granted,
             status="pending_oauth",
             provider=provider.name,
-            provider_credentials=encrypt_credentials({
-                "oauth_state": state,
-                "redirect_uri": redirect_uri,
-                "authorize_url": authorize_url,
-                **app_creds,
-            }),
+            provider_credentials=encrypt_credentials(
+                {
+                    "oauth_state": state,
+                    "redirect_uri": redirect_uri,
+                    "authorize_url": authorize_url,
+                    **app_creds,
+                }
+            ),
         )
         session.add(connection)
         session.commit()
@@ -486,9 +500,7 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     elif channel == "discord":
-        raise HTTPException(
-            status_code=422, detail="discord needs a bot_token or a webhook_url"
-        )
+        raise HTTPException(status_code=422, detail="discord needs a bot_token or a webhook_url")
     elif channel == "x" and credentials.get("user_id"):
         # Pin the connection to the account's numeric user id up front: the
         # Account Activity webhook routes inbound by for_user_id, so one X
@@ -505,9 +517,7 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
         # shared-number default (resource_id set by provision), unchanged.
         number = _free_whatsapp_number(session, provider)
         if number is None:
-            raise HTTPException(
-                status_code=409, detail="No WhatsApp numbers available in the pool"
-            )
+            raise HTTPException(status_code=409, detail="No WhatsApp numbers available in the pool")
         credentials["from_number"] = number
         resource_id = number
 
@@ -531,13 +541,17 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
     if resource_id is not None:
         # one bot = one connection, across all projects: inbound updates route
         # by bot id, so a shared bot would leak messages between developers
-        taken = session.execute(
-            select(Connection).where(
-                Connection.provider == provider.name,
-                Connection.provider_resource_id == resource_id,
-                Connection.status.in_(["provisioning", "active"]),
+        taken = (
+            session.execute(
+                select(Connection).where(
+                    Connection.provider == provider.name,
+                    Connection.provider_resource_id == resource_id,
+                    Connection.status.in_(["provisioning", "active"]),
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if taken is not None:
             raise HTTPException(
                 status_code=409,
@@ -690,16 +704,22 @@ def install_x(
             )
         customer = session.get(Customer, body.customer_id)
         agent = session.get(Agent, body.agent_id)
-        if customer is None or customer.project_id != project.id or agent is None \
-                or agent.project_id != project.id:
+        if (
+            customer is None
+            or customer.project_id != project.id
+            or agent is None
+            or agent.project_id != project.id
+        ):
             raise HTTPException(status_code=404, detail="Customer or agent not found")
 
     base = request.app.state.settings.public_base_url or str(request.base_url).rstrip("/")
     callback_url = f"{base}/v1/oauth/x/callback"
     tok = provider.oauth_request_token(callback_url)
-    creds = {"oauth_token": tok["oauth_token"],
-             "oauth_token_secret": tok["oauth_token_secret"],
-             "authorize_url": tok["authorize_url"]}
+    creds = {
+        "oauth_token": tok["oauth_token"],
+        "oauth_token_secret": tok["oauth_token_secret"],
+        "authorize_url": tok["authorize_url"],
+    }
     connection = Connection(
         id=new_id("conn"),
         project_id=project.id,
@@ -789,14 +809,24 @@ def install_shared_slack(
             )
         customer = session.get(Customer, body.customer_id)
         agent = session.get(Agent, body.agent_id)
-        if customer is None or customer.project_id != project.id or agent is None \
-                or agent.project_id != project.id:
+        if (
+            customer is None
+            or customer.project_id != project.id
+            or agent is None
+            or agent.project_id != project.id
+        ):
             raise HTTPException(status_code=404, detail="Customer or agent not found")
 
     pool_index = _assign_slack_pool_index(session, provider, project)
     connection, authorize_url = _slack_pending_install(
-        request, provider, project, customer.id, agent.id,
-        pool_index=pool_index, display_name=body.display_name, icon_url=body.icon_url,
+        request,
+        provider,
+        project,
+        customer.id,
+        agent.id,
+        pool_index=pool_index,
+        display_name=body.display_name,
+        icon_url=body.icon_url,
         capabilities=getattr(body, "capabilities", None),
     )
     session.add(connection)
@@ -815,27 +845,46 @@ def _assign_slack_pool_index(session, provider, project) -> int:
     if provider.pool_size() <= 1:
         return 0
     # Reuse this project's existing assignment (a project always uses one app).
-    existing = session.execute(
-        select(Connection).where(
-            Connection.provider == provider.name,
-            Connection.project_id == project.id,
-        ).order_by(Connection.created_at)
-    ).scalars().first()
+    existing = (
+        session.execute(
+            select(Connection)
+            .where(
+                Connection.provider == provider.name,
+                Connection.project_id == project.id,
+            )
+            .order_by(Connection.created_at)
+        )
+        .scalars()
+        .first()
+    )
     if existing is not None:
         idx = read_credentials(existing).get("pool_index")
         if idx is not None:
             return int(idx)
     # New project: round-robin by how many distinct projects already use Slack.
-    distinct = session.execute(
-        select(func.count(func.distinct(Connection.project_id))).where(
-            Connection.provider == provider.name
-        )
-    ).scalar() or 0
+    distinct = (
+        session.execute(
+            select(func.count(func.distinct(Connection.project_id))).where(
+                Connection.provider == provider.name
+            )
+        ).scalar()
+        or 0
+    )
     return distinct % provider.pool_size()
 
 
-def _slack_pending_install(request, provider, project, customer_id, agent_id, *,
-                           pool_index, display_name=None, icon_url=None, capabilities=None):
+def _slack_pending_install(
+    request,
+    provider,
+    project,
+    customer_id,
+    agent_id,
+    *,
+    pool_index,
+    display_name=None,
+    icon_url=None,
+    capabilities=None,
+):
     """Create a pending Slack install connection pinned to pool app `pool_index`.
 
     Stores the chosen app's creds so exchange/verify use the right app, plus the
@@ -914,8 +963,12 @@ def install_shared_discord(
             )
         customer = session.get(Customer, body.customer_id)
         agent = session.get(Agent, body.agent_id)
-        if customer is None or customer.project_id != project.id or agent is None \
-                or agent.project_id != project.id:
+        if (
+            customer is None
+            or customer.project_id != project.id
+            or agent is None
+            or agent.project_id != project.id
+        ):
             raise HTTPException(status_code=404, detail="Customer or agent not found")
 
     from ..providers.discord import install_url
@@ -925,8 +978,11 @@ def install_shared_discord(
     base = settings.public_base_url or str(request.base_url).rstrip("/")
     redirect_uri = f"{base}/v1/oauth/discord/callback"
     authorize_url = install_url(
-        settings.discord_base_url, settings.discord_client_id,
-        settings.discord_bot_permissions, redirect_uri, state,
+        settings.discord_base_url,
+        settings.discord_client_id,
+        settings.discord_bot_permissions,
+        redirect_uri,
+        state,
     )
     connection = Connection(
         id=new_id("conn"),
@@ -937,13 +993,15 @@ def install_shared_discord(
         capabilities=_resolve_manifest(provider, getattr(body, "capabilities", None)),
         status="pending_oauth",
         provider="discord",
-        provider_credentials=encrypt_credentials({
-            "oauth_state": state,
-            "shared_bot": True,
-            # The developer's custom name for the bot in their server (per-server
-            # nickname on the shared bot). Applied when the bot joins the server.
-            **({"nickname": body.display_name} if body.display_name else {}),
-        }),
+        provider_credentials=encrypt_credentials(
+            {
+                "oauth_state": state,
+                "shared_bot": True,
+                # The developer's custom name for the bot in their server (per-server
+                # nickname on the shared bot). Applied when the bot joins the server.
+                **({"nickname": body.display_name} if body.display_name else {}),
+            }
+        ),
     )
     session.add(connection)
     session.commit()
@@ -997,12 +1055,22 @@ def update_connection_branding(
 
     # Discord shared bot: the name is a per-server nickname, so re-apply it.
     settings = request.app.state.settings
-    if (body.display_name and creds.get("shared_bot") and connection.provider == "discord"
-            and connection.provider_resource_id and settings.discord_bot_token):
+    if (
+        body.display_name
+        and creds.get("shared_bot")
+        and connection.provider == "discord"
+        and connection.provider_resource_id
+        and settings.discord_bot_token
+    ):
         from ..providers.discord import set_bot_nickname
+
         try:
-            set_bot_nickname(settings.discord_base_url, settings.discord_bot_token,
-                             connection.provider_resource_id, body.display_name)
+            set_bot_nickname(
+                settings.discord_base_url,
+                settings.discord_bot_token,
+                connection.provider_resource_id,
+                body.display_name,
+            )
         except Exception:
             pass  # best-effort; the stored name still updates for future sends
     return connection_out(connection)
@@ -1107,8 +1175,13 @@ def initiate_conversation(
     enqueue(
         session,
         "initiate",
-        {"connection_id": connection.id, "recipient": body.recipient,
-         "text": text, "blocks": body.blocks, "media": body.media},
+        {
+            "connection_id": connection.id,
+            "recipient": body.recipient,
+            "text": text,
+            "blocks": body.blocks,
+            "media": body.media,
+        },
     )
     session.commit()
     return {"connection_id": connection.id, "recipient": body.recipient, "status": "queued"}
@@ -1215,9 +1288,7 @@ def send_conversation_message(
     conversation needs a transport with Capability.INITIATE.
     """
     if not body.text and not body.html and not body.blocks and not body.media:
-        raise HTTPException(
-            status_code=422, detail="Message requires text, html, blocks or media"
-        )
+        raise HTTPException(status_code=422, detail="Message requires text, html, blocks or media")
     conversation = session.get(Conversation, conversation_id)
     if conversation is None or conversation.project_id != project.id:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -1317,9 +1388,7 @@ def react_to_message(
     reacted = False
     if provider is not None and hasattr(provider, "react"):
         try:
-            provider.react(
-                target.provider_message_id, body.emoji, read_credentials(connection)
-            )
+            provider.react(target.provider_message_id, body.emoji, read_credentials(connection))
             reacted = True
         except Exception:
             pass  # best-effort; never fail the caller on a reaction
@@ -1449,3 +1518,14 @@ def list_events(
         query = query.where(Event.type == type)
     rows = session.execute(query.order_by(Event.seq).limit(limit)).scalars()
     return [event_out(e) for e in rows]
+
+
+@router.post("/connections/reddit", response_model=ConnectionOut, status_code=201)
+def create_reddit_connection(
+    body: RedditConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    """Connect a Reddit account using an OAuth refresh token."""
+    return _create_connection(request, session, project, body, channel="reddit")
