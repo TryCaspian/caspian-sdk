@@ -259,6 +259,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/reddit" width="14"/> &nbsp;Reddit (private messages) | ✅ | — |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
 | 📶 SMS (GSM modem) | ✅ * | ✅ no hardware |
 | <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram (user account) | ⚠️ opt-in * | — |
@@ -448,7 +449,7 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 ## Roadmap
 
 - **MCP server** — connect and message channels straight from any MCP-capable agent
-- **Reddit & LinkedIn adapters** — next channels in the pipeline
+- **LinkedIn adapter** — next channel in the pipeline (Reddit private messages landed)
 - **Agent-native payments** — pay-as-you-go via API, x402-ready, no dashboard
 - **More adapters** — the interface is small on purpose; [add one](./CONTRIBUTING.md#adding-a-new-channel-adapter)
 

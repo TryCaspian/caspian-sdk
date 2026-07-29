@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     # endpoint and optional webhook verification secret.
     bluesky_base_url: str = "https://bsky.social"
     bluesky_webhook_secret: str = ""
+    # Reddit deployment settings. Connected accounts provide their own
+    # script-app client id/secret plus the bot account's username/password
+    # (OAuth2 password grant); these settings configure the shared API
+    # endpoints, poll interval, User-Agent, and optional webhook secret.
+    reddit_base_url: str = "https://oauth.reddit.com"
+    reddit_token_url: str = "https://www.reddit.com/api/v1/access_token"
+    reddit_user_agent: str = "caspian-sdk-reddit-adapter/1.0 (by /u/caspian-agent)"
+    reddit_webhook_secret: str = ""
+    reddit_poll_interval: float = 15.0  # seconds between /message/unread polls
     # Stripe (pay-as-you-go credit; live keys live in SSM SecureString, resolved
     # at startup — only the parameter NAMES sit in .env).
     stripe_secret_key: str = ""

@@ -1,4 +1,5 @@
-"""In-memory Discord / Slack / Instagram / Facebook providers for tests.
+"""In-memory Discord / Slack / Instagram / Facebook / Bluesky / Reddit
+providers for tests.
 
 Each consumes the real inbound shape of its platform so the gateway wiring is
 exercised on the same normalization path as the live adapters.
@@ -23,6 +24,7 @@ from ..bluesky import (
 )
 from ..discord import DiscordProvider, parse_gateway_message
 from ..meta_messaging import InstagramProvider, parse_messaging_webhook
+from ..reddit import RedditProvider
 from ..slack import SlackProvider, parse_event
 
 
@@ -514,5 +516,139 @@ class FakeBlueskyProvider:
                 }
             ]
         }
+
+        return json.dumps(payload).encode("utf-8")
+
+
+class FakeRedditProvider:
+    name = "fake-reddit"
+    channel = "reddit"
+    capabilities = RedditProvider.capabilities
+    connect_credentials = ()
+    optional_connect_credentials = (
+        "client_id",
+        "client_secret",
+        "username",
+        "password",
+        "provider_resource_id",
+    )
+
+    def __init__(self) -> None:
+        self.username = "fake_agent"
+        self.account_id = "t2_fakeagent"
+        self.webhook_secret = "fake-reddit-webhook-secret"
+        self.sent: list[dict] = []
+        self.replies: list[dict] = []
+        self._seq = 0
+
+        self._provider = RedditProvider(webhook_secret=self.webhook_secret)
+
+    def provision(self, request: ProvisionRequest) -> ProvisionResult:
+        credentials = request.credentials or {}
+
+        return ProvisionResult(
+            address=credentials.get("username", self.username),
+            provider_resource_id=credentials.get(
+                "provider_resource_id",
+                self.account_id,
+            ),
+        )
+
+    def send(
+        self,
+        provider_inbox_id,
+        message: OutboundMessage,
+        credentials=None,
+    ) -> SendResult:
+        del provider_inbox_id, credentials
+
+        if not message.to:
+            raise ValueError("reddit send requires exactly one recipient username in `to`")
+
+        self._seq += 1
+
+        to = message.to[0]
+
+        self.sent.append(
+            {
+                "to": to,
+                "subject": message.subject,
+                "text": message.text,
+            }
+        )
+
+        placeholder = f"pending:{to}"
+
+        return SendResult(
+            provider_message_id=placeholder,
+            provider_thread_id=placeholder,
+        )
+
+    def reply(
+        self,
+        provider_inbox_id,
+        provider_message_id,
+        message: OutboundMessage,
+        credentials=None,
+    ) -> SendResult:
+        del provider_inbox_id, credentials
+
+        self._seq += 1
+
+        name = f"t1_fake{self._seq}"
+
+        self.replies.append(
+            {
+                "name": name,
+                "parent": provider_message_id,
+                "text": message.text,
+            }
+        )
+
+        return SendResult(
+            provider_message_id=name,
+            provider_thread_id=name,
+        )
+
+    def parse_webhook(
+        self,
+        payload,
+        headers,
+        credentials=None,
+    ) -> list[InboundMessage]:
+        return self._provider.parse_webhook(
+            payload,
+            headers,
+            credentials=credentials,
+        )
+
+    def webhook_payload(
+        self,
+        *,
+        text: str = "Hello from Reddit!",
+        name: str | None = None,
+        author: str = "a_redditor",
+        subject: str = "hello",
+        first_message_name: str | None = None,
+    ) -> bytes:
+        self._seq += 1
+
+        name = name or f"t4_fake{self._seq}"
+
+        message: dict[str, object] = {
+            "kind": "t4",
+            "data": {
+                "name": name,
+                "author": author,
+                "subject": subject,
+                "body": text,
+                "was_comment": False,
+            },
+        }
+
+        if first_message_name:
+            message["data"]["first_message_name"] = first_message_name
+
+        payload = {"messages": [message]}
 
         return json.dumps(payload).encode("utf-8")
