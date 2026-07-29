@@ -73,9 +73,10 @@ def test_in_memory_lock_concurrency():
 # ---- RedisStateAdapter tests (using fakeredis) ----------------------------
 
 def test_redis_seen_dedup():
+    fakeredis_aioredis = pytest.importorskip("fakeredis.aioredis")
+
     async def _test():
-        import fakeredis.aioredis
-        fake_redis = fakeredis.aioredis.FakeRedis()
+        fake_redis = fakeredis_aioredis.FakeRedis()
         adapter = RedisStateAdapter(redis_client=fake_redis, seen_ttl=60)
 
         assert await adapter.seen("evt_100") is True
@@ -89,9 +90,10 @@ def test_redis_seen_dedup():
 
 
 def test_redis_lock_concurrency_and_lua_release():
+    fakeredis_aioredis = pytest.importorskip("fakeredis.aioredis")
+
     async def _test():
-        import fakeredis.aioredis
-        fake_redis = fakeredis.aioredis.FakeRedis()
+        fake_redis = fakeredis_aioredis.FakeRedis()
         adapter = RedisStateAdapter(redis_client=fake_redis, lock_ttl=10)
 
         async with adapter.lock("conv_99") as acquired1:
