@@ -220,4 +220,28 @@ describe("CommClient Dispatch Integration", () => {
     resolveEvt1Finish();
     await p1;
   });
+
+  it("releases lock when handler throws under queue strategy, allowing subsequent dispatch", async () => {
+    const eventsRun: string[] = [];
+    const adapter = new InMemoryStateAdapter();
+    const client = mockClient(() => new Response(JSON.stringify({}), { status: 200 }), adapter);
+
+    client.onMessage((msg) => {
+      eventsRun.push(msg.id);
+      if (msg.id === "m_failing") {
+        throw new Error("Handler failed");
+      }
+    });
+
+    const evt1 = makeMessageEvent(1, "conv_err", "Fail", "m_failing");
+    const evt2 = makeMessageEvent(2, "conv_err", "Success", "m_ok");
+
+    // First dispatch throws inside handler (exception caught by dispatchEvent)
+    await (client as any).dispatchEvent(evt1, "queue");
+    expect(eventsRun).toEqual(["m_failing"]);
+
+    // Subsequent dispatch for same conversation acquires lock and executes successfully
+    await (client as any).dispatchEvent(evt2, "queue");
+    expect(eventsRun).toEqual(["m_failing", "m_ok"]);
+  });
 });

@@ -1073,17 +1073,9 @@ class CommClient:
             return
 
         if concurrency != "parallel":
+            lock_cm = self._state.lock(message.conversation_id)
             try:
-                async with self._state.lock(message.conversation_id) as acquired:
-                    if not acquired:
-                        # Skipping execution: conversation lock not acquired (queuing out of scope)
-                        logger.warning(
-                            "skipping message %s: conversation %s is locked by another handler",
-                            message.id,
-                            message.conversation_id,
-                        )
-                        return
-                    self._run_handlers(message)
+                acquired = await lock_cm.__aenter__()
             except Exception as exc:
                 # Fail open: if state adapter lock check fails (e.g. Redis connection drop),
                 # log warning and proceed with handler dispatch best-effort.
@@ -1093,6 +1085,36 @@ class CommClient:
                     exc,
                 )
                 self._run_handlers(message)
+                return
+
+            if not acquired:
+                # Skipping execution: conversation lock not acquired (queuing out of scope)
+                logger.warning(
+                    "skipping message %s: conversation %s is locked by another handler",
+                    message.id,
+                    message.conversation_id,
+                )
+                try:
+                    await lock_cm.__aexit__(None, None, None)
+                except Exception as exc:
+                    logger.warning(
+                        "state adapter lock release failed for conversation %s: %s",
+                        message.conversation_id,
+                        exc,
+                    )
+                return
+
+            try:
+                self._run_handlers(message)
+            finally:
+                try:
+                    await lock_cm.__aexit__(None, None, None)
+                except Exception as exc:
+                    logger.warning(
+                        "state adapter lock release failed for conversation %s: %s",
+                        message.conversation_id,
+                        exc,
+                    )
         else:
             self._run_handlers(message)
 
@@ -1216,11 +1238,7 @@ class CommClient:
         """
         if ack is not None:
             self._ack = ack
-        scheduler = _MessageScheduler(
-            lambda evt: self._dispatch_event(evt, concurrency=concurrency),
-            concurrency,
-            debounce_ms,
-        )
+        scheduler = _MessageScheduler(self._dispatch_event, concurrency, debounce_ms)
         try:
             seq = self._latest_seq() if from_seq is None else from_seq
             backoff = poll_interval

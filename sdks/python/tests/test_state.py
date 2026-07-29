@@ -7,6 +7,7 @@ import threading
 import httpx
 import pytest
 from caspian_sdk import CommClient, InMemoryStateAdapter, RedisStateAdapter
+from caspian_sdk.client import _MessageScheduler
 
 
 def _client(handler, state=None) -> CommClient:
@@ -232,3 +233,69 @@ def test_client_dispatch_bypasses_lock_under_parallel_strategy():
 
     evt1_finish.set()
     t.join()
+
+
+def test_lock_release_failure_does_not_duplicate_handler_execution():
+    runs = []
+
+    class FailingReleaseLock:
+        async def __aenter__(self):
+            return True
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            raise RuntimeError("Redis connection dropped during lock release")
+
+    class FailingReleaseAdapter:
+        async def seen(self, event_id: str) -> bool:
+            return True
+
+        def lock(self, conversation_id: str):
+            return FailingReleaseLock()
+
+    client = _client(lambda req: httpx.Response(200, json={}), state=FailingReleaseAdapter())
+
+    @client.on_message
+    def handle(msg):
+        runs.append(msg.id)
+
+    event = _message_event(seq=1, conversation_id="conv_1", text="Hello", msg_id="m1")
+    client._dispatch_event(event)
+
+    # Handlers must be executed exactly ONCE even if lock release raises RuntimeError
+    assert runs == ["m1"]
+
+
+def test_message_scheduler_dispatch_primary_path_no_typeerror():
+    dispatched_args = []
+
+    def mock_dispatch(event, concurrency="queue"):
+        dispatched_args.append((event["data"]["message"]["id"], concurrency))
+
+    scheduler = _MessageScheduler(mock_dispatch, "queue", 500)
+    event = _message_event(seq=1, conversation_id="conv_1", text="Hi", msg_id="msg_sched")
+    scheduler._safe_dispatch(event)
+
+    assert dispatched_args == [("msg_sched", "queue")]
+
+
+def test_handler_exception_releases_lock_allowing_subsequent_dispatch():
+    events_run = []
+    adapter = InMemoryStateAdapter()
+    client = _client(lambda req: httpx.Response(200, json={}), state=adapter)
+
+    @client.on_message
+    def handle(msg):
+        events_run.append(msg.id)
+        if msg.id == "m_failing":
+            raise ValueError("Handler error")
+
+    evt1 = _message_event(seq=1, conversation_id="conv_err", text="Fail", msg_id="m_failing")
+    evt2 = _message_event(seq=2, conversation_id="conv_err", text="Success", msg_id="m_ok")
+
+    # Dispatch m_failing (handler raises, exception is caught & logged by dispatch)
+    client._dispatch_event(evt1, concurrency="queue")
+    assert events_run == ["m_failing"]
+
+    # Subsequent dispatch on same conv_err acquires lock and executes successfully
+    client._dispatch_event(evt2, concurrency="queue")
+    assert events_run == ["m_failing", "m_ok"]

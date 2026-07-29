@@ -1078,27 +1078,35 @@ export class CommClient {
           `state adapter lock check failed for conversation ${message.conversationId}; failing open`,
           err,
         );
+        await this.runHandlers(message);
+        return;
       }
 
-      if (lock && !lock.acquired) {
+      if (!lock.acquired) {
         logger.warn(
           `skipping message ${message.id}: conversation ${message.conversationId} is locked by another handler`,
         );
+        try {
+          await lock.release();
+        } catch (err) {
+          logger.warn(
+            `state adapter lock release failed for conversation ${message.conversationId}`,
+            err,
+          );
+        }
         return;
       }
 
       try {
         await this.runHandlers(message);
       } finally {
-        if (lock) {
-          try {
-            await lock.release();
-          } catch (err) {
-            logger.warn(
-              `state adapter lock release failed for conversation ${message.conversationId}`,
-              err,
-            );
-          }
+        try {
+          await lock.release();
+        } catch (err) {
+          logger.warn(
+            `state adapter lock release failed for conversation ${message.conversationId}`,
+            err,
+          );
         }
       }
     } else {
