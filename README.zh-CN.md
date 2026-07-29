@@ -225,6 +225,7 @@ Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到�
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram（机器人） | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ 一键安装 |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ 一键安装 |
+| <img src="https://cdn.simpleicons.org/bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ 即时 |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram 私信 | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
