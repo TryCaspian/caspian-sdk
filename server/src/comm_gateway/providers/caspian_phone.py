@@ -84,7 +84,9 @@ class CaspianPhoneProvider:
         base_url: str = "",
     ) -> None:
         if not api_key:
-            raise ValueError("COMM_CASPIAN_PHONE_API_KEY is required for the caspian-phone provider")
+            raise ValueError(
+            "COMM_CASPIAN_PHONE_API_KEY is required for the caspian-phone provider"
+        )
         if not base_url:
             raise ValueError(
                 "COMM_CASPIAN_PHONE_BASE_URL is required for the caspian-phone provider"

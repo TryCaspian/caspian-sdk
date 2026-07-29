@@ -671,3 +671,242 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_channel_cap_reached_maps_from_429():
+    """A 429 channel cap block raises InsufficientCreditError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "channel_cap_reached", "message": "Capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "channel_cap_reached"
+    assert err.detail == "Capped."
+
+
+def test_account_required_defaults_when_gateway_omits_fields():
+    """When 401 reason=account_required omits message and login_options, defaults are populated."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"detail": {"reason": "account_required"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.message == "Sign in to Caspian to use paid channels."
+    assert err.detail == "Sign in to Caspian to use paid channels."
+    assert err.login_options == []
+
+
+def test_insufficient_credit_defaults_when_gateway_omits_fields():
+    """When 402 reason=insufficient_credit omits message/balance/payment_options, defaults apply."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.message == "Out of Caspian credit."
+    assert err.detail == "Out of Caspian credit."
+    assert err.balance_cents is None
+    assert err.payment_options == []
+
+
+def test_401_unrecognized_reason_falls_through_to_comm_error():
+    """A 401 with an unrecognized reason raises plain CommError, not AccountRequiredError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"detail": {"reason": "invalid_token", "message": "Invalid API key"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert type(err) is CommError
+    assert not isinstance(err, AccountRequiredError)
+    assert err.status_code == 401
+    assert "Invalid API key" in str(err)
+
+
+def test_402_unrecognized_reason_falls_through_to_comm_error():
+    """A 402 with an unrecognized reason raises plain CommError, not InsufficientCreditError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "payment_required_other", "message": "Payment needed"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert type(err) is CommError
+    assert not isinstance(err, InsufficientCreditError)
+    assert err.status_code == 402
+    assert "Payment needed" in str(err)
+
+
+def test_account_required_login_delegates_to_client():
+    """AccountRequiredError.login() delegates to CommClient.login()."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/connections/x":
+            return httpx.Response(
+                401,
+                json={"detail": {"reason": "account_required", "message": "Sign in required"}},
+            )
+        if request.url.path == "/v1/auth/device/start":
+            calls.append("start")
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev_123",
+                    "verification_uri": "https://auth.example.com",
+                    "interval": 0.01,
+                },
+            )
+        if request.url.path == "/v1/auth/device/token":
+            calls.append("token")
+            return httpx.Response(200, json={"status": "approved"})
+        return httpx.Response(404)
+
+    client = _client(handler)
+    try:
+        with pytest.raises(AccountRequiredError) as excinfo:
+            client.connect_x(access_token="a", user_id="1")
+        res = excinfo.value.login(poll_interval=0.01)
+    finally:
+        client.close()
+    assert res["status"] == "approved"
+    assert calls == ["start", "token"]
+
+
+def test_insufficient_credit_top_up_uses_explicit_amount():
+    """InsufficientCreditError.top_up(amount_cents) passes explicit amount to CommClient."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up(amount_cents=3500)
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 3500}]
+
+
+def test_insufficient_credit_top_up_uses_suggested_amount_from_payment_options():
+    """InsufficientCreditError.top_up() uses suggested amount from payment_options."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "payment_options": [{"create": {"body": {"amount_cents": 5000}}}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up()
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 5000}]
+
+
+def test_insufficient_credit_top_up_fallback_when_no_payment_options():
+    """InsufficientCreditError.top_up() falls back to 2000 cents when payment_options is empty."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit", "payment_options": []}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up()
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 2000}]
+
+
+def test_non_json_error_body_hits_value_error_fallback():
+    """An error response with non-JSON text triggers ValueError on json() and falls back to text."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.connect_telegram(bot_token="123:abc")
+        finally:
+            client.close()
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.detail == "Internal Server Error"
+    assert "Internal Server Error" in str(excinfo.value)
+
