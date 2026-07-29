@@ -1,3 +1,5 @@
+import type { StateAdapter } from "./state.js";
+
 /** A connection to one channel (email inbox, Slack app, Discord bot, ...). */
 export interface Connection {
   id: string;
@@ -59,6 +61,8 @@ export interface ClientOptions {
   timeout?: number;
   /** Inject a custom fetch (for testing). Defaults to global fetch. */
   fetch?: typeof fetch;
+  /** Custom state adapter for deduplication and per-conversation locking. Default: InMemoryStateAdapter. */
+  state?: StateAdapter;
 }
 
 /** Shared options for every connect_* call. */

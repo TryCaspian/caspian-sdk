@@ -1,5 +1,7 @@
 import { config } from "./config.js";
 import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { InMemoryStateAdapter } from "./state.js";
+import type { StateAdapter } from "./state.js";
 import type {
   Agent,
   AutopayOptions,
@@ -298,6 +300,7 @@ export class CommClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly state: StateAdapter;
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
@@ -317,6 +320,7 @@ export class CommClient {
     if (!this.fetchImpl) {
       throw new CommError(0, "global fetch is unavailable — use Node >= 18 or pass options.fetch");
     }
+    this.state = options.state ?? new InMemoryStateAdapter();
   }
 
   // ---- HTTP ----------------------------------------------------------------
@@ -1013,43 +1017,63 @@ export class CommClient {
     }
     if (event.type !== "message.received") return;
     const message = this.buildMessage(event.data);
-    if (this.handlers.length) {
-      // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
-      try {
-        await message.typing();
-      } catch {
-        /* ignore */
-      }
-      // Optional instant acknowledgement (listen({ ack })) for channels with no
-      // typing indicator; the real answer follows from the handler.
-      if (this.ackMessage) {
+    const eventId = String(event.id ?? message.id);
+
+    if (!(await this.state.seen(eventId))) return;
+
+    const lock = await this.state.lock(message.conversationId);
+    if (!lock.acquired) {
+      logger.warn(
+        `skipping message ${message.id}: conversation ${message.conversationId} is locked by another handler`,
+      );
+      return;
+    }
+
+    try {
+      if (this.handlers.length) {
+        // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
         try {
-          await message.reply(this.ackMessage);
+          await message.typing();
+        } catch {
+          /* ignore */
+        }
+        // Optional instant acknowledgement (listen({ ack })) for channels with no
+        // typing indicator; the real answer follows from the handler.
+        if (this.ackMessage) {
+          try {
+            await message.reply(this.ackMessage);
+          } catch (err) {
+            if (err instanceof AccountRequiredError) {
+              this.warnAccountRequired(err);
+            } else if (err instanceof InsufficientCreditError) {
+              this.warnOutOfCredit(err);
+            } else {
+              logger.error(`ack reply failed for message ${message.id}`, err);
+            }
+          }
+        }
+      }
+      for (const handler of this.handlers) {
+        try {
+          await handler(message);
         } catch (err) {
+          // Paid channel used before the developer signed in, or the project is
+          // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
+          // keep the loop alive so one blocked reply can't stop the listener.
           if (err instanceof AccountRequiredError) {
             this.warnAccountRequired(err);
           } else if (err instanceof InsufficientCreditError) {
             this.warnOutOfCredit(err);
           } else {
-            logger.error(`ack reply failed for message ${message.id}`, err);
+            logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
           }
         }
       }
-    }
-    for (const handler of this.handlers) {
+    } finally {
       try {
-        await handler(message);
-      } catch (err) {
-        // Paid channel used before the developer signed in, or the project is
-        // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
-        // keep the loop alive so one blocked reply can't stop the listener.
-        if (err instanceof AccountRequiredError) {
-          this.warnAccountRequired(err);
-        } else if (err instanceof InsufficientCreditError) {
-          this.warnOutOfCredit(err);
-        } else {
-          logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
-        }
+        await lock.release();
+      } catch {
+        /* ignore release errors; TTL is safety net */
       }
     }
   }

@@ -15,6 +15,7 @@ Usage:
     client.listen()
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -29,9 +30,24 @@ from typing import Literal
 
 import httpx
 
+from .state import InMemoryStateAdapter, StateAdapter
+
 logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
+
+
+def _run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
 
 
 def _dotenv() -> dict[str, str]:
@@ -370,6 +386,7 @@ class CommClient:
         base_url: str | None = None,
         http: httpx.Client | None = None,
         timeout: float = 30.0,
+        state: StateAdapter | None = None,
     ) -> None:
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
@@ -377,11 +394,13 @@ class CommClient:
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
+        self._state: StateAdapter = state if state is not None else InMemoryStateAdapter()
         self._handlers: list[Callable[[Message], None]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+
 
     def close(self) -> None:
         self._http.close()
@@ -962,6 +981,9 @@ class CommClient:
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
+        _run_async(self._async_dispatch_event(event))
+
+    async def _async_dispatch_event(self, event: dict) -> None:
         event_type = event.get("type")
         if event_type == "interaction.received":
             self._dispatch_interaction(event["data"])
@@ -971,40 +993,57 @@ class CommClient:
             return
         if event_type != "message.received":
             return
+
         message = self._build_message(event["data"])
-        if self._handlers:
-            # Show a 'thinking…' indicator up front so the human sees the agent is
-            # working while the handler runs. Best-effort; never blocks dispatch.
-            try:
-                message.typing()
-            except Exception:
-                pass
-            # Optional instant acknowledgement (listen(ack=...)) so the human gets
-            # an immediate reply on channels with no typing indicator (X, SMS,
-            # email). Best-effort; the real answer follows from the handler.
-            if self._ack:
+        event_id = str(event.get("id") or message.id)
+
+        if not await self._state.seen(event_id):
+            return
+
+        async with self._state.lock(message.conversation_id) as acquired:
+            if not acquired:
+                # Skipping execution: conversation lock not acquired (queuing out of scope)
+                logger.warning(
+                    "skipping message %s: conversation %s is locked by another handler",
+                    message.id,
+                    message.conversation_id,
+                )
+                return
+
+            if self._handlers:
+                # Show a 'thinking…' indicator up front so the human sees the agent is
+                # working while the handler runs. Best-effort; never blocks dispatch.
                 try:
-                    message.reply(self._ack)
+                    message.typing()
+                except Exception:
+                    pass
+                # Optional instant acknowledgement (listen(ack=...)) so the human gets
+                # an immediate reply on channels with no typing indicator (X, SMS,
+                # email). Best-effort; the real answer follows from the handler.
+                if self._ack:
+                    try:
+                        message.reply(self._ack)
+                    except InsufficientCreditError as exc:
+                        self._warn_out_of_credit(exc)
+                    except Exception:
+                        logger.exception("ack reply failed for message %s", message.id)
+            for handler in self._handlers:
+                try:
+                    handler(message)
+                except AccountRequiredError as exc:
+                    # Paid channel used before the developer signed in. Surface the
+                    # one-time sign-in prompt loudly (e.g. in Claude Code).
+                    self._warn_account_required(exc)
                 except InsufficientCreditError as exc:
+                    # The agent tried to reply on a paid channel but the project is
+                    # out of credit / capped. Make it loud on the CLI so the operator
+                    # (e.g. running this in Claude Code) sees it and can top up.
                     self._warn_out_of_credit(exc)
                 except Exception:
-                    logger.exception("ack reply failed for message %s", message.id)
-        for handler in self._handlers:
-            try:
-                handler(message)
-            except AccountRequiredError as exc:
-                # Paid channel used before the developer signed in. Surface the
-                # one-time sign-in prompt loudly (e.g. in Claude Code).
-                self._warn_account_required(exc)
-            except InsufficientCreditError as exc:
-                # The agent tried to reply on a paid channel but the project is
-                # out of credit / capped. Make it loud on the CLI so the operator
-                # (e.g. running this in Claude Code) sees it and can top up.
-                self._warn_out_of_credit(exc)
-            except Exception:
-                logger.exception(
-                    "on_message handler failed for message %s; continuing", message.id
-                )
+                    logger.exception(
+                        "on_message handler failed for message %s; continuing", message.id
+                    )
+
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""

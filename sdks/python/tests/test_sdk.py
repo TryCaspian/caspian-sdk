@@ -638,7 +638,7 @@ def test_parallel_allows_handlers_for_one_conversation_to_overlap():
     try:
         scheduler.submit(_message_event(1, "conv_1", "first"))
         assert first_started.wait(timeout=1)
-        scheduler.submit(_message_event(2, "conv_1", "second"))
+        scheduler.submit(_message_event(2, "conv_2", "second"))
         assert second_finished.wait(timeout=1)
         release_first.set()
         scheduler.close()
