@@ -24,10 +24,10 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Awaitable, Literal, Union
+from typing import Any, Awaitable, Literal, Union
 
 import httpx
 
@@ -125,10 +125,6 @@ class InsufficientCreditError(CommError):
                     amount_cents = body["amount_cents"]
                     break
         return self._client.top_up(amount_cents or 2000)
-
-
-from dataclasses import dataclass, field
-
 
 @dataclass
 class Message:
@@ -393,7 +389,6 @@ class CommClient:
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         # Define union type for sync and async handlers
         MessageHandler = Callable[[Message], Union[None, Awaitable[None]]]
-        self._handlers: list[MessageHandler] = []
         self._message_handlers = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
@@ -1128,19 +1123,6 @@ class CommClient:
             self._dispatch_message(event["data"])
             return
 
-    def _run_coroutine_sync(self, coro) -> None:
-        """Execute a coroutine synchronously, properly handling running event loops and thread pools."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            future.result()  # Blocks until execution finishes and propagates exceptions
-        else:
-            asyncio.run(coro)
-
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
         now = time.monotonic()
@@ -1270,70 +1252,12 @@ class CommClient:
                 )
                 time.sleep(2.0)
 
-    def _dispatch_message(self, data: dict) -> None:
-        """Dispatches a message event to registered message handlers."""
-        if not self._message_handlers:
-            return
-
-        if isinstance(data, dict):
-            # Extract nested message dict or shallow copy to avoid mutating raw event
-            msg_data = dict(data.get("message", data))
-
-            # Preserve top-level context fields
-            if "customer_id" in data and "customer_id" not in msg_data:
-                msg_data["customer_id"] = data["customer_id"]
-            if "agent_id" in data and "agent_id" not in msg_data:
-                msg_data["agent_id"] = data["agent_id"]
-
-            message = Message(**msg_data, _client=self)
-
-        for handler in self._message_handlers:
-            if inspect.iscoroutinefunction(handler):
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop and loop.is_running():
-                    # If an async loop is already running (e.g. inside an async listener), schedule it as a task
-                    loop.create_task(handler(message))
-                else:
-                    # If called synchronously (like in this test), run the coroutine to completion
-                    asyncio.run(handler(message))
-            else:
-                handler(message)
-
-    def _dispatch_interaction(self, data: dict) -> None:
-        """Dispatches an interaction event to registered interaction handlers."""
-        if not self._interaction_handlers:
-            return
-
-        if isinstance(data, dict):
-            interaction = Interaction(**data, _client=self)
-        else:
-            interaction = data
-
-        for handler in self._interaction_handlers:
-            self._run_handler(handler, interaction)
-
-    def _dispatch_reaction(self, data: dict) -> None:
-        """Dispatches a reaction event to registered reaction handlers."""
-        if not self._reaction_handlers:
-            return
-
-        if isinstance(data, dict):
-            reaction = Reaction(**data, _client=self)
-        else:
-            reaction = data
-
-        for handler in self._reaction_handlers:
-            self._run_handler(handler, reaction)
-
-    def _run_handler(self, handler, arg) -> None:
-        """Executes an event handler safely, supporting both sync and async callbacks."""
+    def _execute_handler(self, handler: Callable, arg: Any) -> None:
+        """Executes an event handler safely, supporting sync functions, async functions,
+        coroutine objects, and callable objects without re-raising exceptions.
+        """
         try:
             if inspect.iscoroutinefunction(handler):
-                # Handle async handlers by attaching to running loop or running directly
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
@@ -1344,25 +1268,85 @@ class CommClient:
                 else:
                     asyncio.run(handler(arg))
             else:
-                # Handle standard sync handlers
-                handler(arg)
-        except Exception as e:
-            logger.exception("Error executing handler %s: %s", handler.__name__, e)
-            raise
+                res = handler(arg)
 
-    def _build_message(self, data: dict) -> Message:
-        message = data["message"]
-        return Message(
-            id=message["id"],
-            conversation_id=message["conversation_id"],
-            connection_id=message["connection_id"],
-            customer_id=data.get("customer_id", ""),
-            agent_id=data.get("agent_id", ""),
-            channel=message.get("channel", "email"),
-            sender=message.get("sender"),
-            subject=message.get("subject"),
-            text=message.get("text"),
-            html=message.get("html"),
-            media=message.get("media") or [],
-            _client=self,
-        )
+                # Catch callable objects or function wrappers that return a coroutine
+                if inspect.iscoroutine(res):
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+
+                    if loop and loop.is_running():
+                        loop.create_task(res)
+                    else:
+                        asyncio.run(res)
+
+        except Exception as e:
+            logger.exception(
+                "Error executing handler %s: %s",
+                getattr(handler, "__name__", str(handler)),
+                e,
+            )
+
+    def _dispatch_message(self, data: dict) -> None:
+        """Dispatches a message event to registered message handlers."""
+        if not self._message_handlers:
+            return
+
+        if isinstance(data, dict):
+            msg_data = dict(data.get("message", data))
+
+            if "customer_id" in data and "customer_id" not in msg_data:
+                msg_data["customer_id"] = data["customer_id"]
+            if "agent_id" in data and "agent_id" not in msg_data:
+                msg_data["agent_id"] = data["agent_id"]
+            valid_keys = {f.name for f in fields(Message)}
+            filtered_data = {
+                k: v for k, v in msg_data.items() if k in valid_keys
+            }
+            message = Message(**filtered_data, _client=self)
+        else:
+            message = data
+
+        # Trigger instant acknowledgement if configured
+        if self._ack and hasattr(message, "reply"):
+            try:
+                message.reply(text=self._ack)
+            except Exception as e:
+                logger.warning("Failed to send ack reply: %s", e)
+
+        for handler in self._message_handlers:
+            self._execute_handler(handler, message)
+
+    def _dispatch_interaction(self, data: dict) -> None:
+        """Dispatches an interaction event to registered interaction handlers."""
+        if not self._interaction_handlers:
+            return
+
+        if isinstance(data, dict):
+            valid_keys = {f.name for f in fields(Interaction)}
+            filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+            interaction = Interaction(**filtered_data, _client=self)
+        else:
+            interaction = data
+
+        for handler in self._interaction_handlers:
+            self._execute_handler(handler, interaction)
+
+    def _dispatch_reaction(self, data: dict) -> None:
+        """Dispatches a reaction event to registered reaction handlers."""
+        if not self._reaction_handlers:
+            return
+
+        if isinstance(data, dict):
+            valid_keys = {f.name for f in fields(Reaction)}
+            filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+            reaction = Reaction(**filtered_data, _client=self)
+        else:
+            reaction = data
+
+        for handler in self._reaction_handlers:
+            self._execute_handler(handler, reaction)
+
+    
