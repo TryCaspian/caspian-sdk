@@ -1,8 +1,12 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="Caspian — one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
+    <img alt="Caspian — the agent communication SDK: one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
   </picture>
+</p>
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/91107?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-91107" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91107/daily?language=Python" alt="TryCaspian%2Fcaspian-sdk | Trendshift" width="250" height="55"/></a>
 </p>
 
 <p align="center">
@@ -43,7 +47,9 @@
 
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Caspian is an **agent communication** SDK. Your agent's reasoning decides **what** to say; Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+
+Most agent communication work is agent-to-human, not agent-to-agent. Protocols like A2A and ACP connect agents to each other; Caspian connects your agent to the people it works for, on the channels they already use.
 
 ## Get started in 30 seconds
 
@@ -91,7 +97,7 @@ client.listen()  # one loop, every channel
 > standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
 > or just use the SDK directly (below); nothing else about the flow changes.
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 **TypeScript** — same contract, zero runtime dependencies:
 

@@ -478,6 +478,22 @@ export class CommClient {
   }
 
   /**
+   * Connect a Bluesky account. Pass the handle or DID as `identifier` and an app
+   * password (bsky.app -> Settings -> Privacy and security -> App passwords) as
+   * `appPassword` — never the account's real password. The gateway polls Bluesky
+   * notifications and routes mentions/replies to the connected agent.
+   */
+  connectBluesky(
+    opts: ConnectOptions & { identifier: string; appPassword: string },
+  ): Promise<Connection> {
+    const { identifier, appPassword, ...rest } = opts;
+    return this.connect("bluesky", rest, {
+      identifier,
+      app_password: appPassword,
+    });
+  }
+
+  /**
    * Register a custom subdomain (e.g. agents.example.com). Returns the DNS
    * records to add at the registrar; poll getDomain() until active.
    */
@@ -1010,16 +1026,35 @@ export class CommClient {
     event: EventRecord,
     concurrency: ConcurrencyStrategy = "queue",
   ): Promise<void> {
+    if (
+      event.type !== "message.received" &&
+      event.type !== "interaction.received" &&
+      event.type !== "reaction.received"
+    ) {
+      return;
+    }
+    // `data` is optional in the event schema; a record without a usable
+    // payload is logged and skipped so it can never stop the listener.
+    const data = event.data;
+    if (!isRecord(data)) {
+      logger.warn(`skipping malformed ${event.type} event (seq ${event.seq}): no event data`);
+      return;
+    }
     if (event.type === "interaction.received") {
-      await this.dispatchInteraction(event.data);
+      await this.dispatchInteraction(data);
       return;
     }
     if (event.type === "reaction.received") {
-      await this.dispatchReaction(event.data);
+      await this.dispatchReaction(data);
       return;
     }
-    if (event.type !== "message.received") return;
-    const message = this.buildMessage(event.data);
+    if (!isRecord(data.message)) {
+      logger.warn(
+        `skipping malformed message.received event (seq ${event.seq}): no message payload`,
+      );
+      return;
+    }
+    const message = this.buildMessage(data);
     const eventId = String(event.id ?? message.id);
 
     let seen = true;
