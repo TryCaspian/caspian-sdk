@@ -22,12 +22,12 @@ import os
 import sys
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Any, Awaitable, Literal, Union
+from typing import Any, Literal
 
 import httpx
 
@@ -388,7 +388,6 @@ class CommClient:
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         # Define union type for sync and async handlers
-        MessageHandler = Callable[[Message], Union[None, Awaitable[None]]]
         self._message_handlers = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
@@ -1091,8 +1090,8 @@ class CommClient:
         return handler
 
     def on_interaction(
-        self, handler: Callable[["Interaction"], Union[None, Awaitable[None]]]
-    ) -> Callable[["Interaction"], Union[None, Awaitable[None]]]:
+        self, handler: Callable[["Interaction"], None | Awaitable[None]]
+    ) -> Callable[["Interaction"], None | Awaitable[None]]:
         """Register a handler for button taps (interaction.received). The same
         handler answers taps from every channel that supports interactive
         buttons (Slack, Discord, Telegram)."""
@@ -1100,8 +1099,8 @@ class CommClient:
         return handler
 
     def on_reaction(
-        self, handler: Callable[["Reaction"], Union[None, Awaitable[None]]]
-    ) -> Callable[["Reaction"], Union[None, Awaitable[None]]]:
+        self, handler: Callable[["Reaction"], None | Awaitable[None]]
+    ) -> Callable[["Reaction"], None | Awaitable[None]]:
         """Register a handler for emoji reactions (reaction.received)."""
         self._reaction_handlers.append(handler)
         return handler
