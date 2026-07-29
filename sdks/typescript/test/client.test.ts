@@ -504,7 +504,7 @@ describe("CommClient", () => {
         if (after === 0) {
           return json([
             messageEvent(1, "conv_1", "first"),
-            messageEvent(2, "conv_2", "second"),
+            messageEvent(2, "conv_1", "second"),
           ]);
         }
         if (!stopScheduled) {

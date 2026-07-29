@@ -162,7 +162,7 @@ class MessageScheduler {
   private closed = false;
 
   constructor(
-    private readonly dispatch: (event: EventRecord) => Promise<void>,
+    private readonly dispatch: (event: EventRecord, concurrency?: ConcurrencyStrategy) => Promise<void>,
     private readonly strategy: ConcurrencyStrategy,
     private readonly debounceMs: number,
   ) {
@@ -268,7 +268,7 @@ class MessageScheduler {
 
   private async safeDispatch(event: EventRecord): Promise<void> {
     try {
-      await this.dispatch(event);
+      await this.dispatch(event, this.strategy);
     } catch (err) {
       logger.error("event dispatch failed; continuing", err);
     }
@@ -1006,7 +1006,10 @@ export class CommClient {
     }
   }
 
-  private async dispatchEvent(event: EventRecord): Promise<void> {
+  private async dispatchEvent(
+    event: EventRecord,
+    concurrency: ConcurrencyStrategy = "queue",
+  ): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
       return;
@@ -1019,61 +1022,93 @@ export class CommClient {
     const message = this.buildMessage(event.data);
     const eventId = String(event.id ?? message.id);
 
-    if (!(await this.state.seen(eventId))) return;
-
-    const lock = await this.state.lock(message.conversationId);
-    if (!lock.acquired) {
-      logger.warn(
-        `skipping message ${message.id}: conversation ${message.conversationId} is locked by another handler`,
-      );
-      return;
-    }
-
+    let seen = true;
     try {
-      if (this.handlers.length) {
-        // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
-        try {
-          await message.typing();
-        } catch {
-          /* ignore */
-        }
-        // Optional instant acknowledgement (listen({ ack })) for channels with no
-        // typing indicator; the real answer follows from the handler.
-        if (this.ackMessage) {
+      seen = await this.state.seen(eventId);
+    } catch (err) {
+      logger.warn(
+        `state adapter seen check failed for event ${eventId}; failing open`,
+        err,
+      );
+      seen = true;
+    }
+    if (!seen) return;
+
+    if (concurrency !== "parallel") {
+      let lock: { acquired: boolean; release: () => Promise<void> } | null = null;
+      try {
+        lock = await this.state.lock(message.conversationId);
+      } catch (err) {
+        logger.warn(
+          `state adapter lock check failed for conversation ${message.conversationId}; failing open`,
+          err,
+        );
+      }
+
+      if (lock && !lock.acquired) {
+        logger.warn(
+          `skipping message ${message.id}: conversation ${message.conversationId} is locked by another handler`,
+        );
+        return;
+      }
+
+      try {
+        await this.runHandlers(message);
+      } finally {
+        if (lock) {
           try {
-            await message.reply(this.ackMessage);
+            await lock.release();
           } catch (err) {
-            if (err instanceof AccountRequiredError) {
-              this.warnAccountRequired(err);
-            } else if (err instanceof InsufficientCreditError) {
-              this.warnOutOfCredit(err);
-            } else {
-              logger.error(`ack reply failed for message ${message.id}`, err);
-            }
+            logger.warn(
+              `state adapter lock release failed for conversation ${message.conversationId}`,
+              err,
+            );
           }
         }
       }
-      for (const handler of this.handlers) {
+    } else {
+      await this.runHandlers(message);
+    }
+  }
+
+  private async runHandlers(message: Message): Promise<void> {
+    if (this.handlers.length) {
+      // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
+      try {
+        await message.typing();
+      } catch {
+        /* ignore */
+      }
+      // Optional instant acknowledgement (listen({ ack })) for channels with no
+      // typing indicator; the real answer follows from the handler.
+      if (this.ackMessage) {
         try {
-          await handler(message);
+          await message.reply(this.ackMessage);
         } catch (err) {
-          // Paid channel used before the developer signed in, or the project is
-          // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
-          // keep the loop alive so one blocked reply can't stop the listener.
           if (err instanceof AccountRequiredError) {
             this.warnAccountRequired(err);
           } else if (err instanceof InsufficientCreditError) {
             this.warnOutOfCredit(err);
           } else {
-            logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+            logger.error(`ack reply failed for message ${message.id}`, err);
           }
         }
       }
-    } finally {
+    }
+    for (const handler of this.handlers) {
       try {
-        await lock.release();
-      } catch {
-        /* ignore release errors; TTL is safety net */
+        await handler(message);
+      } catch (err) {
+        // Paid channel used before the developer signed in, or the project is
+        // out of credit / capped. Surface it loudly (e.g. in Claude Code) and
+        // keep the loop alive so one blocked reply can't stop the listener.
+        if (err instanceof AccountRequiredError) {
+          this.warnAccountRequired(err);
+        } else if (err instanceof InsufficientCreditError) {
+          this.warnOutOfCredit(err);
+        } else {
+          logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
+        }
       }
     }
   }
@@ -1150,7 +1185,7 @@ export class CommClient {
     const pollMs = (opts.pollInterval ?? 1) * 1000;
     const maxBackoffMs = (opts.maxBackoff ?? 30) * 1000;
     const scheduler = new MessageScheduler(
-      (event) => this.dispatchEvent(event),
+      (event) => this.dispatchEvent(event, opts.concurrency ?? "queue"),
       opts.concurrency ?? "queue",
       opts.debounceMs ?? 500,
     );

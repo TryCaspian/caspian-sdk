@@ -134,7 +134,7 @@ describe("CommClient Dispatch Integration", () => {
     expect(eventsReceived).toEqual(["msg_dup"]);
   });
 
-  it("enforces per-conversation lock during dispatch (skips overlapping, runs after release)", async () => {
+  it("enforces per-conversation lock under serial queue strategy", async () => {
     const eventsRun: string[] = [];
     let resolveEvt1Started: () => void = () => {};
     const evt1Started = new Promise<void>((r) => {
@@ -161,14 +161,14 @@ describe("CommClient Dispatch Integration", () => {
     const evt2 = makeMessageEvent(2, "conv_a", "Msg 2", "m2");
     const evt3 = makeMessageEvent(3, "conv_a", "Msg 3", "m3");
 
-    // Start dispatching evt1
-    const p1 = (client as any).dispatchEvent(evt1);
+    // Start dispatching evt1 with queue strategy
+    const p1 = (client as any).dispatchEvent(evt1, "queue");
 
     // Wait until evt1 is executing inside handler holding lock
     await evt1Started;
 
-    // Dispatch evt2 while evt1 holds lock -> must be skipped
-    await (client as any).dispatchEvent(evt2);
+    // Dispatch evt2 while evt1 holds lock -> must be skipped under queue strategy
+    await (client as any).dispatchEvent(evt2, "queue");
     expect(eventsRun).toEqual(["m1"]);
 
     // Unblock evt1
@@ -176,7 +176,48 @@ describe("CommClient Dispatch Integration", () => {
     await p1;
 
     // Dispatch evt3 after evt1 releases lock -> must acquire and run
-    await (client as any).dispatchEvent(evt3);
+    await (client as any).dispatchEvent(evt3, "queue");
     expect(eventsRun).toEqual(["m1", "m3"]);
+  });
+
+  it("bypasses per-conversation lock under parallel strategy", async () => {
+    const eventsRun: string[] = [];
+    let resolveEvt1Started: () => void = () => {};
+    const evt1Started = new Promise<void>((r) => {
+      resolveEvt1Started = r;
+    });
+
+    let resolveEvt1Finish: () => void = () => {};
+    const evt1Blocked = new Promise<void>((r) => {
+      resolveEvt1Finish = r;
+    });
+
+    const adapter = new InMemoryStateAdapter();
+    const client = mockClient(() => new Response(JSON.stringify({}), { status: 200 }), adapter);
+
+    client.onMessage(async (msg) => {
+      eventsRun.push(msg.id);
+      if (msg.id === "m1") {
+        resolveEvt1Started();
+        await evt1Blocked;
+      }
+    });
+
+    const evt1 = makeMessageEvent(1, "conv_a", "Msg 1", "m1");
+    const evt2 = makeMessageEvent(2, "conv_a", "Msg 2", "m2");
+
+    // Start dispatching evt1 with parallel strategy
+    const p1 = (client as any).dispatchEvent(evt1, "parallel");
+
+    // Wait until evt1 is executing inside handler
+    await evt1Started;
+
+    // Dispatch evt2 with parallel strategy -> lock is bypassed so evt2 runs concurrently
+    await (client as any).dispatchEvent(evt2, "parallel");
+    expect(eventsRun).toEqual(["m1", "m2"]);
+
+    // Unblock evt1
+    resolveEvt1Finish();
+    await p1;
   });
 });

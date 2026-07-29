@@ -1,10 +1,10 @@
 """Pluggable state and deduplication adapters for Caspian SDK."""
 
-import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from threading import Lock
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger("caspian_sdk.state")
@@ -41,8 +41,8 @@ class StateAdapter(Protocol):
 class InMemoryStateAdapter:
     """Default zero-config in-memory state adapter.
 
-    Features bounded deduplication set (FIFO eviction) and lazy per-conversation
-    locks cleaned up when unused.
+    Features bounded deduplication set (FIFO eviction) and thread-safe lazy per-conversation
+    locks cleaned up when unused. Safe under multi-threaded execution.
     """
 
     def __init__(self, max_size: int = 10000) -> None:
@@ -54,14 +54,14 @@ class InMemoryStateAdapter:
             raise ValueError("max_size must be positive")
         self._max_size = max_size
         self._seen: dict[str, None] = {}
-        self._seen_lock = asyncio.Lock()
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._seen_lock = Lock()
+        self._locks: dict[str, Lock] = {}
         self._lock_ref_counts: dict[str, int] = {}
-        self._locks_guard = asyncio.Lock()
+        self._locks_guard = Lock()
 
     async def seen(self, event_id: str) -> bool:
-        """Atomic claim of an event_id. Returns True if new, False if duplicate."""
-        async with self._seen_lock:
+        """Atomic claim of an event_id across threads. Returns True if new, False if duplicate."""
+        with self._seen_lock:
             if event_id in self._seen:
                 return False
             if len(self._seen) >= self._max_size:
@@ -74,17 +74,14 @@ class InMemoryStateAdapter:
     @asynccontextmanager
     async def lock(self, conversation_id: str) -> AsyncIterator[bool]:
         """Per-conversation lock yielding True if acquired, False if already locked."""
-        async with self._locks_guard:
+        with self._locks_guard:
             if conversation_id not in self._locks:
-                self._locks[conversation_id] = asyncio.Lock()
+                self._locks[conversation_id] = Lock()
                 self._lock_ref_counts[conversation_id] = 0
             lock_obj = self._locks[conversation_id]
             self._lock_ref_counts[conversation_id] += 1
 
-        acquired = False
-        if not lock_obj.locked():
-            await lock_obj.acquire()
-            acquired = True
+        acquired = lock_obj.acquire(blocking=False)
 
         try:
             yield acquired
@@ -92,7 +89,7 @@ class InMemoryStateAdapter:
             if acquired:
                 lock_obj.release()
 
-            async with self._locks_guard:
+            with self._locks_guard:
                 self._lock_ref_counts[conversation_id] -= 1
                 if self._lock_ref_counts[conversation_id] == 0:
                     self._locks.pop(conversation_id, None)

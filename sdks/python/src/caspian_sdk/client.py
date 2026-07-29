@@ -356,7 +356,12 @@ class _MessageScheduler:
 
     def _safe_dispatch(self, event: dict) -> None:
         try:
-            self._dispatch(event)
+            self._dispatch(event, concurrency=self._strategy)
+        except TypeError:
+            try:
+                self._dispatch(event)
+            except Exception:
+                logger.exception("event dispatch failed; continuing")
         except Exception:
             logger.exception("event dispatch failed; continuing")
 
@@ -978,12 +983,16 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
-    def _dispatch_event(self, event: dict) -> None:
+    def _dispatch_event(
+        self, event: dict, concurrency: ConcurrencyStrategy = "queue"
+    ) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
-        _run_async(self._async_dispatch_event(event))
+        _run_async(self._async_dispatch_event(event, concurrency=concurrency))
 
-    async def _async_dispatch_event(self, event: dict) -> None:
+    async def _async_dispatch_event(
+        self, event: dict, concurrency: ConcurrencyStrategy = "queue"
+    ) -> None:
         event_type = event.get("type")
         if event_type == "interaction.received":
             self._dispatch_interaction(event["data"])
@@ -997,52 +1006,80 @@ class CommClient:
         message = self._build_message(event["data"])
         event_id = str(event.get("id") or message.id)
 
-        if not await self._state.seen(event_id):
+        try:
+            seen = await self._state.seen(event_id)
+        except Exception as exc:
+            # Fail open: if state adapter seen check fails (e.g. Redis connection drop),
+            # log warning and proceed with handler dispatch best-effort.
+            logger.warning(
+                "state adapter seen check failed for event %s; failing open: %s",
+                event_id,
+                exc,
+            )
+            seen = True
+
+        if not seen:
             return
 
-        async with self._state.lock(message.conversation_id) as acquired:
-            if not acquired:
-                # Skipping execution: conversation lock not acquired (queuing out of scope)
+        if concurrency != "parallel":
+            try:
+                async with self._state.lock(message.conversation_id) as acquired:
+                    if not acquired:
+                        # Skipping execution: conversation lock not acquired (queuing out of scope)
+                        logger.warning(
+                            "skipping message %s: conversation %s is locked by another handler",
+                            message.id,
+                            message.conversation_id,
+                        )
+                        return
+                    self._run_handlers(message)
+            except Exception as exc:
+                # Fail open: if state adapter lock check fails (e.g. Redis connection drop),
+                # log warning and proceed with handler dispatch best-effort.
                 logger.warning(
-                    "skipping message %s: conversation %s is locked by another handler",
-                    message.id,
+                    "state adapter lock check failed for conversation %s; failing open: %s",
                     message.conversation_id,
+                    exc,
                 )
-                return
+                self._run_handlers(message)
+        else:
+            self._run_handlers(message)
 
-            if self._handlers:
-                # Show a 'thinking…' indicator up front so the human sees the agent is
-                # working while the handler runs. Best-effort; never blocks dispatch.
+    def _run_handlers(self, message: Message) -> None:
+        if self._handlers:
+            # Show a 'thinking…' indicator up front so the human sees the agent is
+            # working while the handler runs. Best-effort; never blocks dispatch.
+            try:
+                message.typing()
+            except Exception as exc:
+                logger.debug("typing indicator failed for message %s: %s", message.id, exc)
+            # Optional instant acknowledgement (listen(ack=...)) so the human gets
+            # an immediate reply on channels with no typing indicator (X, SMS,
+            # email). Best-effort; the real answer follows from the handler.
+            if self._ack:
                 try:
-                    message.typing()
-                except Exception:
-                    pass
-                # Optional instant acknowledgement (listen(ack=...)) so the human gets
-                # an immediate reply on channels with no typing indicator (X, SMS,
-                # email). Best-effort; the real answer follows from the handler.
-                if self._ack:
-                    try:
-                        message.reply(self._ack)
-                    except InsufficientCreditError as exc:
-                        self._warn_out_of_credit(exc)
-                    except Exception:
-                        logger.exception("ack reply failed for message %s", message.id)
-            for handler in self._handlers:
-                try:
-                    handler(message)
-                except AccountRequiredError as exc:
-                    # Paid channel used before the developer signed in. Surface the
-                    # one-time sign-in prompt loudly (e.g. in Claude Code).
-                    self._warn_account_required(exc)
+                    message.reply(self._ack)
                 except InsufficientCreditError as exc:
-                    # The agent tried to reply on a paid channel but the project is
-                    # out of credit / capped. Make it loud on the CLI so the operator
-                    # (e.g. running this in Claude Code) sees it and can top up.
                     self._warn_out_of_credit(exc)
                 except Exception:
-                    logger.exception(
-                        "on_message handler failed for message %s; continuing", message.id
-                    )
+                    logger.exception("ack reply failed for message %s", message.id)
+        for handler in self._handlers:
+            try:
+                handler(message)
+            except AccountRequiredError as exc:
+                # Paid channel used before the developer signed in. Surface the
+                # one-time sign-in prompt loudly (e.g. in Claude Code).
+                self._warn_account_required(exc)
+            except InsufficientCreditError as exc:
+                # The agent tried to reply on a paid channel but the project is
+                # out of credit / capped. Make it loud on the CLI so the operator
+                # (e.g. running this in Claude Code) sees it and can top up.
+                self._warn_out_of_credit(exc)
+            except Exception:
+                logger.exception(
+                    "on_message handler failed for message %s; continuing", message.id
+                )
+
 
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
@@ -1128,7 +1165,11 @@ class CommClient:
         """
         if ack is not None:
             self._ack = ack
-        scheduler = _MessageScheduler(self._dispatch_event, concurrency, debounce_ms)
+        scheduler = _MessageScheduler(
+            lambda evt: self._dispatch_event(evt, concurrency=concurrency),
+            concurrency,
+            debounce_ms,
+        )
         try:
             seq = self._latest_seq() if from_seq is None else from_seq
             backoff = poll_interval

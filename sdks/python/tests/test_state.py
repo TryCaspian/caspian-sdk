@@ -112,7 +112,8 @@ def test_redis_lock_concurrency_and_lua_release():
 
 def test_redis_missing_dependency_error():
     # If redis module is missing, constructing RedisStateAdapter raises ImportError
-    original_modules = dict(sys.modules)
+    orig_redis = sys.modules.get("redis")
+    orig_redis_asyncio = sys.modules.get("redis.asyncio")
     try:
         sys.modules["redis"] = None
         sys.modules["redis.asyncio"] = None
@@ -123,7 +124,15 @@ def test_redis_missing_dependency_error():
         else:
             pytest.fail("Expected ImportError when redis-py is missing")
     finally:
-        sys.modules.update(original_modules)
+        if orig_redis is not None:
+            sys.modules["redis"] = orig_redis
+        else:
+            sys.modules.pop("redis", None)
+
+        if orig_redis_asyncio is not None:
+            sys.modules["redis.asyncio"] = orig_redis_asyncio
+        else:
+            sys.modules.pop("redis.asyncio", None)
 
 
 # ---- Dispatch Level Tests --------------------------------------------------
@@ -150,7 +159,7 @@ def test_client_dispatch_deduplication():
     assert events_received == ["msg_dup"]
 
 
-def test_client_dispatch_lock_concurrency():
+def test_client_dispatch_lock_concurrency_serial_strategy():
     events_run = []
     evt1_started = threading.Event()
     evt1_finish = threading.Event()
@@ -170,14 +179,16 @@ def test_client_dispatch_lock_concurrency():
     evt3 = _message_event(seq=3, conversation_id="conv_a", text="Msg 3", msg_id="m3")
 
     # Start evt1 in background thread so its handler holds conv_a lock
-    t = threading.Thread(target=client._dispatch_event, args=(evt1,))
+    t = threading.Thread(
+        target=client._dispatch_event, args=(evt1,), kwargs={"concurrency": "queue"}
+    )
     t.start()
 
     # Wait until evt1 is executing inside handler holding lock
     assert evt1_started.wait(timeout=1)
 
     # Dispatch evt2 for same conversation while evt1 holds lock -> must be skipped
-    client._dispatch_event(evt2)
+    client._dispatch_event(evt2, concurrency="queue")
     assert events_run == ["m1"]
 
     # Allow evt1 to finish
@@ -185,5 +196,39 @@ def test_client_dispatch_lock_concurrency():
     t.join()
 
     # Dispatch evt3 after evt1 releases lock -> must acquire and run
-    client._dispatch_event(evt3)
+    client._dispatch_event(evt3, concurrency="queue")
     assert events_run == ["m1", "m3"]
+
+
+def test_client_dispatch_bypasses_lock_under_parallel_strategy():
+    events_run = []
+    evt1_started = threading.Event()
+    evt1_finish = threading.Event()
+
+    adapter = InMemoryStateAdapter()
+    client = _client(lambda req: httpx.Response(200, json={}), state=adapter)
+
+    @client.on_message
+    def handle(msg):
+        events_run.append(msg.id)
+        if msg.id == "m1":
+            evt1_started.set()
+            evt1_finish.wait(timeout=1)
+
+    evt1 = _message_event(seq=1, conversation_id="conv_a", text="Msg 1", msg_id="m1")
+    evt2 = _message_event(seq=2, conversation_id="conv_a", text="Msg 2", msg_id="m2")
+
+    t = threading.Thread(
+        target=client._dispatch_event, args=(evt1,), kwargs={"concurrency": "parallel"}
+    )
+    t.start()
+    assert evt1_started.wait(timeout=1)
+
+    # Dispatch evt2 under strategy "parallel" while evt1 is running on same conv_a
+    client._dispatch_event(evt2, concurrency="parallel")
+
+    # Under parallel strategy, lock is bypassed so evt2 runs concurrently
+    assert events_run == ["m1", "m2"]
+
+    evt1_finish.set()
+    t.join()

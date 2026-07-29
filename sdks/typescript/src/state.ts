@@ -132,9 +132,10 @@ export class RedisStateAdapter implements StateAdapter {
 
   async lock(conversationId: string): Promise<LockHandle> {
     const key = `lock:${conversationId}`;
-    const token = crypto.randomUUID
-      ? crypto.randomUUID()
-      : Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const token =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : crypto.randomBytes(16).toString("hex");
     const res = await this.redis.set(key, token, "NX", "EX", this.lockTtl);
     const acquired = res === "OK";
 
