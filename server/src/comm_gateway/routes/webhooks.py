@@ -139,6 +139,44 @@ async def receive_provider_interaction(provider_name: str, request: Request) -> 
     return Response(status_code=200)
 
 
+@router.post("/{provider_name}/commands")
+async def receive_provider_command(provider_name: str, request: Request) -> Response:
+    """Slash command endpoint (Slack `/command` invocations).
+
+    Slack posts flat form-encoded fields to the app's Slash Command Request URL
+    (separate from both the Events and Interactivity URLs) and needs a 200
+    within 3s. We route by api_app_id:team_id to the owning connection, verify
+    with its signing secret, parse the command name/text, and enqueue a
+    command event."""
+    provider = _provider_or_404(request, provider_name)
+    if not hasattr(provider, "parse_command"):
+        raise HTTPException(status_code=404, detail="Provider has no commands endpoint")
+    body = await request.body()
+    key = (provider.command_route_key(body)
+           if hasattr(provider, "command_route_key") else None)
+    if key is None:
+        raise HTTPException(status_code=400, detail="Cannot route command")
+    with request.app.state.session_factory() as session:
+        connection = session.execute(
+            select(Connection).where(
+                Connection.provider == provider.name,
+                Connection.provider_resource_id == str(key),
+                Connection.status.in_(["provisioning", "active"]),
+            )
+        ).scalars().first()
+    if connection is None:
+        raise HTTPException(status_code=404, detail="Unknown app")
+    credentials = read_credentials(connection)
+    try:
+        inbound = provider.parse_command(body, dict(request.headers), credentials=credentials)
+    except WebhookVerificationError as exc:
+        log.warning("command verification failed for %s: %s", provider_name, exc)
+        raise HTTPException(status_code=400, detail="Command verification failed") from exc
+    ingest_inbound(request.app.state.session_factory, provider.name, inbound)
+    # Slack wants a fast 200; the actual work already happened via the queue.
+    return Response(status_code=200)
+
+
 @router.post("/{provider_name}/webhooks/{resource_id}", status_code=204)
 async def receive_scoped_webhook(
     provider_name: str, resource_id: str, request: Request

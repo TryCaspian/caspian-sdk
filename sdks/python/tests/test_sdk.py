@@ -439,6 +439,50 @@ def test_on_reaction_dispatches():
     assert seen[0].action == "added"
 
 
+def test_on_command_dispatches_and_replies():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "name": "standup", "text": "today's plan",
+                "trigger_id": "trig_1", "sender": {"address": "u"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Command] = []
+
+    @client.on_command
+    def handle(cmd: Command) -> None:
+        seen.append(cmd)
+        cmd.reply(f"got /{cmd.name} {cmd.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert len(seen) == 1
+    assert seen[0].name == "standup"
+    assert seen[0].text == "today's plan"
+    assert seen[0].trigger_id == "trig_1"
+    # reply routed to the conversation, not a source message (commands have none)
+    assert replies[0][0] == "/v1/conversations/conv_1/messages"
+    assert replies[0][1]["text"] == "got /standup today's plan"
+
+
 def test_message_carries_media_to_handler():
     events = [
         {

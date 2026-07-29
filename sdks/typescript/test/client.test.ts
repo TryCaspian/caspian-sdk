@@ -5,6 +5,7 @@ import {
   AccountRequiredError,
   CommClient,
   CommError,
+  Command,
   InsufficientCreditError,
   Interaction,
   Message,
@@ -814,6 +815,46 @@ describe("CommClient", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0].emoji).toBe("thumbsup");
     expect(seen[0].action).toBe("added");
+  });
+
+  it("onCommand dispatches a slash command and reply routes to the conversation", async () => {
+    const replies: any[] = [];
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 1) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "command.received",
+            data: {
+              connection_id: "conn_1",
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              conversation_id: "conv_1",
+              name: "standup",
+              text: "today's plan",
+              trigger_id: "trig_1",
+              sender: { address: "u" },
+            },
+          },
+        ]);
+      },
+      "POST /v1/conversations/conv_1/messages": (req) =>
+        req.json().then((b) => (replies.push(b), json({ delivered: true }))),
+    });
+    const seen: Command[] = [];
+    client.onCommand(async (c) => {
+      seen.push(c);
+      await c.reply(`got /${c.name} ${c.text}`);
+    });
+    const last = await client.dispatchPending(0);
+    expect(last).toBe(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].name).toBe("standup");
+    expect(seen[0].text).toBe("today's plan");
+    expect(seen[0].triggerId).toBe("trig_1");
+    expect(replies[0].text).toBe("got /standup today's plan");
   });
 
   it("a message carries received media to the handler", async () => {

@@ -53,6 +53,23 @@ def _interaction_payload(body: bytes) -> dict | None:
         return None
 
 
+def _slash_command_form(body: bytes) -> dict | None:
+    """Slack slash command POSTs are `application/x-www-form-urlencoded` with the
+    command's fields (command, text, user_id, team_id, api_app_id, trigger_id,
+    ...) directly at the top level -- unlike interactivity POSTs, there's no
+    wrapping `payload=<json>` field. Flatten to a single-value dict (returns
+    None if the body doesn't parse)."""
+    from urllib.parse import parse_qs
+
+    try:
+        form = parse_qs(body.decode())
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not form:
+        return None
+    return {key: values[0] for key, values in form.items() if values}
+
+
 def _media_blocks(media) -> list[dict]:
     """Render outbound attachments as Block Kit image blocks (image mime types).
     Non-image files are surfaced as a link section so the URL still reaches the
@@ -168,6 +185,38 @@ def parse_block_actions(payload: dict) -> list[InboundMessage]:
     ]
 
 
+def parse_slash_command(data: dict) -> list[InboundMessage]:
+    """Normalize a Slack slash command POST into a command.received event.
+
+    `data` is the flattened form body from `_slash_command_form`: `command` is
+    the slash command name (e.g. "/standup"), `text` is whatever the user typed
+    after it, and `trigger_id` can be used to open a modal in response."""
+    command = data.get("command", "")
+    if not command:
+        return []
+    channel = data.get("channel_id", "")
+    app_id = data.get("api_app_id", "")
+    team = data.get("team_id", "")
+    trigger_id = data.get("trigger_id", "")
+    return [
+        InboundMessage(
+            kind="command",
+            external_event_id=f"{app_id}:{trigger_id}" if trigger_id
+                               else f"{app_id}:{channel}:{data.get('user_id', '')}",
+            provider_inbox_id=f"{app_id}:{team}",
+            provider_message_id=f"{app_id}:{trigger_id}" if trigger_id else channel,
+            provider_thread_id=channel,
+            sender_address=data.get("user_id"),
+            sender_name=data.get("user_name"),
+            command={
+                "name": command.lstrip("/"),
+                "text": data.get("text", ""),
+                "trigger_id": trigger_id or None,
+            },
+        )
+    ]
+
+
 class SlackProvider:
     name = "slack"
     channel = "slack"
@@ -184,6 +233,7 @@ class SlackProvider:
             Capability.INTERACTIONS,
             Capability.REACTIONS,
             Capability.MEDIA,
+            Capability.COMMANDS,
         }
     )
 
@@ -527,3 +577,28 @@ class SlackProvider:
             raise WebhookVerificationError("invalid Slack interaction payload")
         self._verify_signature(payload, headers, data, credentials)
         return parse_block_actions(data)
+
+    @staticmethod
+    def command_route_key(payload: bytes) -> str | None:
+        """Route a slash command POST (flat form-encoded body) by
+        api_app_id:team_id, same key as the Events API."""
+        data = _slash_command_form(payload)
+        if data is None:
+            return None
+        app_id = data.get("api_app_id", "")
+        team = data.get("team_id", "")
+        if not (app_id or team):
+            return None
+        return f"{app_id}:{team}"
+
+    def parse_command(
+        self, payload: bytes, headers: Mapping[str, str], credentials=None
+    ) -> list[InboundMessage]:
+        """Verify and parse a Slack slash command POST. The body is flat
+        form-encoded fields (command, text, user_id, ...); the signature is
+        over that raw body, same as interactivity and event POSTs."""
+        data = _slash_command_form(payload)
+        if data is None:
+            raise WebhookVerificationError("invalid Slack slash command payload")
+        self._verify_signature(payload, headers, data, credentials)
+        return parse_slash_command(data)

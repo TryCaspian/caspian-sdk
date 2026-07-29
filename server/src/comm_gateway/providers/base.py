@@ -48,6 +48,7 @@ class Capability:
     INTERACTIONS = "interactions"  # button taps / message components round-trip back to the agent
     MEDIA = "media"  # send and/or receive file attachments (images, documents, ...)
     REACTIONS = "reactions"  # add emoji reactions and receive reaction events
+    COMMANDS = "commands"  # slash commands round-trip back to the agent
 
 
 # Every valid capability string, for validating a connection's manifest.
@@ -118,9 +119,10 @@ class InboundMessage:
     auto_generated: bool = False  # auto-responder/bounce/no-reply; never auto-reply to these
     # What this inbound event IS. "message" is a normal message and is the default
     # so every existing provider is unchanged. "interaction" is a button tap;
-    # "reaction" is an emoji reaction. The ingest queue maps this to the event type
-    # (message.received / interaction.received / reaction.received) so the SDK can
-    # subscribe to each independently.
+    # "reaction" is an emoji reaction; "command" is a slash command invocation.
+    # The ingest queue maps this to the event type (message.received /
+    # interaction.received / reaction.received / command.received) so the SDK
+    # can subscribe to each independently.
     kind: str = "message"
     # For kind="interaction": {"value": <decoded callback value>,
     # "source_message_id": <provider_message_id of the message whose button was tapped>}.
@@ -128,6 +130,10 @@ class InboundMessage:
     # For kind="reaction": {"emoji": ..., "source_message_id": ...,
     # "action": "added" | "removed"}.
     reaction: dict | None = None
+    # For kind="command": {"name": <slash command name, without the leading "/">,
+    # "text": <raw text typed after the command>, "trigger_id": <provider-specific
+    # id used for opening modals/dialogs in response, if any>}.
+    command: dict | None = None
     # File attachments received with a message (kind="message"). Each item is a
     # dict: {"url"|"data", "mime_type", "name", "size"}.
     media: list[dict] = field(default_factory=list)
@@ -150,6 +156,7 @@ class ChannelProvider(Protocol):
         release(provider_resource_id, provider_pod_id)  -> None  # deprovision a number
         react(provider_message_id, emoji, credentials)  -> None  # add an emoji reaction
         parse_interaction(payload, headers, credentials) -> list[InboundMessage]  # button taps
+        parse_command(payload, headers, credentials)     -> list[InboundMessage]  # slash commands
     """
 
     name: str

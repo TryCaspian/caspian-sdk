@@ -325,6 +325,28 @@ def _process_reaction(session: Session, connection: Connection, data: dict) -> N
     )
 
 
+def _process_command(session: Session, connection: Connection, data: dict) -> None:
+    """A slash command invocation, surfaced as command.received (distinct from
+    message.received so handlers subscribe to it separately)."""
+    command = data.get("command") or {}
+    conversation = _find_conversation(session, connection, data.get("provider_thread_id"))
+    emit_event(
+        session,
+        connection.project_id,
+        "command.received",
+        {
+            "customer_id": connection.customer_id,
+            "agent_id": connection.agent_id,
+            "connection_id": connection.id,
+            "conversation_id": conversation.id if conversation else None,
+            "name": command.get("name"),
+            "text": command.get("text", ""),
+            "trigger_id": command.get("trigger_id"),
+            "sender": {"address": data.get("sender_address"), "name": data.get("sender_name")},
+        },
+    )
+
+
 def _process_provider_event(session: Session, providers: dict, payload: dict) -> None:
     provider_event = session.get(ProviderEvent, payload["provider_event_id"])
     if provider_event is None or provider_event.processed:
@@ -346,8 +368,8 @@ def _process_provider_event(session: Session, providers: dict, payload: dict) ->
         provider_event.processed = True
         return
 
-    # Button taps and reactions don't create messages; they emit their own event
-    # against the message they target. Only "message" flows into the store below.
+    # Button taps, reactions, and slash commands don't create messages; they
+    # emit their own event instead. Only "message" flows into the store below.
     kind = data.get("kind", "message")
     if kind == "interaction":
         _process_interaction(session, connection, data)
@@ -355,6 +377,10 @@ def _process_provider_event(session: Session, providers: dict, payload: dict) ->
         return
     if kind == "reaction":
         _process_reaction(session, connection, data)
+        provider_event.processed = True
+        return
+    if kind == "command":
+        _process_command(session, connection, data)
         provider_event.processed = True
         return
 

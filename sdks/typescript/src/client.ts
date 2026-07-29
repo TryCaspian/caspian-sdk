@@ -145,9 +145,43 @@ export class Reaction {
   ) {}
 }
 
+/**
+ * A slash command invocation delivered to an onCommand handler. `name` is the
+ * command without its leading "/" (e.g. "standup"); `text` is whatever the
+ * user typed after it; `triggerId` is a provider-specific id usable to open a
+ * modal/dialog in response, when the provider supports one.
+ */
+export class Command {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly conversationId: string | null,
+    readonly name: string | null,
+    readonly text: string,
+    readonly triggerId: string | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /** Send into the conversation the command was invoked from. */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (!this.conversationId) {
+      throw new CommError(400, "command has no conversation to reply to");
+    }
+    return this.client.sendMessage(this.conversationId, text, html, blocks, media);
+  }
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type CommandHandler = (command: Command) => void | Promise<void>;
 
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
@@ -301,6 +335,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly commandHandlers: CommandHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
 
@@ -958,6 +993,12 @@ export class CommClient {
     return handler;
   }
 
+  /** Register a handler for slash commands (command.received). */
+  onCommand(handler: CommandHandler): CommandHandler {
+    this.commandHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -1018,6 +1059,29 @@ export class CommClient {
     }
   }
 
+  private async dispatchCommand(data: any): Promise<void> {
+    const command = new Command(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.conversation_id ?? null,
+      data.name ?? null,
+      data.text ?? "",
+      data.trigger_id ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.commandHandlers) {
+      try {
+        await handler(command);
+      } catch (err) {
+        if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
+        else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
+        else logger.error("onCommand handler failed; continuing", err);
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
     if (event.type === "interaction.received") {
       await this.dispatchInteraction(event.data);
@@ -1025,6 +1089,10 @@ export class CommClient {
     }
     if (event.type === "reaction.received") {
       await this.dispatchReaction(event.data);
+      return;
+    }
+    if (event.type === "command.received") {
+      await this.dispatchCommand(event.data);
       return;
     }
     if (event.type !== "message.received") return;
