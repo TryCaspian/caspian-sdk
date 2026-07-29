@@ -8,7 +8,6 @@ import asyncio
 import json
 
 import pytest
-
 from comm_gateway.listeners.slack_socket import SlackSocketClient
 
 
