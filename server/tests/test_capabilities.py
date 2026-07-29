@@ -138,7 +138,9 @@ def test_group_message_carries_chat_type(app, client, run_jobs):
 
 
 def _user_account_app():
-    from comm_gateway.providers.fakes.fake_telegram_user import FakeTelegramUserProvider  # noqa: PLC0415
+    from comm_gateway.providers.fakes.fake_telegram_user import (
+        FakeTelegramUserProvider,  # noqa: PLC0415
+    )
 
     settings = Settings(
         database_url="sqlite://", bootstrap_api_key=API_KEY, inline_worker=False
