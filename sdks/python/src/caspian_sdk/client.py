@@ -15,9 +15,12 @@ Usage:
     client.listen()
 """
 
+import asyncio
+import inspect
 import logging
 import os
 import sys
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -383,8 +386,22 @@ class CommClient:
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
 
+        self._async_loop = asyncio.new_event_loop()
+        self._async_thread = threading.Thread(
+            target=self._async_loop.run_forever,
+            daemon=True,
+        )
+        self._async_thread.start()
+
     def close(self) -> None:
         self._http.close()
+
+        if self._async_loop.is_running():
+            self._async_loop.call_soon_threadsafe(self._async_loop.stop)
+
+        self._async_thread.join(timeout=1)
+
+        self._async_loop.close()
 
     def _request(
         self, method: str, path: str, *, json: dict | None = None, params: dict | None = None
@@ -980,6 +997,21 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def _run_handler(self, handler, arg):
+        """
+        Execute either a synchronous or asynchronous handler.
+        Async handlers run on a shared background event loop.
+        """
+        result = handler(arg)
+
+        if inspect.iscoroutine(result):
+            future = asyncio.run_coroutine_threadsafe(
+                result,
+                self._async_loop,
+            )
+            future.result()
+
+
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
@@ -1012,19 +1044,18 @@ class CommClient:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
-                handler(message)
+                self._run_handler(handler, message)
+
             except AccountRequiredError as exc:
-                # Paid channel used before the developer signed in. Surface the
-                # one-time sign-in prompt loudly (e.g. in Claude Code).
                 self._warn_account_required(exc)
+
             except InsufficientCreditError as exc:
-                # The agent tried to reply on a paid channel but the project is
-                # out of credit / capped. Make it loud on the CLI so the operator
-                # (e.g. running this in Claude Code) sees it and can top up.
                 self._warn_out_of_credit(exc)
+
             except Exception:
                 logger.exception(
-                    "on_message handler failed for message %s; continuing", message.id
+                    "on_message handler failed for message %s; continuing",
+                    message.id,
                 )
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
@@ -1165,7 +1196,7 @@ class CommClient:
         )
         for handler in self._interaction_handlers:
             try:
-                handler(interaction)
+                self._run_handler(handler, interaction)
             except InsufficientCreditError as exc:
                 self._warn_out_of_credit(exc)
             except AccountRequiredError as exc:
@@ -1186,7 +1217,7 @@ class CommClient:
         )
         for handler in self._reaction_handlers:
             try:
-                handler(reaction)
+                self._run_handler(handler, reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
 

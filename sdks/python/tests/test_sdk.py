@@ -2,7 +2,7 @@
 
 import json
 import threading
-
+import asyncio
 import httpx
 import pytest
 from caspian_sdk import (
@@ -671,3 +671,52 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+def test_async_on_message_handler_runs():
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "message": {
+                    "id": "m1",
+                    "conversation_id": "c1",
+                    "connection_id": "cn1",
+                    "channel": "email",
+                    "text": "hello async",
+                },
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(
+                200,
+                json=[] if after >= 1 else events,
+            )
+
+        if request.url.path.endswith("/typing"):
+            return httpx.Response(200, json={"ok": True})
+
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+
+    seen = []
+
+    @client.on_message
+    async def on_message(message):
+        await asyncio.sleep(0)
+        seen.append(message.text)
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert seen == ["hello async"]
