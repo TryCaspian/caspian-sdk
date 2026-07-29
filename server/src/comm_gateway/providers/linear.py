@@ -102,6 +102,7 @@ class LinearProvider:
     name = "linear"
     channel = "linear"
     connect_credentials = ()
+    optional_connect_credentials = ("api_key", "organization_id", "webhook_secret")
     capabilities = frozenset({Capability.RECEIVE, Capability.REPLY, Capability.SEND})
 
     def __init__(

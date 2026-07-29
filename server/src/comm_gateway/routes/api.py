@@ -56,7 +56,8 @@ from ..schemas import (
     WebhookConfig,
     WebhookOut,
     XConnectionCreate,
-    BlueskyConnectionCreate
+    BlueskyConnectionCreate,
+    LinearConnectionCreate,
 )
 from ..serialize import (
     agent_out,
@@ -655,6 +656,22 @@ def create_bluesky_connection(
         body,
         channel="bluesky",
     )
+
+@router.post("/connections/linear", response_model=ConnectionOut, status_code=201)
+def create_linear_connection(
+    body: LinearConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(
+        request,
+        session,
+        project,
+        body,
+        channel="linear",
+    )
+
 
 @router.post("/connections/x/install", response_model=ConnectionOut, status_code=201)
 def install_x(

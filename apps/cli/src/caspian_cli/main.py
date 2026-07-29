@@ -327,6 +327,13 @@ def _connect_one(channel: str, args) -> None:
                 "security -> App passwords)"
             ),
         }
+    elif channel == "linear":
+        body = {
+            "display_name": args.name,
+            "api_key": _ask("Linear Personal API Key / Token"),
+            "organization_id": _ask("Linear Organization ID"),
+            "webhook_secret": _ask("Linear Webhook Secret"),
+        }
     else:
         body = {"display_name": args.name}
 
@@ -475,10 +482,11 @@ def main() -> None:
         default=None,
         choices=[
             None, "email", "telegram", "phone", "whatsapp", "imessage", "rcs",
-            "discord", "slack", "github", "x", "instagram", "facebook",
+            "discord", "slack", "github", "x", "instagram", "facebook", "linear",
         ],
         help="Channel to connect; omit to be shown the live options and asked",
     )
+
     p_connect.add_argument("--name", default=None, help="Display name for the connection")
     p_connect.add_argument("--bot-token", default=None, help="Telegram bot token from @BotFather")
     p_connect.add_argument("--domain", default=None, help="Verified custom domain for the inbox")

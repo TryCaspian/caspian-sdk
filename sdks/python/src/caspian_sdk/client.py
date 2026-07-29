@@ -763,7 +763,35 @@ class CommClient:
             app_password=app_password,
             **kwargs,
         )
+
+    def connect_linear(
+        self,
+        api_key: str | None = None,
+        organization_id: str | None = None,
+        webhook_secret: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        provider: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Connect Linear issue tracking.
+
+        Pass ``api_key`` (Personal API Key or OAuth Token), ``organization_id``,
+        and ``webhook_secret`` configured in Linear.
+        """
+        return self._connect(
+            "linear",
+            customer_id,
+            agent_id,
+            api_key=api_key,
+            organization_id=organization_id,
+            webhook_secret=webhook_secret,
+            provider=provider,
+            **kwargs,
+        )
+
     def connect_instagram(self, customer_id=None, agent_id=None, **kwargs) -> dict:
+
         """Start an Instagram DM install (OAuth). Returns an `authorize_url`."""
         return self._connect("instagram", customer_id, agent_id, wait=False, **kwargs)
 
@@ -773,6 +801,11 @@ class CommClient:
 
     def get_connection(self, connection_id: str) -> dict:
         return self._request("GET", f"/v1/connections/{connection_id}")
+
+    def list_connections(self, channel: str | None = None) -> list[dict]:
+        params = {"channel": channel} if channel else None
+        return self._request("GET", "/v1/connections", params=params)
+
 
     def list_conversations(self, connection_id: str | None = None) -> list[dict]:
         params = {"connection_id": connection_id} if connection_id else None

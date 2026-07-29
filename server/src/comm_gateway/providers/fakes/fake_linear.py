@@ -21,6 +21,7 @@ class FakeLinearProvider:
     channel = "linear"
     capabilities = LinearProvider.capabilities
     connect_credentials = ()
+    optional_connect_credentials = ("api_key", "organization_id", "webhook_secret")
     client_id = "fake_linear_client_123"
 
     def __init__(self) -> None:

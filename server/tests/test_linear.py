@@ -309,3 +309,28 @@ def test_fake_linear_provider_round_trip():
     replied = provider.reply("org_123", "ENG-42:1001", OutboundMessage(text="Reply"), {})
     assert sent.provider_thread_id == "ENG-42"
     assert replied.provider_thread_id == "ENG-42"
+
+
+def test_linear_connection_endpoint():
+    from comm_gateway.config import Settings
+    from comm_gateway.main import create_app
+    from fastapi.testclient import TestClient
+
+    settings = Settings(provider="fake-linear", bootstrap_api_key="test_key_123")
+    app = create_app(settings)
+    client = TestClient(app)
+
+    res = client.post(
+        "/v1/connections/linear",
+        headers={"Authorization": "Bearer test_key_123"},
+        json={
+            "organization_id": "org_test_123",
+            "api_key": "lin_api_test",
+            "webhook_secret": "sec_test_secret",
+        },
+    )
+    assert res.status_code == 201
+    data = res.json()
+    assert data["channel"] == "linear"
+    assert data["status"] in ("provisioning", "active")
+
