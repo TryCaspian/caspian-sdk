@@ -1,49 +1,54 @@
-name: CI
+name: Lint & Test (SDKs)
 
 permissions:
   contents: read
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: lint-test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
+    name: Python SDK
     runs-on: ubuntu-latest
-
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.12"]
-
     steps:
       - uses: actions/checkout@v4
         with:
-         persist-credentials: false
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v3
-
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync
 
-      - name: Run Ruff
+      - name: Lint (ruff)
         run: uv run ruff check .
 
-      - name: Run Tests
+      - name: Test
         run: uv run pytest
 
   typescript:
+    name: TypeScript SDK
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: sdks/typescript
-
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["18", "20", "22"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +56,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
 
@@ -61,7 +66,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Run Tests
+      - name: Test
         run: npm test
 
       - name: Build
