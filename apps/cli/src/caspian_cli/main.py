@@ -185,7 +185,16 @@ def _ask(prompt: str, default: str = "") -> str:
     return answer or default
 
 
+def _ask_secret(prompt: str) -> str:
+    import getpass
+    try:
+        return getpass.getpass(f"{prompt}: ").strip()
+    except (EOFError, getpass.GetPassWarning):
+        return _ask(prompt)
+
+
 def _live_channels() -> list[str]:
+
     try:
         return [c["channel"] for c in _request("GET", "/v1/channels")]
     except SystemExit:
@@ -330,9 +339,9 @@ def _connect_one(channel: str, args) -> None:
     elif channel == "linear":
         body = {
             "display_name": args.name,
-            "api_key": _ask("Linear Personal API Key / Token"),
+            "api_key": _ask_secret("Linear Personal API Key / Token"),
             "organization_id": _ask("Linear Organization ID"),
-            "webhook_secret": _ask("Linear Webhook Secret"),
+            "webhook_secret": _ask_secret("Linear Webhook Secret"),
         }
     else:
         body = {"display_name": args.name}

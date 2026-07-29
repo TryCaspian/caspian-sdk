@@ -492,16 +492,16 @@ export class CommClient {
   /** Connect Linear issue tracking. */
   connectLinear(
     opts: ConnectOptions & {
+      organizationId: string;
       apiKey?: string;
-      organizationId?: string;
       webhookSecret?: string;
       provider?: string;
-    } = {},
+    },
   ): Promise<Connection> {
-    const { apiKey, organizationId, webhookSecret, provider, ...rest } = opts;
+    const { organizationId, apiKey, webhookSecret, provider, ...rest } = opts;
     return this.connect("linear", rest, {
+      organization_id: organizationId,
       api_key: apiKey ?? null,
-      organization_id: organizationId ?? null,
       webhook_secret: webhookSecret ?? null,
       provider: provider ?? null,
     });

@@ -120,13 +120,13 @@ class BlueskyConnectionCreate(BaseModel):
 
 
 class LinearConnectionCreate(BaseModel):
+    organization_id: str
     customer_id: str | None = None
     agent_id: str | None = None
     display_name: str | None = None
     capabilities: list[str] | None = None
     provider: str | None = None
     api_key: str | None = None
-    organization_id: str | None = None
     webhook_secret: str | None = None
 
 

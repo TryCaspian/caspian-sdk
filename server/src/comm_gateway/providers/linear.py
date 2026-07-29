@@ -101,8 +101,8 @@ def parse_linear_comment(data: dict, delivery_id: str = "") -> list[InboundMessa
 class LinearProvider:
     name = "linear"
     channel = "linear"
-    connect_credentials = ()
-    optional_connect_credentials = ("api_key", "organization_id", "webhook_secret")
+    connect_credentials = ("organization_id",)
+    optional_connect_credentials = ("api_key", "webhook_secret")
     capabilities = frozenset({Capability.RECEIVE, Capability.REPLY, Capability.SEND})
 
     def __init__(

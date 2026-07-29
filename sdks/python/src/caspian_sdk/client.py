@@ -768,8 +768,8 @@ class CommClient:
 
     def connect_linear(
         self,
+        organization_id: str,
         api_key: str | None = None,
-        organization_id: str | None = None,
         webhook_secret: str | None = None,
         customer_id: str | None = None,
         agent_id: str | None = None,
@@ -778,15 +778,15 @@ class CommClient:
     ) -> dict:
         """Connect Linear issue tracking.
 
-        Pass ``api_key`` (Personal API Key or OAuth Token), ``organization_id``,
-        and ``webhook_secret`` configured in Linear.
+        Pass ``organization_id``, along with optional ``api_key`` (Personal API Key
+        or OAuth Token) and ``webhook_secret`` configured in Linear.
         """
         return self._connect(
             "linear",
             customer_id,
             agent_id,
-            api_key=api_key,
             organization_id=organization_id,
+            api_key=api_key,
             webhook_secret=webhook_secret,
             provider=provider,
             **kwargs,

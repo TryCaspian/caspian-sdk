@@ -51,9 +51,9 @@ else:
 def handle(message):
     sender = (message.sender or {}).get("name", "User")
     print(f"<- Linear Issue Comment from {sender}: {message.text!r}")
-    reply_text = f"🤖 Caspian Agent ACK: Received your comment on Linear issue. Processing..."
+    reply_text = "🤖 Caspian Agent ACK: Received your comment on Linear issue. Processing..."
     message.reply(reply_text)
-    print(f"-> Replied to Linear issue comment successfully!")
+    print("-> Replied to Linear issue comment successfully!")
 
 
 print("Listening for Linear comments (Ctrl+C to stop)...")
