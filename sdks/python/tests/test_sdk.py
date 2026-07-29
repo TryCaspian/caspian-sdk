@@ -17,7 +17,9 @@ API_KEY = "comm_test_key"
 
 
 def _client(handler) -> CommClient:
-    http = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://gw.test")
+    http = httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://gw.test"
+    )
     return CommClient(api_key=API_KEY, base_url="http://gw.test", http=http)
 
 
@@ -127,7 +129,10 @@ def test_insufficient_credit_maps_from_402():
                     "message": "Out of credit.",
                     "balance_cents": 42,
                     "payment_options": [
-                        {"url": "https://pay/1", "create": {"body": {"amount_cents": 5000}}}
+                        {
+                            "url": "https://pay/1",
+                            "create": {"body": {"amount_cents": 5000}},
+                        }
                     ],
                 }
             },
@@ -182,12 +187,19 @@ def test_connect_email_waits_for_provisioning():
                 201, json={"id": "conn_1", "status": "provisioning", "address": None}
             )
         return httpx.Response(
-            200, json={"id": "conn_1", "status": "active", "address": "acme@agents.example.com"}
+            200,
+            json={
+                "id": "conn_1",
+                "status": "active",
+                "address": "acme@agents.example.com",
+            },
         )
 
     client = _client(handler)
     try:
-        connection = client.connect_email(display_name="Acme Support", poll_interval=0.01)
+        connection = client.connect_email(
+            display_name="Acme Support", poll_interval=0.01
+        )
     finally:
         client.close()
     assert connection["status"] == "active"
@@ -231,9 +243,7 @@ def test_connect_telegram_waits_for_provisioning():
     assert calls[0][1] == "/v1/connections/telegram"
     assert calls[0][2]["bot_token"] == "123456:ABC-DEF"
     assert calls[0][2]["display_name"] == "Acme Telegram Support"
-    assert ("GET", "/v1/connections/conn_tg", {}) in [
-        (m, p, b) for m, p, b in calls
-    ]
+    assert ("GET", "/v1/connections/conn_tg", {}) in [(m, p, b) for m, p, b in calls]
 
 
 def test_connect_no_wait_returns_immediately():
@@ -289,7 +299,8 @@ def test_provisioning_failure_raises():
         if request.method == "POST":
             return httpx.Response(201, json={"id": "conn_3", "status": "provisioning"})
         return httpx.Response(
-            200, json={"id": "conn_3", "status": "failed", "error": "domain not verified"}
+            200,
+            json={"id": "conn_3", "status": "failed", "error": "domain not verified"},
         )
 
     client = _client(handler)
@@ -324,10 +335,19 @@ def test_reply_and_send_message_forward_blocks():
         client.close()
 
     assert bodies[0][0] == "/v1/messages/msg_1/reply"
-    assert bodies[0][1] == {"text": "Order shipped", "html": None, "blocks": payload,
-                            "media": None}
+    assert bodies[0][1] == {
+        "text": "Order shipped",
+        "html": None,
+        "blocks": payload,
+        "media": None,
+    }
     assert bodies[1][0] == "/v1/conversations/conv_1/messages"
-    assert bodies[1][1] == {"text": None, "html": None, "blocks": payload, "media": None}
+    assert bodies[1][1] == {
+        "text": None,
+        "html": None,
+        "blocks": payload,
+        "media": None,
+    }
 
 
 def test_reply_and_send_forward_media():
@@ -344,7 +364,12 @@ def test_reply_and_send_forward_media():
         client.send_message("conv_1", media=media)
     finally:
         client.close()
-    assert bodies[0][1] == {"text": "here", "html": None, "blocks": None, "media": media}
+    assert bodies[0][1] == {
+        "text": "here",
+        "html": None,
+        "blocks": None,
+        "media": media,
+    }
     assert bodies[1][1] == {"text": None, "html": None, "blocks": None, "media": media}
 
 
@@ -373,9 +398,13 @@ def test_on_interaction_dispatches_and_replies():
             "seq": 1,
             "type": "interaction.received",
             "data": {
-                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
-                "conversation_id": "conv_1", "value": "reorder_123",
-                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "conversation_id": "conv_1",
+                "value": "reorder_123",
+                "source_message": {"id": "msg_9"},
+                "sender": {"address": "u"},
             },
         }
     ]
@@ -416,9 +445,13 @@ def test_on_reaction_dispatches():
             "seq": 1,
             "type": "reaction.received",
             "data": {
-                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
-                "emoji": "thumbsup", "action": "added",
-                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "emoji": "thumbsup",
+                "action": "added",
+                "source_message": {"id": "msg_9"},
+                "sender": {"address": "u"},
             },
         }
     ]
@@ -445,10 +478,14 @@ def test_message_carries_media_to_handler():
             "seq": 1,
             "type": "message.received",
             "data": {
-                "customer_id": "cus_1", "agent_id": "agt_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
                 "message": {
-                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
-                    "channel": "email", "text": "see attached",
+                    "id": "m1",
+                    "conversation_id": "c1",
+                    "connection_id": "cn1",
+                    "channel": "email",
+                    "text": "see attached",
                     "media": [{"name": "r.pdf", "mime_type": "application/pdf"}],
                 },
             },
@@ -671,3 +708,60 @@ def test_behavior_prompt_returns_text():
     finally:
         client.close()
     assert "Slack" in guide
+
+
+from caspian_sdk import CommClient
+
+
+def test_async_on_message_handler():
+    client = CommClient(api_key="test_key", base_url="https://api.trycaspianai.com")
+    called = False
+
+    @client.on_message
+    async def handle_message(msg):
+        nonlocal called
+        called = True
+
+    event = {
+        "type": "message.received",
+        "seq": 1,
+        "data": {
+            "customer_id": "cust_123",
+            "agent_id": "agent_123",
+            "message": {
+                "id": "msg_123",
+                "conversation_id": "conv_123",
+                "connection_id": "conn_123",
+                "text": "Hello world",
+            },
+        },
+    }
+
+    client._dispatch_event(event)
+    assert called is True
+
+
+def test_async_on_interaction_handler():
+    client = CommClient(api_key="test_key", base_url="https://api.trycaspianai.com")
+    called = False
+
+    @client.on_interaction
+    async def handle_interaction(interaction):
+        nonlocal called
+        called = True
+
+    event = {
+        "type": "interaction.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "conversation_id": "conv_1",
+            "value": "reorder_123",
+            "source_message": {"id": "msg_9"},
+            "sender": {"address": "u"},
+        },
+    }
+
+    client._dispatch_event(event)
+    assert called is True

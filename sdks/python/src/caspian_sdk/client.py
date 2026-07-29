@@ -15,6 +15,8 @@ Usage:
     client.listen()
 """
 
+import asyncio
+import inspect
 import logging
 import os
 import sys
@@ -25,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Literal
+from typing import Awaitable, Literal, Union
 
 import httpx
 
@@ -46,15 +48,20 @@ def _dotenv() -> dict[str, str]:
     return values
 
 
-def _config(explicit: str | None, env_key: str, default: str | None = None) -> str | None:
+def _config(
+    explicit: str | None, env_key: str, default: str | None = None
+) -> str | None:
     """Resolve a value from an explicit arg, env, or ./.env. Prefers the branded
     CASPIAN_* name, falling back to the legacy COMM_* one for back-compat."""
     dotenv = _dotenv()
     keys = [env_key]
     if env_key.startswith("CASPIAN_"):
-        keys.append("COMM_" + env_key[len("CASPIAN_"):])  # legacy alias
-    for source in (lambda k: explicit if k == env_key else None,
-                   os.environ.get, dotenv.get):
+        keys.append("COMM_" + env_key[len("CASPIAN_") :])  # legacy alias
+    for source in (
+        lambda k: explicit if k == env_key else None,
+        os.environ.get,
+        dotenv.get,
+    ):
         for key in keys:
             value = source(key)
             if value:
@@ -77,7 +84,9 @@ class AccountRequiredError(CommError):
 
     def __init__(self, status_code: int, payload: dict, client: "CommClient") -> None:
         self.reason = payload.get("reason", "account_required")
-        self.message = payload.get("message", "Sign in to Caspian to use paid channels.")
+        self.message = payload.get(
+            "message", "Sign in to Caspian to use paid channels."
+        )
         self.login_options = payload.get("login_options", [])
         self._client = client
         super().__init__(status_code, self.message)
@@ -118,24 +127,25 @@ class InsufficientCreditError(CommError):
         return self._client.top_up(amount_cents or 2000)
 
 
+from dataclasses import dataclass, field
+
+
 @dataclass
 class Message:
     """An inbound message delivered to an on_message handler."""
 
-    id: str
-    conversation_id: str
-    connection_id: str
-    customer_id: str
-    agent_id: str
-    channel: str
-    sender: dict | None
-    subject: str | None
-    text: str | None
-    html: str | None
-    _client: "CommClient" = field(repr=False)
-    # File attachments received with the message: each {"url"|"data", "mime_type",
-    # "name", "size"}. Empty on channels/messages with no attachments.
+    id: str = ""
+    conversation_id: str = ""
+    connection_id: str = ""
+    customer_id: str = ""
+    agent_id: str = ""
+    channel: str = ""
+    sender: dict | None = None
+    subject: str | None = None
+    text: str | None = None
+    html: str | None = None
     media: list[dict] = field(default_factory=list)
+    _client: "CommClient" = field(default=None, repr=False)
 
     def reply(
         self,
@@ -144,7 +154,9 @@ class Message:
         blocks: list[dict] | None = None,
         media: list[dict] | None = None,
     ) -> dict:
-        return self._client.reply(self.id, text=text, html=html, blocks=blocks, media=media)
+        return self._client.reply(
+            self.id, text=text, html=html, blocks=blocks, media=media
+        )
 
     def react(self, emoji: str) -> dict:
         """Add an emoji reaction (tapback) to this message. Best-effort; no-op on
@@ -373,11 +385,16 @@ class CommClient:
     ) -> None:
         api_key = _config(api_key, "CASPIAN_API_KEY")
         if not api_key:
-            raise CommError(401, "No API key: pass api_key or set CASPIAN_API_KEY (env or ./.env)")
+            raise CommError(
+                401, "No API key: pass api_key or set CASPIAN_API_KEY (env or ./.env)"
+            )
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
-        self._handlers: list[Callable[[Message], None]] = []
+        # Define union type for sync and async handlers
+        MessageHandler = Callable[[Message], Union[None, Awaitable[None]]]
+        self._handlers: list[MessageHandler] = []
+        self._message_handlers = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
@@ -387,7 +404,12 @@ class CommClient:
         self._http.close()
 
     def _request(
-        self, method: str, path: str, *, json: dict | None = None, params: dict | None = None
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict | None = None,
+        params: dict | None = None,
     ):
         response = self._http.request(
             method,
@@ -410,15 +432,20 @@ class CommClient:
             except ValueError:
                 detail = response.text
             # A paid channel needs a one-time developer sign-in first.
-            if response.status_code == 401 and isinstance(detail, dict) and detail.get(
-                "reason"
-            ) == "account_required":
+            if (
+                response.status_code == 401
+                and isinstance(detail, dict)
+                and detail.get("reason") == "account_required"
+            ):
                 raise AccountRequiredError(response.status_code, detail, self)
             # A billing block (out of credit / spend cap) carries a structured
             # body; raise the typed error so callers can react in code.
-            if response.status_code in (402, 429) and isinstance(detail, dict) and detail.get(
-                "reason"
-            ) in {"insufficient_credit", "monthly_cap_reached", "channel_cap_reached"}:
+            if (
+                response.status_code in (402, 429)
+                and isinstance(detail, dict)
+                and detail.get("reason")
+                in {"insufficient_credit", "monthly_cap_reached", "channel_cap_reached"}
+            ):
                 raise InsufficientCreditError(response.status_code, detail, self)
             raise CommError(response.status_code, str(detail))
         if response.status_code == 204:
@@ -482,7 +509,9 @@ class CommClient:
         deadline = time.monotonic() + timeout
         while connection["status"] == "provisioning":
             if time.monotonic() >= deadline:
-                raise CommError(408, f"connection {connection['id']} still provisioning")
+                raise CommError(
+                    408, f"connection {connection['id']} still provisioning"
+                )
             time.sleep(poll_interval)
             connection = self.get_connection(connection["id"])
         if connection["status"] == "failed":
@@ -516,7 +545,9 @@ class CommClient:
         **kwargs,
     ) -> dict:
         """Connect a Telegram bot. Get a token from @BotFather; we do the rest."""
-        return self._connect("telegram", customer_id, agent_id, bot_token=bot_token, **kwargs)
+        return self._connect(
+            "telegram", customer_id, agent_id, bot_token=bot_token, **kwargs
+        )
 
     def add_domain(self, domain: str) -> dict:
         """Register a custom subdomain (e.g. agents.example.com). Returns the
@@ -530,22 +561,35 @@ class CommClient:
         return self._request("GET", f"/v1/domains/{domain_id}")
 
     def connect_phone(
-        self, customer_id: str | None = None, agent_id: str | None = None,
-        provider=None, **kwargs,
+        self,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        provider=None,
+        **kwargs,
     ) -> dict:
         """Connect an SMS/voice phone line. `provider` picks the backend when more
         than one is configured (e.g. gsm-modem, or a hosted provider); omit for
         the deployment default."""
-        return self._connect("phone", customer_id, agent_id, provider=provider, **kwargs)
+        return self._connect(
+            "phone", customer_id, agent_id, provider=provider, **kwargs
+        )
 
-    def connect_whatsapp(self, customer_id=None, agent_id=None, provider=None, **kwargs) -> dict:
+    def connect_whatsapp(
+        self, customer_id=None, agent_id=None, provider=None, **kwargs
+    ) -> dict:
         """Connect a WhatsApp number. When more than one WhatsApp backend is
         configured, `provider` picks one explicitly. Omit to use the
         deployment's default WhatsApp provider."""
-        return self._connect("whatsapp", customer_id, agent_id, provider=provider, **kwargs)
+        return self._connect(
+            "whatsapp", customer_id, agent_id, provider=provider, **kwargs
+        )
 
     def start_whatsapp_onboarding(
-        self, customer_id=None, agent_id=None, display_name=None, capabilities=None,
+        self,
+        customer_id=None,
+        agent_id=None,
+        display_name=None,
+        capabilities=None,
     ) -> dict:
         """Begin WhatsApp onboarding for one of your customers (Caspian hosted).
 
@@ -581,20 +625,32 @@ class CommClient:
         return self._connect("rcs", customer_id, agent_id, **kwargs)
 
     def connect_discord(
-        self, bot_token: str | None = None, webhook_url: str | None = None,
-        username: str | None = None, avatar_url: str | None = None,
-        customer_id=None, agent_id=None, **kwargs,
+        self,
+        bot_token: str | None = None,
+        webhook_url: str | None = None,
+        username: str | None = None,
+        avatar_url: str | None = None,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
     ) -> dict:
         """Connect a Discord identity. Either a bot (`bot_token` from
         discord.com/developers) OR a channel `webhook_url` for a per-agent
         identity with a custom `username`/`avatar_url` (no bot needed)."""
         return self._connect(
-            "discord", customer_id, agent_id, bot_token=bot_token,
-            webhook_url=webhook_url, username=username, avatar_url=avatar_url, **kwargs,
+            "discord",
+            customer_id,
+            agent_id,
+            bot_token=bot_token,
+            webhook_url=webhook_url,
+            username=username,
+            avatar_url=avatar_url,
+            **kwargs,
         )
 
-    def install_discord(self, customer_id=None, agent_id=None, display_name=None,
-                        **kwargs) -> dict:
+    def install_discord(
+        self, customer_id=None, agent_id=None, display_name=None, **kwargs
+    ) -> dict:
         """One-click install of the gateway's shared Discord bot (no bot token).
 
         Returns a connection with an ``authorize_url``. Open it (or hand it to the
@@ -605,8 +661,12 @@ class CommClient:
         "Acme Support") - it appears under that name instead of the shared bot's
         name. Use connect_discord(bot_token=...) instead if you want a fully
         separate bot (your own name AND avatar, member-list included)."""
-        body = {"customer_id": customer_id, "agent_id": agent_id,
-                "display_name": display_name, **kwargs}
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            **kwargs,
+        }
         return self._request("POST", "/v1/connections/discord/install", json=body)
 
     def connect_slack(
@@ -634,7 +694,10 @@ class CommClient:
         """
         socket = bool(bot_token and app_token)
         return self._connect(
-            "slack", customer_id, agent_id, wait=socket,
+            "slack",
+            customer_id,
+            agent_id,
+            wait=socket,
             slack_client_id=slack_client_id,
             slack_client_secret=slack_client_secret,
             slack_signing_secret=slack_signing_secret,
@@ -643,8 +706,14 @@ class CommClient:
             **kwargs,
         )
 
-    def install_slack(self, customer_id=None, agent_id=None, display_name=None,
-                      icon_url=None, **kwargs) -> dict:
+    def install_slack(
+        self,
+        customer_id=None,
+        agent_id=None,
+        display_name=None,
+        icon_url=None,
+        **kwargs,
+    ) -> dict:
         """One-click install of the gateway's shared Slack app (no app to create).
 
         Returns a connection with an ``authorize_url`` ("Add to Slack"). Open it
@@ -653,8 +722,13 @@ class CommClient:
         - no Slack app to build. Pass ``display_name`` and ``icon_url`` to post
         under YOUR own name + icon (the plumbing stays invisible). Use
         connect_slack(slack_client_id=...) instead to bring your own Slack app."""
-        body = {"customer_id": customer_id, "agent_id": agent_id,
-                "display_name": display_name, "icon_url": icon_url, **kwargs}
+        body = {
+            "customer_id": customer_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "icon_url": icon_url,
+            **kwargs,
+        }
         return self._request("POST", "/v1/connections/slack/install", json=body)
 
     def connect_github(
@@ -705,18 +779,27 @@ class CommClient:
         }
         return self._request("POST", "/v1/connections/github/install", json=body)
 
-    def update_branding(self, connection_id: str, display_name=None, icon_url=None) -> dict:
+    def update_branding(
+        self, connection_id: str, display_name=None, icon_url=None
+    ) -> dict:
         """Change the name/icon the agent posts under, after connecting - no
         re-install. Slack: takes effect on the next message; Discord shared bot:
         re-sets the per-server nickname. Pass either or both."""
         return self._request(
-            "PATCH", f"/v1/connections/{connection_id}",
+            "PATCH",
+            f"/v1/connections/{connection_id}",
             json={"display_name": display_name, "icon_url": icon_url},
         )
 
     def connect_x(
-        self, access_token: str, user_id: str, access_secret: str | None = None,
-        username: str | None = None, customer_id=None, agent_id=None, **kwargs,
+        self,
+        access_token: str,
+        user_id: str,
+        access_secret: str | None = None,
+        username: str | None = None,
+        customer_id=None,
+        agent_id=None,
+        **kwargs,
     ) -> dict:
         """Connect an X (Twitter) account as a reactive DM bot.
 
@@ -727,10 +810,16 @@ class CommClient:
         up). Reactive only - it never cold-DMs. The account must be labelled
         "Automated" in X settings."""
         return self._connect(
-            "x", customer_id, agent_id, access_token=access_token, user_id=user_id,
-            access_secret=access_secret, username=username, **kwargs,
+            "x",
+            customer_id,
+            agent_id,
+            access_token=access_token,
+            user_id=user_id,
+            access_secret=access_secret,
+            username=username,
+            **kwargs,
         )
-        
+
     def install_x(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """One-click connect of an X account as a DM bot - no tokens to paste.
 
@@ -741,6 +830,7 @@ class CommClient:
         connect_x(access_token=...) instead to bring your own account tokens."""
         body = {"customer_id": customer_id, "agent_id": agent_id, **kwargs}
         return self._request("POST", "/v1/connections/x/install", json=body)
+
     def connect_bluesky(
         self,
         identifier: str,
@@ -763,6 +853,7 @@ class CommClient:
             app_password=app_password,
             **kwargs,
         )
+
     def connect_instagram(self, customer_id=None, agent_id=None, **kwargs) -> dict:
         """Start an Instagram DM install (OAuth). Returns an `authorize_url`."""
         return self._connect("instagram", customer_id, agent_id, wait=False, **kwargs)
@@ -843,24 +934,32 @@ class CommClient:
         ``top_up()`` and connect paid channels freely; the agent needs no further
         human sign-in.
         """
-        start = self._request("POST", "/v1/auth/device/start", json={"api_key": self._api_key})
+        start = self._request(
+            "POST", "/v1/auth/device/start", json={"api_key": self._api_key}
+        )
         url = start.get("verification_uri_complete") or start.get("verification_uri")
         interval = poll_interval or start.get("interval", 5)
         print(
             "\n  Sign in to Caspian to enable paid channels (one-time):\n"
             f"    {url}\n"
             "  Waiting for the developer to approve in the browser...\n",
-            file=sys.stderr, flush=True,
+            file=sys.stderr,
+            flush=True,
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             result = self._request(
-                "POST", "/v1/auth/device/token", json={"device_code": start["device_code"]}
+                "POST",
+                "/v1/auth/device/token",
+                json={"device_code": start["device_code"]},
             )
             status = result.get("status")
             if status == "approved":
-                print("  Signed in. Add credit to start using paid channels.",
-                      file=sys.stderr, flush=True)
+                print(
+                    "  Signed in. Add credit to start using paid channels.",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return result
             if status in ("expired", "not_found"):
                 raise CommError(408, f"device login {status}")
@@ -885,7 +984,9 @@ class CommClient:
         (or hand it to whoever holds the card). Credit lands seconds after
         payment; poll ``billing()`` or watch for the ``billing.credited`` event.
         Minimum 100 cents ($1)."""
-        return self._request("POST", "/v1/billing/topup", json={"amount_cents": amount_cents})
+        return self._request(
+            "POST", "/v1/billing/topup", json={"amount_cents": amount_cents}
+        )
 
     def set_spend_limits(
         self, monthly_cap_cents: int | None = None, channel_caps: dict | None = None
@@ -912,12 +1013,16 @@ class CommClient:
         (complete one ``top_up()`` checkout first) and a ``monthly_cap_cents`` -
         an uncapped auto-replenishing budget is not allowed. Pass
         ``enabled=False`` to turn it off."""
-        return self._request("PUT", "/v1/billing/autopay", json={
-            "enabled": enabled,
-            "threshold_cents": threshold_cents,
-            "topup_cents": topup_cents,
-            "monthly_cap_cents": monthly_cap_cents,
-        })
+        return self._request(
+            "PUT",
+            "/v1/billing/autopay",
+            json={
+                "enabled": enabled,
+                "threshold_cents": threshold_cents,
+                "topup_cents": topup_cents,
+                "monthly_cap_cents": monthly_cap_cents,
+            },
+        )
 
     def send_message(
         self,
@@ -951,7 +1056,9 @@ class CommClient:
     def backfill(self, conversation_id: str, limit: int = 50) -> dict:
         """Pull history from before the connection (needs Capability.BACKFILL)."""
         return self._request(
-            "POST", f"/v1/conversations/{conversation_id}/backfill", json={"limit": limit}
+            "POST",
+            f"/v1/conversations/{conversation_id}/backfill",
+            json={"limit": limit},
         )
 
     def test_email(
@@ -965,7 +1072,9 @@ class CommClient:
             body["connection_id"] = connection_id
         return self._request("POST", "/v1/test-emails", json=body)
 
-    def events(self, after_seq: int = 0, limit: int = 100, type: str | None = None) -> list[dict]:
+    def events(
+        self, after_seq: int = 0, limit: int = 100, type: str | None = None
+    ) -> list[dict]:
         params: dict = {"after_seq": after_seq, "limit": limit}
         if type:
             params["type"] = type
@@ -973,13 +1082,22 @@ class CommClient:
 
     # Event handling
 
-    def on_message(self, handler: Callable[[Message], None]) -> Callable[[Message], None]:
-        self._handlers.append(handler)
+    def on_message(self, handler=None):
+        """Decorator or method to register a message event handler."""
+        if handler is None:
+
+            def decorator(fn):
+                self._message_handlers.append(fn)
+                return fn
+
+            return decorator
+
+        self._message_handlers.append(handler)
         return handler
 
     def on_interaction(
-        self, handler: Callable[["Interaction"], None]
-    ) -> Callable[["Interaction"], None]:
+        self, handler: Callable[["Interaction"], Union[None, Awaitable[None]]]
+    ) -> Callable[["Interaction"], Union[None, Awaitable[None]]]:
         """Register a handler for button taps (interaction.received). The same
         handler answers taps from every channel that supports interactive
         buttons (Slack, Discord, Telegram)."""
@@ -987,58 +1105,41 @@ class CommClient:
         return handler
 
     def on_reaction(
-        self, handler: Callable[["Reaction"], None]
-    ) -> Callable[["Reaction"], None]:
+        self, handler: Callable[["Reaction"], Union[None, Awaitable[None]]]
+    ) -> Callable[["Reaction"], Union[None, Awaitable[None]]]:
         """Register a handler for emoji reactions (reaction.received)."""
         self._reaction_handlers.append(handler)
         return handler
 
     def _dispatch_event(self, event: dict) -> None:
-        """Run handlers for one event. A handler that raises is logged and
-        swallowed so one bad message can never stop the listener."""
+        """Run handlers for one event."""
         event_type = event.get("type")
-        if event_type == "interaction.received":
+
+        # Accept both .received and .created event names
+        if event_type in ("interaction.received", "interaction.created"):
             self._dispatch_interaction(event["data"])
             return
-        if event_type == "reaction.received":
+
+        if event_type in ("reaction.received", "reaction.created"):
             self._dispatch_reaction(event["data"])
             return
-        if event_type != "message.received":
+
+        if event_type in ("message.received", "message.created"):
+            self._dispatch_message(event["data"])
             return
-        message = self._build_message(event["data"])
-        if self._handlers:
-            # Show a 'thinking…' indicator up front so the human sees the agent is
-            # working while the handler runs. Best-effort; never blocks dispatch.
-            try:
-                message.typing()
-            except Exception:
-                pass
-            # Optional instant acknowledgement (listen(ack=...)) so the human gets
-            # an immediate reply on channels with no typing indicator (X, SMS,
-            # email). Best-effort; the real answer follows from the handler.
-            if self._ack:
-                try:
-                    message.reply(self._ack)
-                except InsufficientCreditError as exc:
-                    self._warn_out_of_credit(exc)
-                except Exception:
-                    logger.exception("ack reply failed for message %s", message.id)
-        for handler in self._handlers:
-            try:
-                handler(message)
-            except AccountRequiredError as exc:
-                # Paid channel used before the developer signed in. Surface the
-                # one-time sign-in prompt loudly (e.g. in Claude Code).
-                self._warn_account_required(exc)
-            except InsufficientCreditError as exc:
-                # The agent tried to reply on a paid channel but the project is
-                # out of credit / capped. Make it loud on the CLI so the operator
-                # (e.g. running this in Claude Code) sees it and can top up.
-                self._warn_out_of_credit(exc)
-            except Exception:
-                logger.exception(
-                    "on_message handler failed for message %s; continuing", message.id
-                )
+
+    def _run_coroutine_sync(self, coro) -> None:
+        """Execute a coroutine synchronously, properly handling running event loops and thread pools."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            future.result()  # Blocks until execution finishes and propagates exceptions
+        else:
+            asyncio.run(coro)
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
@@ -1065,8 +1166,10 @@ class CommClient:
         self._last_credit_warning = now
         balance = exc.balance_cents
         bal = f"${balance / 100:.2f}" if isinstance(balance, int) else "unknown"
-        dash = next((o.get("url") for o in exc.payment_options if o.get("url")),
-                    "https://dashboard.trycaspianai.com")
+        dash = next(
+            (o.get("url") for o in exc.payment_options if o.get("url")),
+            "https://dashboard.trycaspianai.com",
+        )
         lines = [
             "",
             "  ┌─────────────────────────────────────────────────────────────┐",
@@ -1162,46 +1265,90 @@ class CommClient:
             except KeyboardInterrupt:
                 raise
             except Exception:
-                logger.warning("could not read starting cursor; retrying in 2s", exc_info=True)
+                logger.warning(
+                    "could not read starting cursor; retrying in 2s", exc_info=True
+                )
                 time.sleep(2.0)
 
+    def _dispatch_message(self, data: dict) -> None:
+        """Dispatches a message event to registered message handlers."""
+        if not self._message_handlers:
+            return
+
+        if isinstance(data, dict):
+            # Extract nested message dict or shallow copy to avoid mutating raw event
+            msg_data = dict(data.get("message", data))
+
+            # Preserve top-level context fields
+            if "customer_id" in data and "customer_id" not in msg_data:
+                msg_data["customer_id"] = data["customer_id"]
+            if "agent_id" in data and "agent_id" not in msg_data:
+                msg_data["agent_id"] = data["agent_id"]
+
+            message = Message(**msg_data, _client=self)
+
+        for handler in self._message_handlers:
+            if inspect.iscoroutinefunction(handler):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    # If an async loop is already running (e.g. inside an async listener), schedule it as a task
+                    loop.create_task(handler(message))
+                else:
+                    # If called synchronously (like in this test), run the coroutine to completion
+                    asyncio.run(handler(message))
+            else:
+                handler(message)
+
     def _dispatch_interaction(self, data: dict) -> None:
-        interaction = Interaction(
-            connection_id=data.get("connection_id", ""),
-            customer_id=data.get("customer_id", ""),
-            agent_id=data.get("agent_id", ""),
-            conversation_id=data.get("conversation_id"),
-            value=data.get("value"),
-            source_message=data.get("source_message"),
-            sender=data.get("sender"),
-            _client=self,
-        )
+        """Dispatches an interaction event to registered interaction handlers."""
+        if not self._interaction_handlers:
+            return
+
+        if isinstance(data, dict):
+            interaction = Interaction(**data, _client=self)
+        else:
+            interaction = data
+
         for handler in self._interaction_handlers:
-            try:
-                handler(interaction)
-            except InsufficientCreditError as exc:
-                self._warn_out_of_credit(exc)
-            except AccountRequiredError as exc:
-                self._warn_account_required(exc)
-            except Exception:
-                logger.exception("on_interaction handler failed; continuing")
+            self._run_handler(handler, interaction)
 
     def _dispatch_reaction(self, data: dict) -> None:
-        reaction = Reaction(
-            connection_id=data.get("connection_id", ""),
-            customer_id=data.get("customer_id", ""),
-            agent_id=data.get("agent_id", ""),
-            emoji=data.get("emoji"),
-            action=data.get("action", "added"),
-            source_message=data.get("source_message"),
-            sender=data.get("sender"),
-            _client=self,
-        )
+        """Dispatches a reaction event to registered reaction handlers."""
+        if not self._reaction_handlers:
+            return
+
+        if isinstance(data, dict):
+            reaction = Reaction(**data, _client=self)
+        else:
+            reaction = data
+
         for handler in self._reaction_handlers:
-            try:
-                handler(reaction)
-            except Exception:
-                logger.exception("on_reaction handler failed; continuing")
+            self._run_handler(handler, reaction)
+
+    def _run_handler(self, handler, arg) -> None:
+        """Executes an event handler safely, supporting both sync and async callbacks."""
+        try:
+            if inspect.iscoroutinefunction(handler):
+                # Handle async handlers by attaching to running loop or running directly
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    loop.create_task(handler(arg))
+                else:
+                    asyncio.run(handler(arg))
+            else:
+                # Handle standard sync handlers
+                handler(arg)
+        except Exception as e:
+            logger.exception("Error executing handler %s: %s", handler.__name__, e)
+            raise
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
