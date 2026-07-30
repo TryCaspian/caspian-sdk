@@ -1,7 +1,9 @@
 import json
 from email import message_from_bytes, policy
 
+import httpx
 import pytest
+from comm_gateway.providers import ses as ses_module
 from comm_gateway.providers.base import OutboundMessage, ProvisionRequest, WebhookVerificationError
 from comm_gateway.providers.ses import SESEmailProvider
 
@@ -143,3 +145,49 @@ def test_non_received_notification_ignored():
         }
     ).encode()
     assert provider.parse_webhook(envelope, {}) == []
+
+
+def _subscription_envelope():
+    return json.dumps(
+        {
+            "Type": "SubscriptionConfirmation",
+            "TopicArn": "arn:aws:sns:us-east-1:123456789012:example-mail-inbound",
+            "SubscribeURL": "https://sns.us-east-1.amazonaws.com/confirm?Token=abc",
+        }
+    ).encode()
+
+
+def test_subscription_confirmation_pings_the_subscribe_url(monkeypatch):
+    provider = _provider()
+    pinged = []
+
+    def _fake_get(url, timeout=None):
+        pinged.append(url)
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(ses_module.httpx, "get", _fake_get)
+    assert provider.parse_webhook(_subscription_envelope(), {}) == []
+    assert pinged == ["https://sns.us-east-1.amazonaws.com/confirm?Token=abc"]
+
+
+def test_subscription_confirmation_ping_failure_does_not_raise(monkeypatch):
+    """A transient network failure on the best-effort confirmation ping must
+    not raise - SNS retries the subscription confirmation on its own."""
+    provider = _provider()
+
+    def _boom(url, timeout=None):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(ses_module.httpx, "get", _boom)
+    assert provider.parse_webhook(_subscription_envelope(), {}) == []
+
+
+def test_subscription_confirmation_non_2xx_does_not_raise(monkeypatch):
+    """A non-2xx response from the confirm ping must not raise either."""
+    provider = _provider()
+    monkeypatch.setattr(
+        ses_module.httpx,
+        "get",
+        lambda url, timeout=None: httpx.Response(503, request=httpx.Request("GET", url)),
+    )
+    assert provider.parse_webhook(_subscription_envelope(), {}) == []
