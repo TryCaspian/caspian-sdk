@@ -12,6 +12,7 @@ import logging
 
 import httpx
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .crypto import read_credentials, write_credentials
@@ -74,8 +75,17 @@ def ingest_inbound(session_factory, provider_name: str, inbound: list) -> int:
             )
             session.add(provider_event)
             enqueue(session, "process_provider_event", {"provider_event_id": provider_event.id})
+            try:
+                session.commit()
+            except IntegrityError:
+                # Another concurrent request (a provider's webhook retry, which
+                # Twilio/Slack/Meta/Stripe all send on timeout) already ingested
+                # this exact event between our SELECT above and this commit -
+                # uq_provider_event caught it. Treat the retry as an idempotent
+                # no-op instead of raising a 500 back to the provider.
+                session.rollback()
+                continue
             count += 1
-        session.commit()
     return count
 
 
