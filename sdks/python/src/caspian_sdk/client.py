@@ -112,10 +112,11 @@ class InsufficientCreditError(CommError):
         if amount_cents is None:
             for option in self.payment_options:
                 body = (option.get("create") or {}).get("body") or {}
-                if body.get("amount_cents"):
-                    amount_cents = body["amount_cents"]
+                suggested = body.get("amount_cents")
+                if suggested is not None:
+                    amount_cents = suggested
                     break
-        return self._client.top_up(amount_cents or 2000)
+        return self._client.top_up(amount_cents if amount_cents is not None else 2000)
 
 
 @dataclass
