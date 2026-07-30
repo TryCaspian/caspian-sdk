@@ -91,7 +91,7 @@ def test_webhook_rejects_internal_url(client):
 
 
 def test_updating_webhook_url_preserves_existing_secret(monkeypatch):
-    app, client, provider = _app()
+    app, client, _provider = _app()
     delivered = []
 
     class _Resp:
