@@ -1520,6 +1520,7 @@ def list_events(
     return [event_out(e) for e in rows]
 
 
+
 @router.post("/connections/reddit", response_model=ConnectionOut, status_code=201)
 def create_reddit_connection(
     body: RedditConnectionCreate,
@@ -1529,3 +1530,5 @@ def create_reddit_connection(
 ):
     """Connect a Reddit account using an OAuth refresh token."""
     return _create_connection(request, session, project, body, channel="reddit")
+
+
