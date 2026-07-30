@@ -1044,3 +1044,61 @@ def test_handle_webhook_idempotent_same_event_id():
     assert len(seen) == 1
     client.close()
 
+
+def test_handle_webhook_cross_invocation_dedup():
+    """Duplicate event across two separate handle_webhook() calls is skipped."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_dedup_test"
+    evt = _message_event(1, "conv_1", "dedup test")
+    evt["id"] = "evt_cross_dedup_1"
+
+    # First invocation — event should be dispatched.
+    payload1 = json.dumps(evt).encode("utf-8")
+    sig1 = "sha256=" + hmac.new(secret.encode(), payload1, hashlib.sha256).hexdigest()
+    res1 = client.handle_webhook(payload1, {"x-caspian-signature": sig1}, secret)
+    assert res1.status == "ok"
+    assert len(seen) == 1
+
+    # Second invocation with same event — should be suppressed by dedup cache.
+    payload2 = json.dumps(evt).encode("utf-8")
+    sig2 = "sha256=" + hmac.new(secret.encode(), payload2, hashlib.sha256).hexdigest()
+    res2 = client.handle_webhook(payload2, {"x-caspian-signature": sig2}, secret)
+    assert res2.status == "ignored"
+    assert len(seen) == 1  # handler NOT called again
+    client.close()
+
+
+def test_handle_webhook_dedup_allows_different_events():
+    """Different event IDs are dispatched normally (no false suppression)."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_diff_events"
+
+    for i in range(3):
+        evt = _message_event(i + 1, "conv_1", f"msg {i}")
+        evt["id"] = f"evt_unique_{i}"
+        payload = json.dumps(evt).encode("utf-8")
+        sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+        assert res.status == "ok"
+
+    assert len(seen) == 3
+    client.close()
+

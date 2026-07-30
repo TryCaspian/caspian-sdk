@@ -381,6 +381,41 @@ class _MessageScheduler:
         self._executor.shutdown(wait=True)
 
 
+class _WebhookDedup:
+    """In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+
+    Webhook providers (and the Caspian gateway) retry delivery when they don't
+    get a timely 200.  On serverless platforms the same container often handles
+    the retry, so an in-memory set of recently-seen event IDs is enough to
+    suppress the duplicate.  Bounded to *max_size* entries and *ttl_seconds* to
+    avoid unbounded memory growth.
+    """
+
+    def __init__(self, max_size: int = 1024, ttl_seconds: float = 300.0) -> None:
+        self._entries: dict[str, float] = {}  # event_id -> monotonic timestamp
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+
+    def _evict(self) -> None:
+        now = time.monotonic()
+        expired = [k for k, t in self._entries.items() if now - t > self._ttl]
+        for k in expired:
+            del self._entries[k]
+        # If still over capacity after expiry, drop oldest entries.
+        while len(self._entries) > self._max_size:
+            oldest = min(self._entries, key=self._entries.get)  # type: ignore[arg-type]
+            del self._entries[oldest]
+
+    def seen(self, event_id: str) -> bool:
+        """Return True if *event_id* was already recorded (and not expired)."""
+        self._evict()
+        return event_id in self._entries
+
+    def record(self, event_id: str) -> None:
+        """Mark *event_id* as processed."""
+        self._entries[event_id] = time.monotonic()
+
+
 class CommClient:
     def __init__(
         self,
@@ -400,6 +435,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        self._webhook_dedup = _WebhookDedup()
 
     def close(self) -> None:
         self._http.close()
@@ -1308,13 +1344,26 @@ class CommClient:
             event_id = str(event.get("id") or event.get("seq") or "")
             event_type = event.get("type")
 
-            # Intra-invocation idempotency: skip duplicate event ids.
+            # Intra-invocation idempotency: skip duplicate event ids within
+            # the same payload.
             if event_id and event_id in seen_ids:
                 continue
+
+            # Cross-invocation dedup: skip events already processed by a
+            # previous invocation on this warm container.
+            if event_id and self._webhook_dedup.seen(event_id):
+                continue
+
             if event_id:
                 seen_ids.add(event_id)
 
             self._dispatch_event(event)
+
+            # Record after successful dispatch so retries of genuinely failed
+            # processing are not suppressed.
+            if event_id:
+                self._webhook_dedup.record(event_id)
+
             result = WebhookResult(
                 status="ok",
                 event_id=event_id or None,

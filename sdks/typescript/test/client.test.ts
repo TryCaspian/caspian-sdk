@@ -975,6 +975,68 @@ describe("CommClient", () => {
       expect(res.status).toBe("ok");
       expect(seen).toHaveLength(1);
     });
+
+    it("deduplicates the same event across separate invocations", async () => {
+      const { client } = makeClient({
+        "POST /v1/messages/m1/typing": () => json({}),
+      });
+      const seen: Message[] = [];
+      client.onMessage((m) => {
+        seen.push(m);
+      });
+
+      const secret = "whsec_cross_dedup";
+      const evt = { ...messageEvent(1, "c1", "cross dedup"), id: "evt_cross_1" };
+
+      // First invocation — should dispatch.
+      const body1 = JSON.stringify(evt);
+      const sig1 = "sha256=" + createHmac("sha256", secret).update(body1).digest("hex");
+      const res1 = await client.handleWebhook({
+        body: body1,
+        headers: { "x-caspian-signature": sig1 },
+        secret,
+      });
+      expect(res1.status).toBe("ok");
+      expect(seen).toHaveLength(1);
+
+      // Second invocation with same event — should be suppressed.
+      const body2 = JSON.stringify(evt);
+      const sig2 = "sha256=" + createHmac("sha256", secret).update(body2).digest("hex");
+      const res2 = await client.handleWebhook({
+        body: body2,
+        headers: { "x-caspian-signature": sig2 },
+        secret,
+      });
+      expect(res2.status).toBe("ignored");
+      expect(seen).toHaveLength(1); // handler NOT called again
+    });
+
+    it("dispatches different events without false suppression", async () => {
+      const { client } = makeClient({
+        "POST /v1/messages/m1/typing": () => json({}),
+        "POST /v1/messages/m2/typing": () => json({}),
+        "POST /v1/messages/m3/typing": () => json({}),
+      });
+      const seen: Message[] = [];
+      client.onMessage((m) => {
+        seen.push(m);
+      });
+
+      const secret = "whsec_diff_events";
+      for (let i = 1; i <= 3; i++) {
+        const evt = { ...messageEvent(i, "c1", `msg ${i}`), id: `evt_unique_${i}` };
+        const body = JSON.stringify(evt);
+        const sig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+        const res = await client.handleWebhook({
+          body,
+          headers: { "x-caspian-signature": sig },
+          secret,
+        });
+        expect(res.status).toBe("ok");
+      }
+
+      expect(seen).toHaveLength(3);
+    });
   });
 });
 

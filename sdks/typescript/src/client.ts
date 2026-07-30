@@ -292,6 +292,46 @@ class MessageScheduler {
 }
 
 /**
+ * In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+ *
+ * Webhook providers retry delivery when they don't get a timely 200. On
+ * serverless platforms the same container often handles the retry, so an
+ * in-memory set of recently-seen event IDs suppresses the duplicate. Bounded
+ * to `maxSize` entries and `ttlMs` to avoid unbounded memory growth.
+ */
+class WebhookDedup {
+  private readonly entries = new Map<string, number>();
+
+  constructor(
+    private readonly maxSize = 1024,
+    private readonly ttlMs = 300_000,
+  ) {}
+
+  private evict(): void {
+    const cutoff = Date.now() - this.ttlMs;
+    for (const [id, ts] of this.entries) {
+      if (ts < cutoff) this.entries.delete(id);
+    }
+    // Over capacity: drop oldest (Map iterates in insertion order).
+    while (this.entries.size > this.maxSize) {
+      const oldest = this.entries.keys().next().value!;
+      this.entries.delete(oldest);
+    }
+  }
+
+  /** Return true if `id` was already recorded and not expired. */
+  seen(id: string): boolean {
+    this.evict();
+    return this.entries.has(id);
+  }
+
+  /** Mark `id` as processed. */
+  record(id: string): void {
+    this.entries.set(id, Date.now());
+  }
+}
+
+/**
  * One identity for your AI agent across every channel — behind a single
  * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
  * ./.env when not passed explicitly.
@@ -306,6 +346,7 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private readonly webhookDedup = new WebhookDedup();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -1255,10 +1296,21 @@ export class CommClient {
       const eventId = String(event.id ?? event.seq ?? "");
       const eventType = event.type;
 
+      // Intra-invocation idempotency: skip duplicates within the same payload.
       if (eventId && seenIds.has(eventId)) continue;
+
+      // Cross-invocation dedup: skip events already processed by a previous
+      // invocation on this warm container.
+      if (eventId && this.webhookDedup.seen(eventId)) continue;
+
       if (eventId) seenIds.add(eventId);
 
       await this.dispatchEvent(event);
+
+      // Record after successful dispatch so retries of genuinely failed
+      // processing are not suppressed.
+      if (eventId) this.webhookDedup.record(eventId);
+
       result = {
         status: "ok",
         eventId: eventId || null,
