@@ -36,6 +36,65 @@ Screenshot these two terminal windows together.
 
 ---
 
+## Bot Framework Emulator (real Bot Framework protocol, no Azure)
+
+The [Bot Framework Emulator](https://github.com/microsoft/BotFramework-Emulator/releases)
+speaks the same Activity protocol as Teams and exercises the real `teams`
+provider end to end — inbound webhook parsing, conversation routing, and
+outbound replies over the connector API — without an Azure Bot registration.
+
+### 1. Start the gateway (emulator mode)
+
+```bash
+cd server
+COMM_PROVIDER=teams COMM_TEAMS_ALLOW_EMULATOR=1 COMM_BOOTSTRAP_API_KEY=demo_key \
+  uv run --with uvicorn comm-gateway
+```
+
+`COMM_TEAMS_ALLOW_EMULATOR=1` skips connector JWT verification for activities
+with `channelId: "emulator"` and sends unauthenticated replies to the
+emulator's localhost serviceUrl. Local development only.
+
+### 2. Start the model backend
+
+Codex proxy from the codex-agent-template checkout (uses a ChatGPT
+subscription, no API key):
+
+```bash
+uv run uvicorn server.codex_proxy:app --port 8088
+```
+
+Or skip the proxy and use any OpenAI-compatible key via
+`LLM_BACKEND=openai OPENAI_API_KEY=sk-...`.
+
+### 3. Run the AI agent (new terminal)
+
+```bash
+CASPIAN_BASE_URL=http://127.0.0.1:8000 CASPIAN_API_KEY=demo_key \
+  uv run --with openai-agents python examples/teams_ai_agent.py
+```
+
+It prints the webhook path, e.g.
+`/internal/providers/teams/webhooks/emulator-demo`.
+
+### 4. Connect the emulator
+
+Open Bot → Bot URL:
+
+```
+http://localhost:8000/internal/providers/teams/webhooks/emulator-demo
+```
+
+Leave Microsoft App ID and password **empty** → Connect → type a message.
+
+### 5. Proof
+
+The agent terminal shows `Inbound from ...` and `AI reply: ...`; the emulator
+chat shows the LLM-generated reply. Screenshot the emulator conversation next
+to the agent terminal.
+
+---
+
 ## Real Azure Bot (manual runbook)
 
 ### Prerequisites

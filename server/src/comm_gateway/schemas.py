@@ -52,6 +52,17 @@ class TelegramConnectionCreate(BaseModel):
     bot_token: str | None = None
 
 
+class TeamsConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    # Azure Bot registration credentials (Bot Framework). Optional for the
+    # in-memory fake-teams provider used in tests/demos.
+    app_id: str | None = None
+    app_password: str | None = None
+
+
 class ChannelConnectionCreate(BaseModel):
     customer_id: str | None = None
     agent_id: str | None = None

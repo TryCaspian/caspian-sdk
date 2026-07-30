@@ -118,6 +118,39 @@ def test_parse_webhook_verifies_bearer_token_accept_and_reject():
         )
 
 
+@pytest.mark.parametrize(
+    ("channel_id", "service_url"),
+    [
+        ("emulator", "http://localhost:54559"),
+        ("webchat", "http://localhost:54559"),
+        ("webchat", "http://[::]:54559"),
+    ],
+)
+def test_emulator_mode_accepts_unsigned_local_activities(channel_id, service_url):
+    provider = TeamsProvider(allow_emulator=True)
+    activity = teams_message_activity()
+    activity["channelId"] = channel_id
+    activity["serviceUrl"] = service_url
+
+    [inbound] = provider.parse_webhook(
+        json.dumps(activity).encode(), {}, credentials={"app_id": APP_ID}
+    )
+
+    assert inbound.provider_inbox_id == APP_ID
+
+
+def test_webchat_activity_requires_authorization_outside_emulator_mode():
+    provider = TeamsProvider()
+    activity = teams_message_activity()
+    activity["channelId"] = "webchat"
+    activity["serviceUrl"] = "https://example.invalid"
+
+    with pytest.raises(WebhookVerificationError, match="bearer token"):
+        provider.parse_webhook(
+            json.dumps(activity).encode(), {}, credentials={"app_id": APP_ID}
+        )
+
+
 def test_bot_framework_jwt_verifier_accepts_and_rejects_jwks_tokens():
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     verifier = BotFrameworkJwtVerifier()
@@ -225,3 +258,54 @@ def test_teams_builds_from_settings():
 def test_capabilities_are_honest():
     assert Capability.INITIATE not in TeamsProvider.capabilities
     assert Capability.BACKFILL not in TeamsProvider.capabilities
+
+
+def test_teams_connect_route_end_to_end():
+    """POST /v1/connections/teams provisions, inbound webhook routes, reply sends."""
+    from comm_gateway.main import create_app
+    from fastapi.testclient import TestClient
+
+    provider = FakeTeamsProvider()
+    settings = Settings(
+        database_url="sqlite://", bootstrap_api_key="comm_test_key", inline_worker=False
+    )
+    app = create_app(settings, providers={provider.name: provider})
+    client = TestClient(app, headers={"Authorization": "Bearer comm_test_key"})
+
+    from comm_gateway.jobs import run_pending_jobs
+
+    cust = client.post("/v1/customers", json={"name": "Acme"}).json()
+    agent = client.post("/v1/agents", json={"name": "Agent"}).json()
+    # No app_id: both provision and the (credential-less) webhook parse fall back
+    # to the fake provider's default app id, so the inbound routes to this
+    # connection. A real Teams webhook carries its own JWT-verified app id.
+    resp = client.post(
+        "/v1/connections/teams",
+        json={"customer_id": cust["id"], "agent_id": agent["id"]},
+    )
+    assert resp.status_code == 201
+    conn = resp.json()
+    assert conn["channel"] == "teams"
+    run_pending_jobs(app.state.session_factory, app.state.providers)
+
+    payload = provider.webhook_payload(conversation_id="19:team@thread.tacv2", text="hi bot")
+    wh = client.post(
+        "/internal/providers/fake-teams/webhooks",
+        content=json.dumps(payload),
+        headers={"content-type": "application/json"},
+    )
+    assert wh.status_code == 204
+    run_pending_jobs(app.state.session_factory, app.state.providers)
+
+    events = client.get("/v1/events", params={"type": "message.received"}).json()
+    msg = events[-1]["data"]["message"]
+    assert msg["channel"] == "teams"
+    assert msg["text"] == "hi bot"
+
+    client.post(f"/v1/messages/{msg['id']}/reply", json={"text": "hello back"})
+    run_pending_jobs(app.state.session_factory, app.state.providers)
+    assert provider.replies[-1]["text"] == "hello back"
+
+
+def test_teams_webhook_acknowledges_with_200():
+    assert TeamsProvider.webhook_success_status == 200

@@ -5,6 +5,7 @@ import json
 import secrets
 import time
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -91,6 +92,15 @@ def parse_attachments(data: dict) -> list[dict]:
             }
         )
     return out
+
+
+def _is_local_url(url: str) -> bool:
+    return (urlparse(url).hostname or "") in ("localhost", "127.0.0.1", "::1", "::")
+
+
+def _is_emulator_activity(data: Mapping[str, object]) -> bool:
+    """Recognize classic and current Bot Framework Emulator channel IDs."""
+    return data.get("channelId") in ("emulator", "webchat")
 
 
 def _chat_type(conversation: Mapping[str, object]) -> str | None:
@@ -190,6 +200,10 @@ class BotFrameworkJwtVerifier:
 
 
 class TeamsProvider:
+    # Bot Framework expects the messaging endpoint to acknowledge activities
+    # with 200 OK. In particular, the Emulator treats a 204 as a failed send.
+    webhook_success_status = 200
+
     name = "teams"
     channel = "teams"
     connect_credentials = ("app_id", "app_password")
@@ -202,13 +216,24 @@ class TeamsProvider:
         token_url: str = TOKEN_URL,
         openid_config_url: str = OPENID_CONFIG_URL,
         verifier: BotFrameworkJwtVerifier | None = None,
+        allow_emulator: bool = False,
     ) -> None:
         self._messaging_endpoint = messaging_endpoint
+        # Local-development escape hatch for the Bot Framework Emulator: its
+        # activities carry channelId "emulator" and tokens from a different
+        # issuer than the production connector, so JWT verification is skipped
+        # and outbound posts to its localhost serviceUrl go unauthenticated.
+        # Never enable in production.
+        self._allow_emulator = allow_emulator
         self._connector_base_url = connector_base_url.rstrip("/")
         self._token_url = token_url
         self._client = httpx.Client(timeout=30.0)
         self._verifier = verifier or BotFrameworkJwtVerifier(openid_config_url)
         self._conversation_service_urls: dict[str, str] = {}
+        # Addressing (from/recipient/conversation) captured per conversation so
+        # outbound replies can echo it back. The Bot Framework connector and the
+        # Emulator reject activities that omit these fields with HTTP 400.
+        self._conversation_addressing: dict[str, dict] = {}
         self._token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
     def provision(self, request: ProvisionRequest) -> ProvisionResult:
@@ -254,12 +279,21 @@ class TeamsProvider:
             raise WebhookVerificationError("invalid JSON payload") from exc
         header_map = lower_headers(headers)
         channel_id = data.get("channelId") or header_map.get("channelid") or header_map.get("channel-id")
-        self._verify_authorization(headers, app_id, channel_id)
+        if not (self._allow_emulator and _is_emulator_activity(data)):
+            self._verify_authorization(headers, app_id, channel_id)
         messages = parse_activity(data, app_id)
         service_url = data.get("serviceUrl")
-        if service_url:
-            for inbound in messages:
+        for inbound in messages:
+            if service_url:
                 self._conversation_service_urls[inbound.provider_thread_id] = service_url.rstrip("/")
+            # Remember the addressing so replies can echo it back with the
+            # bot as sender and the user as recipient (swapped).
+            self._conversation_addressing[inbound.provider_thread_id] = {
+                "from": data.get("recipient") or {},
+                "recipient": data.get("from") or {},
+                "conversation": data.get("conversation") or {},
+                "channelId": data.get("channelId"),
+            }
         return messages
 
     def _verify_authorization(
@@ -282,8 +316,21 @@ class TeamsProvider:
         credentials: Mapping[str, str] | None,
         reply_to_id: str | None = None,
     ) -> SendResult:
-        token = self._access_token(credentials)
+        service_url = self._service_url(conversation_id)
+        headers: dict[str, str] = {}
+        if not (self._allow_emulator and _is_local_url(service_url)):
+            headers["Authorization"] = f"Bearer {self._access_token(credentials)}"
         body: dict = {"type": "message", "text": message.text or ""}
+        addressing = self._conversation_addressing.get(conversation_id)
+        if addressing:
+            if addressing.get("from"):
+                body["from"] = addressing["from"]
+            if addressing.get("recipient"):
+                body["recipient"] = addressing["recipient"]
+            if addressing.get("conversation"):
+                body["conversation"] = addressing["conversation"]
+            if addressing.get("channelId"):
+                body["channelId"] = addressing["channelId"]
         if reply_to_id:
             body["replyToId"] = reply_to_id
         if message.media:
@@ -299,11 +346,18 @@ class TeamsProvider:
             if attachments:
                 body["attachments"] = attachments
         response = self._client.post(
-            f"{self._service_url(conversation_id)}/v3/conversations/{conversation_id}/activities",
+            f"{service_url}/v3/conversations/{conversation_id}/activities",
             json=body,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # Surface the connector's own error body — it names the exact
+            # field it rejected, instead of a bare status code.
+            raise httpx.HTTPStatusError(
+                f"teams connector rejected activity: {response.status_code} {response.text}",
+                request=response.request,
+                response=response,
+            )
         data = response.json()
         activity_id = data.get("id") or secrets.token_hex(8)
         return SendResult(

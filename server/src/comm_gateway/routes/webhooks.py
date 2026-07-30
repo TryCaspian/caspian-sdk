@@ -29,7 +29,7 @@ router = APIRouter(prefix="/internal/providers")
 
 def _ingest(request: Request, provider, inbound) -> Response:
     ingest_inbound(request.app.state.session_factory, provider.name, inbound)
-    return Response(status_code=204)
+    return Response(status_code=getattr(provider, "webhook_success_status", 204))
 
 
 def _provider_or_404(request: Request, provider_name: str):

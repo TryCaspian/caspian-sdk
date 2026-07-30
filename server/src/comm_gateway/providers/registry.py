@@ -200,6 +200,7 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             connector_base_url=settings.teams_connector_base_url,
             token_url=settings.teams_token_url,
             openid_config_url=settings.teams_openid_config_url,
+            allow_emulator=settings.teams_allow_emulator,
         )
     if name == "slack":
         import json as _json

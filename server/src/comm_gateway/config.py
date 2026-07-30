@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     github_api_base: str = "https://api.github.com"
 
     teams_messaging_endpoint: str = ""
+    # Accept unauthenticated Bot Framework Emulator traffic (channelId
+    # "emulator", localhost serviceUrl). Local development only.
+    teams_allow_emulator: bool = False
     teams_connector_base_url: str = "https://smba.trafficmanager.net/amer"
     teams_token_url: str = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
     teams_openid_config_url: str = "https://login.botframework.com/v1/.well-known/openidconfiguration"
