@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import httpx
 
@@ -141,7 +141,7 @@ class Message:
     text: str | None = None
     html: str | None = None
     media: list[dict] = field(default_factory=list)
-    _client: "CommClient" = field(default=None, repr=False)
+    _client: "CommClient | None" = field(default=None, repr=False)
 
     def reply(
         self,
@@ -275,19 +275,22 @@ class _MessageScheduler:
 
     def _on_debounce_timer(self, key: str) -> None:
         with self._lock:
+            if self._closed:
+                return
+            if timer := self._timers.get(key):
+                timer.cancel()
             event = self._pending.pop(key, None)
             self._timers.pop(key, None)
             if event is None or self._closed:
                 return
 
             if key in self._running:
-                # Replace buffered queue with latest debounced message
                 self._queues[key] = deque([event])
                 return
 
             self._running.add(key)
 
-        self._executor.submit(self._process_queue, key, event)
+            self._executor.submit(self._process_queue, key, event)
 
     def _start_debounce_timer(self, key: str) -> None:
         if key in self._timers:
@@ -388,7 +391,7 @@ class CommClient:
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
         # Define union type for sync and async handlers
-        self._message_handlers = []
+        self._message_handlers: list[Callable[[Message], None | Awaitable[None]]] = []
         self._interaction_handlers: list[Callable[[Interaction], None]] = []
         self._reaction_handlers: list[Callable[[Reaction], None]] = []
         self._ack: str | None = None
@@ -1076,11 +1079,29 @@ class CommClient:
 
     # Event handling
 
-    def on_message(self, handler=None):
+    @overload
+    def on_message(
+        self,
+    ) -> Callable[
+        [Callable[[Message], None | Awaitable[None]]],
+        Callable[[Message], None | Awaitable[None]],
+    ]: ...
+
+    @overload
+    def on_message(
+        self, handler: Callable[[Message], None | Awaitable[None]]
+    ) -> Callable[[Message], None | Awaitable[None]]: ...
+
+    def on_message(
+        self,
+        handler: Callable[[Message], None | Awaitable[None]] | None = None,
+    ) -> Any:
         """Decorator or method to register a message event handler."""
         if handler is None:
 
-            def decorator(fn):
+            def decorator(
+                fn: Callable[[Message], None | Awaitable[None]],
+            ) -> Callable[[Message], None | Awaitable[None]]:
                 self._message_handlers.append(fn)
                 return fn
 
@@ -1114,14 +1135,13 @@ class CommClient:
         if not data:
             return
         
-        # Accept both .received and .created event names
         if event_type in ("interaction.received", "interaction.created"):
             self._dispatch_interaction(event["data"])
             
-        if event_type in ("reaction.received", "reaction.created"):
+        elif event_type in ("reaction.received", "reaction.created"):
             self._dispatch_reaction(event["data"])
           
-        if event_type in ("message.received", "message.created"):
+        elif event_type in ("message.received", "message.created"):
             self._dispatch_message(event["data"])
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
@@ -1265,7 +1285,8 @@ class CommClient:
                     loop = None
 
                 if loop and loop.is_running():
-                    loop.create_task(handler(arg))
+                    task = loop.create_task(handler(arg))
+                    self._track_task(task, handler)
                 else:
                     asyncio.run(handler(arg))
             else:
@@ -1279,7 +1300,8 @@ class CommClient:
                         loop = None
 
                     if loop and loop.is_running():
-                        loop.create_task(res)
+                        task = loop.create_task(res)
+                        self._track_task(task, handler)
                     else:
                         asyncio.run(res)
 
@@ -1289,6 +1311,17 @@ class CommClient:
                 getattr(handler, "__name__", str(handler)),
                 e,
             )
+
+    def _track_task(self, task: asyncio.Task, handler: Callable) -> None:
+        """Helper to track background tasks and log exceptions if they fail."""
+        def _done_callback(t: asyncio.Task) -> None:
+            if not t.cancelled() and (exc := t.exception()):
+                logger.exception(
+                    "Unhandled exception in async handler %s: %s",
+                    getattr(handler, "__name__", str(handler)),
+                    exc,
+                )
+        task.add_done_callback(_done_callback)
 
     def _dispatch_message(self, data: dict) -> None:
         """Dispatches a message event to registered message handlers."""
@@ -1302,7 +1335,10 @@ class CommClient:
                 msg_data["customer_id"] = data["customer_id"]
             if "agent_id" in data and "agent_id" not in msg_data:
                 msg_data["agent_id"] = data["agent_id"]
-            valid_keys = {f.name for f in fields(Message)}
+            valid_keys = {
+                            f.name for f in fields(Message)
+                            if not f.name.startswith("_")
+                        }
             filtered_data = {
                 k: v for k, v in msg_data.items() if k in valid_keys
             }
@@ -1326,7 +1362,8 @@ class CommClient:
             return
 
         if isinstance(data, dict):
-            valid_keys = {f.name for f in fields(Interaction)}
+            valid_keys = {f.name for f in fields(Interaction)
+            if not f.name.startswith("_")}
             filtered_data = {k: v for k, v in data.items() if k in valid_keys}
             interaction = Interaction(**filtered_data, _client=self)
         else:
@@ -1341,7 +1378,8 @@ class CommClient:
             return
 
         if isinstance(data, dict):
-            valid_keys = {f.name for f in fields(Reaction)}
+            valid_keys = {f.name for f in fields(Reaction)
+            if not f.name.startswith("_")}
             filtered_data = {k: v for k, v in data.items() if k in valid_keys}
             reaction = Reaction(**filtered_data, _client=self)
         else:
