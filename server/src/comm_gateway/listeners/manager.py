@@ -347,7 +347,6 @@ async def _run_all(session_factory, settings, stop_event: threading.Event) -> No
     names = [n.strip() for n in (settings.providers or settings.provider).split(",")]
     tasks = [asyncio.create_task(_reconcile_loop(session_factory, settings, stop_event))]
     if "x" in names:
-    if "x" in names:
         tasks.append(
         asyncio.create_task(
             _x_dm_poll_loop(session_factory, settings, stop_event)
