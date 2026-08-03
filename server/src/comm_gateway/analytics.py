@@ -9,6 +9,7 @@ _client = None
 _SAFE_KEYS = (
     "source", "reason", "scope", "channel", "provider",
     "amount_cents", "cap_cents", "balance_cents", "spent_this_month_cents",
+    "email", "from_project_id", "connections", "domains",
 )
 
 
@@ -38,6 +39,39 @@ def capture(distinct_id: str | None, event: str, properties: dict | None = None)
         )
     except Exception:
         log.warning("posthog capture failed for %s", event, exc_info=True)
+
+
+def identify(distinct_id: str, properties: dict | None = None) -> None:
+    """Attach person properties (e.g. email) so web + gateway events can join."""
+    if _client is None or not distinct_id:
+        return
+    try:
+        props = {"$set": properties or {}}
+        _client.capture(distinct_id=distinct_id, event="$identify", properties=props)
+    except Exception:
+        log.warning("posthog identify failed for %s", distinct_id, exc_info=True)
+
+
+def alias(previous_id: str, distinct_id: str) -> None:
+    """Merge a prior distinct_id (usually project_id) into the person distinct_id."""
+    if _client is None or not previous_id or not distinct_id or previous_id == distinct_id:
+        return
+    try:
+        # posthog-python: alias(previous_id=..., distinct_id=...)
+        _client.alias(previous_id=previous_id, distinct_id=distinct_id)
+    except Exception:
+        log.warning("posthog alias failed %s -> %s", previous_id, distinct_id, exc_info=True)
+
+
+def link_account(project_id: str, email: str, *, source: str) -> None:
+    """Identify the developer and stitch project-scoped events onto their person."""
+    if not email:
+        return
+    identify(email, {"email": email, "project_id": project_id})
+    alias(project_id, email)
+    capture(email, "gateway.account_linked", {
+        "email": email, "project_id": project_id, "source": source,
+    })
 
 
 def safe_props(event_type: str, data: dict) -> dict:

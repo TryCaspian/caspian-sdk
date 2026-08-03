@@ -146,3 +146,74 @@ def test_signin_carries_over_anonymous_project(app):
         # Same email signs in again -> same project, no duplicate.
         again_pid, _ = get_or_create_account(s, "dev@example.com", settings)
         assert again_pid == pid
+
+
+def test_dashboard_first_absorbs_sandbox_connections(app):
+    """Email already has an account; CLI login with a sandbox key must not orphan
+    sandbox connections — absorb them into the account project and return the
+    account key (one email = one project)."""
+    from comm_gateway.models import Agent, Connection, Customer
+    from comm_gateway.routes.usage import absorb_unowned_sandbox
+
+    settings = app.state.settings
+    with app.state.session_factory() as s:
+        account_pid, account_key = get_or_create_account(s, "dash@example.com", settings)
+
+        sandbox = Project(id=new_id("proj"), name="sandbox")
+        s.add(sandbox)
+        s.flush()
+        sandbox_key = "comm_sandbox_orphan"
+        s.add(ApiKey(id=new_id("key"), project_id=sandbox.id, key_hash=hash_key(sandbox_key)))
+        cus = Customer(id=new_id("cus"), project_id=sandbox.id, name="default")
+        agt = Agent(id=new_id("agt"), project_id=sandbox.id, name="default")
+        s.add(cus)
+        s.add(agt)
+        s.flush()
+        s.add(Connection(
+            id=new_id("con"), project_id=sandbox.id, customer_id=cus.id, agent_id=agt.id,
+            channel="email", status="active", provider="fake", address="bot@test.local",
+        ))
+        s.commit()
+        sandbox_id = sandbox.id
+
+        got_pid, got_key = get_or_create_account(
+            s, "dash@example.com", settings,
+            link_project_id=sandbox_id, link_api_key=sandbox_key,
+        )
+        assert got_pid == account_pid
+        assert got_key == account_key
+
+        moved = s.execute(
+            select(Connection).where(Connection.project_id == account_pid)
+        ).scalars().all()
+        assert len(moved) == 1
+        assert moved[0].address == "bot@test.local"
+        assert s.execute(
+            select(Connection).where(Connection.project_id == sandbox_id)
+        ).scalars().first() is None
+
+        # Idempotent: absorbing again moves nothing.
+        again = absorb_unowned_sandbox(s, account_pid, sandbox_id)
+        assert again["connections"] == 0
+
+
+def test_signup_emits_project_created(app, monkeypatch):
+    from comm_gateway import analytics as analytics_mod
+
+    events: list[tuple[str, str, dict]] = []
+
+    def _capture(distinct_id, event, properties=None):
+        events.append((distinct_id, event, properties or {}))
+
+    monkeypatch.setattr(analytics_mod, "capture", _capture)
+    monkeypatch.setattr(analytics_mod, "identify", lambda *a, **k: None)
+    monkeypatch.setattr(analytics_mod, "alias", lambda *a, **k: None)
+
+    settings = app.state.settings
+    with app.state.session_factory() as s:
+        pid, _ = get_or_create_account(s, "new-signup@example.com", settings)
+
+    created = [e for e in events if e[1] == "gateway.project_created"]
+    assert len(created) == 1
+    assert created[0][0] == pid
+    assert created[0][2].get("source") == "signup"

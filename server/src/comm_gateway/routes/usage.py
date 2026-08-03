@@ -28,9 +28,12 @@ from ..ids import new_id
 from ..models import (
     Agent,
     ApiKey,
+    BillingAccount,
     Connection,
+    Conversation,
     Customer,
     DashboardAccount,
+    Domain,
     Message,
     Project,
 )
@@ -93,6 +96,86 @@ def project_has_account(session: Session, project_id: str) -> bool:
     ).first() is not None
 
 
+def _default_customer_agent(session: Session, project_id: str) -> tuple[Customer, Agent]:
+    _ensure_default_scope(session, project_id)
+    customer = session.execute(
+        select(Customer).where(Customer.project_id == project_id, Customer.name == "default")
+    ).scalar_one()
+    agent = session.execute(
+        select(Agent).where(Agent.project_id == project_id, Agent.name == "default")
+    ).scalar_one()
+    return customer, agent
+
+
+def absorb_unowned_sandbox(
+    session: Session, dest_project_id: str, source_project_id: str
+) -> dict:
+    """Move work from an unowned sandbox into the developer's account project.
+
+    Used when the email already has a DashboardAccount (dashboard-first) but the
+    CLI still holds a sandbox key from ``init --sandbox`` / earlier anonymous use.
+    Keeps one-email-one-project while not orphaning connections.
+    """
+    empty = {"connections": 0, "domains": 0, "conversations": 0, "messages": 0, "credit_cents": 0}
+    if not source_project_id or source_project_id == dest_project_id:
+        return empty
+    if session.get(Project, source_project_id) is None:
+        return empty
+    if project_has_account(session, source_project_id):
+        return empty  # never steal from another signed-in account
+
+    dest_customer, dest_agent = _default_customer_agent(session, dest_project_id)
+
+    n_conn = 0
+    for conn in session.execute(
+        select(Connection).where(Connection.project_id == source_project_id)
+    ).scalars():
+        conn.project_id = dest_project_id
+        conn.customer_id = dest_customer.id
+        conn.agent_id = dest_agent.id
+        n_conn += 1
+
+    n_dom = 0
+    for domain in session.execute(
+        select(Domain).where(Domain.project_id == source_project_id)
+    ).scalars():
+        domain.project_id = dest_project_id
+        n_dom += 1
+
+    n_conv = 0
+    for conv in session.execute(
+        select(Conversation).where(Conversation.project_id == source_project_id)
+    ).scalars():
+        conv.project_id = dest_project_id
+        n_conv += 1
+
+    n_msg = 0
+    for msg in session.execute(
+        select(Message).where(Message.project_id == source_project_id)
+    ).scalars():
+        msg.project_id = dest_project_id
+        n_msg += 1
+
+    credit_moved = 0
+    src_billing = session.get(BillingAccount, source_project_id)
+    if src_billing and src_billing.credit_cents > 0:
+        dest_billing = session.get(BillingAccount, dest_project_id)
+        if dest_billing is None:
+            dest_billing = BillingAccount(project_id=dest_project_id, credit_cents=0)
+            session.add(dest_billing)
+        credit_moved = src_billing.credit_cents
+        dest_billing.credit_cents += credit_moved
+        src_billing.credit_cents = 0
+
+    return {
+        "connections": n_conn,
+        "domains": n_dom,
+        "conversations": n_conv,
+        "messages": n_msg,
+        "credit_cents": credit_moved,
+    }
+
+
 def get_or_create_account(
     session: Session,
     email: str,
@@ -104,13 +187,28 @@ def get_or_create_account(
 
     If the developer already built with an anonymous no-signup key (link_project_id
     + link_api_key) and that project isn't owned yet, we bind THAT project to the
-    account and keep its existing key — so nothing they built is lost. Otherwise a
-    fresh project + key is created. A COMM_DASHBOARD_LINKS seed still maps a demo
-    email to an existing project.
+    account and keep its existing key — so nothing they built is lost. If the
+    email already has an account, we keep that project (one email = one project)
+    and absorb any unowned sandbox work into it. Otherwise a fresh project + key
+    is created. A COMM_DASHBOARD_LINKS seed still maps a demo email to an existing
+    project.
     """
+    from ..analytics import capture, link_account
+
     account = session.get(DashboardAccount, email)
     if account is not None:
-        return account.project_id, _decrypt(account.api_key_enc)["api_key"]
+        api_key = _decrypt(account.api_key_enc)["api_key"]
+        if link_project_id and link_api_key:
+            absorbed = absorb_unowned_sandbox(session, account.project_id, link_project_id)
+            session.commit()
+            if any(absorbed.values()):
+                capture(account.project_id, "gateway.sandbox_absorbed", {
+                    "email": email,
+                    "from_project_id": link_project_id,
+                    **{k: v for k, v in absorbed.items() if isinstance(v, int)},
+                })
+            link_account(account.project_id, email, source="device_login_existing")
+        return account.project_id, api_key
 
     # Carry over the anonymous project the agent already built with, if unowned.
     if link_project_id and link_api_key:
@@ -125,6 +223,7 @@ def get_or_create_account(
                 api_key_enc=_encrypt({"api_key": link_api_key}),
             ))
             session.commit()
+            link_account(link_project_id, email, source="device_login_carryover")
             return link_project_id, link_api_key
 
     seeded: dict = {}
@@ -134,11 +233,13 @@ def get_or_create_account(
         except ValueError:
             seeded = {}
     project_id = seeded.get(email)
+    created_new_project = False
     if project_id is None:
         project = Project(id=new_id("proj"), name=email)
         session.add(project)
         session.flush()  # insert the project before its FK children (Postgres enforces FKs)
         project_id = project.id
+        created_new_project = True
 
     api_key = f"comm_{secrets.token_hex(24)}"
     session.add(ApiKey(id=new_id("key"), project_id=project_id, key_hash=hash_key(api_key)))
@@ -148,6 +249,11 @@ def get_or_create_account(
                          api_key_enc=_encrypt({"api_key": api_key}))
     )
     session.commit()
+    if created_new_project:
+        capture(project_id, "gateway.project_created", {
+            "source": "signup", "email": email,
+        })
+    link_account(project_id, email, source="signup")
     return project_id, api_key
 
 

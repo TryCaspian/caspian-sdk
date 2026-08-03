@@ -1,12 +1,13 @@
 """caspian - CLI for the Caspian communication gateway.
 
 Commands:
-  caspian init [--gateway URL] [--name NAME]   mint a sandbox key, write .env
+  caspian init [--gateway URL] [--open]        sign in (device login), write .env
+  caspian init --sandbox [--name NAME]         mint an anonymous sandbox key (no sign-in)
   caspian connect email [--name NAME]          provision an email inbox
   caspian status                               list connections
   caspian listen                               tail inbound/outbound mail live
   caspian test-email [TEXT]                    deliver a test email to your agent
-  caspian login                                sign in once (enables paid channels)
+  caspian login                                sign in / bind current key to an account
   caspian billing                              show credit balance, spend, limits
   caspian topup [DOLLARS]                      add credit via a Stripe checkout link
 """
@@ -119,10 +120,54 @@ def _write_env(values: dict[str, str]) -> None:
     ENV_PATH.write_text("\n".join(lines) + "\n")
 
 
-def cmd_init(args) -> None:
-    if _resolve("CASPIAN_API_KEY", "COMM_API_KEY") and not args.force:
-        print("CASPIAN_API_KEY already configured in .env (use --force to replace).")
-        return
+def _device_login(
+    gateway: str,
+    *,
+    api_key: str | None = None,
+    open_browser: bool = False,
+) -> dict:
+    """Run RFC 8628 device login against ``gateway``. No prior key required.
+
+    When ``api_key`` is set, the gateway binds that project to the account on
+    approve (carry-over). Otherwise a fresh account project is created.
+    Returns the approved token payload (api_key, project_id, email, ...).
+    """
+    gateway = gateway.rstrip("/")
+    body = {"api_key": api_key} if api_key else {}
+    response = httpx.post(f"{gateway}/v1/auth/device/start", json=body, timeout=30)
+    if response.status_code >= 400:
+        sys.exit(f"Error {response.status_code}: {response.text}")
+    start = response.json()
+    url = start.get("verification_uri_complete") or start.get("verification_uri")
+    print("Sign in to Caspian (opens a browser link — one-time Google sign-in):")
+    print(f"\n  {url}\n")
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(url)
+    print("Waiting for you to approve in the browser...")
+    interval = start.get("interval", 5)
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        poll = httpx.post(
+            f"{gateway}/v1/auth/device/token",
+            json={"device_code": start["device_code"]},
+            timeout=30,
+        )
+        if poll.status_code >= 400:
+            sys.exit(f"Error {poll.status_code}: {poll.text}")
+        result = poll.json()
+        status = result.get("status")
+        if status == "approved":
+            return result
+        if status in ("expired", "not_found"):
+            sys.exit(f"Login {status}. Run caspian init (or caspian login) again.")
+        time.sleep(interval)
+    sys.exit("Login timed out. Run caspian init (or caspian login) again.")
+
+
+def _cmd_init_sandbox(args) -> None:
+    """Anonymous sandbox mint — no sign-in. Used by ``caspian init --sandbox``."""
     gateway = args.gateway.rstrip("/")
     response = httpx.post(
         f"{gateway}/v1/projects/sandbox",
@@ -133,7 +178,30 @@ def cmd_init(args) -> None:
         sys.exit(f"Error {response.status_code}: {response.text}")
     data = response.json()
     _write_env({"CASPIAN_API_KEY": data["api_key"], "CASPIAN_BASE_URL": gateway})
-    print(f"Project {data['project_id']} created.")
+    print(f"Sandbox project {data['project_id']} created (anonymous — no account).")
+    print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
+    print("Next: caspian connect email")
+    print("Tip: run caspian login later to tie this project to your account.")
+
+
+def cmd_init(args) -> None:
+    if _resolve("CASPIAN_API_KEY", "COMM_API_KEY") and not args.force:
+        print("CASPIAN_API_KEY already configured in .env (use --force to replace).")
+        return
+    if args.sandbox:
+        _cmd_init_sandbox(args)
+        return
+
+    gateway = args.gateway.rstrip("/")
+    result = _device_login(gateway, open_browser=args.open)
+    api_key = result.get("api_key")
+    if not api_key:
+        sys.exit("Sign-in succeeded but no API key was returned.")
+    _write_env({"CASPIAN_API_KEY": api_key, "CASPIAN_BASE_URL": gateway})
+    email = result.get("email") or "your account"
+    project_id = result.get("project_id") or "?"
+    print(f"\nSigned in as {email}.")
+    print(f"Project {project_id} ready.")
     print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
     print("Next: caspian connect email")
 
@@ -391,31 +459,23 @@ def cmd_test_email(args) -> None:
 
 def cmd_login(args) -> None:
     """One-time developer sign-in that ties this project to a Caspian account.
-    Required before paid channels; the project + key carry over unchanged."""
-    api_key, _ = _config()
-    start = _request("POST", "/v1/auth/device/start", json_body={"api_key": api_key})
-    url = start.get("verification_uri_complete") or start.get("verification_uri")
-    print("Sign in to Caspian (one-time - enables paid channels like X, WhatsApp):")
-    print(f"\n  {url}\n")
-    if args.open:
-        import webbrowser
-
-        webbrowser.open(url)
-    print("Waiting for you to approve in the browser...")
-    interval = start.get("interval", 5)
-    deadline = time.monotonic() + 600
-    while time.monotonic() < deadline:
-        result = _request("POST", "/v1/auth/device/token",
-                          json_body={"device_code": start["device_code"]})
-        status = result.get("status")
-        if status == "approved":
-            print("\nSigned in. This project is now tied to your account.")
-            print(f"Next: add credit in the dashboard:  {DASHBOARD_URL}")
-            return
-        if status in ("expired", "not_found"):
-            sys.exit(f"Login {status}. Run caspian login again.")
-        time.sleep(interval)
-    sys.exit("Login timed out. Run caspian login again.")
+    Works with or without an existing key — if a sandbox key is present it is
+    carried over; otherwise a fresh account project is created."""
+    api_key = _resolve("CASPIAN_API_KEY", "COMM_API_KEY")
+    base_url = _resolve(
+        "CASPIAN_BASE_URL", "COMM_BASE_URL", default=DEFAULT_GATEWAY
+    ).rstrip("/")
+    result = _device_login(base_url, api_key=api_key, open_browser=args.open)
+    # Prefer the account key from the token response (dashboard-first accounts
+    # may differ from the anonymous sandbox key that started the flow).
+    new_key = result.get("api_key")
+    if new_key:
+        _write_env({"CASPIAN_API_KEY": new_key, "CASPIAN_BASE_URL": base_url})
+    email = result.get("email")
+    print("\nSigned in. This project is now tied to your account"
+          + (f" ({email})." if email else "."))
+    print(f"Next: add credit in the dashboard:  {DASHBOARD_URL}")
+    print("Then: caspian connect email")
 
 
 def _fmt_cents(cents) -> str:
@@ -460,10 +520,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="caspian", description="Caspian communication CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init", help="Mint a sandbox project and write .env")
+    p_init = sub.add_parser(
+        "init",
+        help="Sign in and write .env (use --sandbox for anonymous key, no sign-in)",
+    )
     p_init.add_argument("--gateway", default=DEFAULT_GATEWAY)
-    p_init.add_argument("--name", default="sandbox")
-    p_init.add_argument("--force", action="store_true")
+    p_init.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="Mint an anonymous sandbox key without signing in (agents/tests)",
+    )
+    p_init.add_argument(
+        "--name", default="sandbox", help="Project name when using --sandbox"
+    )
+    p_init.add_argument(
+        "--open", action="store_true", help="Open the sign-in link in a browser"
+    )
+    p_init.add_argument("--force", action="store_true", help="Replace an existing .env key")
     p_init.set_defaults(func=cmd_init)
 
     p_connect = sub.add_parser(
