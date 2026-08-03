@@ -1,5 +1,6 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
+import asyncio
 import json
 import threading
 
@@ -953,3 +954,137 @@ def test_non_json_error_body_hits_value_error_fallback():
     assert excinfo.value.detail == "Internal Server Error"
     assert "Internal Server Error" in str(excinfo.value)
 
+
+
+# --- async handlers ----------------------------------------------------------
+
+
+def _draining_events_transport(events, on_request=None):
+    """Serve ``events`` once from /v1/events, then an empty batch; 200 elsewhere."""
+    last_seq = events[-1]["seq"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= last_seq else events)
+        if on_request is not None:
+            on_request(request)
+        return httpx.Response(200, json={"delivered": True})
+
+    return handler
+
+
+def test_async_handler_is_awaited_and_can_reply():
+    replies = []
+
+    def record(request: httpx.Request) -> None:
+        if request.url.path.endswith("/reply"):
+            replies.append(json.loads(request.content))
+
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "hello")], record))
+    seen: list[str] = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        await asyncio.sleep(0.01)
+        seen.append(message.text)
+        message.reply(f"echo {message.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    # The coroutine ran to completion before dispatch_pending returned.
+    assert seen == ["hello"]
+    assert [r["text"] for r in replies] == ["echo hello"]
+
+
+def test_sync_and_async_handlers_run_in_registration_order():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "order")]))
+    calls: list[str] = []
+
+    @client.on_message
+    def first(message) -> None:
+        calls.append("sync-first")
+
+    @client.on_message
+    async def second(message) -> None:
+        calls.append("async-second")
+
+    @client.on_message
+    def third(message) -> None:
+        calls.append("sync-third")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert calls == ["sync-first", "async-second", "sync-third"]
+
+
+def test_async_handler_error_is_contained_and_later_handlers_still_run():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "boom")]))
+    seen: list[str] = []
+
+    @client.on_message
+    async def bad(message) -> None:
+        raise RuntimeError("async handler failure")
+
+    @client.on_message
+    async def good(message) -> None:
+        seen.append(message.text)
+
+    try:
+        client.dispatch_pending(0)  # must not raise
+    finally:
+        client.close()
+
+    assert seen == ["boom"]
+
+
+def test_async_handlers_share_one_background_event_loop():
+    events = [_message_event(1, "conv_1", "first"), _message_event(2, "conv_1", "second")]
+    client = _client(_draining_events_transport(events))
+    loops = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        loops.append(asyncio.get_running_loop())
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+
+
+def test_on_interaction_accepts_async_handler():
+    events = [
+        {
+            "seq": 1,
+            "type": "interaction.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "value": "reorder_123",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+    client = _client(_draining_events_transport(events))
+    values: list[str] = []
+
+    @client.on_interaction
+    async def handle(interaction) -> None:
+        await asyncio.sleep(0)
+        values.append(interaction.value)
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert values == ["reorder_123"]
