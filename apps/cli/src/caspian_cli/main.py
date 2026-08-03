@@ -21,6 +21,8 @@ from pathlib import Path
 
 import httpx
 
+from . import telemetry
+
 DEFAULT_GATEWAY = "https://api.trycaspianai.com"
 DASHBOARD_URL = "https://dashboard.trycaspianai.com"
 ENV_PATH = Path.cwd() / ".env"
@@ -139,6 +141,7 @@ def _device_login(
         sys.exit(f"Error {response.status_code}: {response.text}")
     start = response.json()
     url = start.get("verification_uri_complete") or start.get("verification_uri")
+    telemetry.track("cli.login_url_shown", {})
     print("Sign in to Caspian (opens a browser link — one-time Google sign-in):")
     print(f"\n  {url}\n")
     if open_browser:
@@ -155,20 +158,31 @@ def _device_login(
             timeout=30,
         )
         if poll.status_code >= 400:
+            telemetry.track("cli.login_failed", {"reason": f"http_{poll.status_code}"})
             sys.exit(f"Error {poll.status_code}: {poll.text}")
         result = poll.json()
         status = result.get("status")
         if status == "approved":
+            telemetry.set_identity(
+                email=result.get("email"),
+                project_id=result.get("project_id"),
+                api_key=result.get("api_key"),
+            )
+            telemetry.track("cli.login_approved", {})
             return result
         if status in ("expired", "not_found"):
+            telemetry.track("cli.login_failed", {"reason": status})
             sys.exit(f"Login {status}. Run caspian init (or caspian login) again.")
         time.sleep(interval)
+    telemetry.track("cli.login_failed", {"reason": "timeout"})
     sys.exit("Login timed out. Run caspian init (or caspian login) again.")
 
 
 def _cmd_init_sandbox(args) -> None:
     """Anonymous sandbox mint — no sign-in. Used by ``caspian init --sandbox``."""
     gateway = args.gateway.rstrip("/")
+    telemetry.set_gateway(gateway)
+    telemetry.track("cli.init_started", {"sandbox": True})
     response = httpx.post(
         f"{gateway}/v1/projects/sandbox",
         json={"name": args.name},
@@ -178,6 +192,7 @@ def _cmd_init_sandbox(args) -> None:
         sys.exit(f"Error {response.status_code}: {response.text}")
     data = response.json()
     _write_env({"CASPIAN_API_KEY": data["api_key"], "CASPIAN_BASE_URL": gateway})
+    telemetry.set_identity(project_id=data.get("project_id"), api_key=data["api_key"])
     print(f"Sandbox project {data['project_id']} created (anonymous — no account).")
     print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
     print("Next: caspian connect email")
@@ -193,6 +208,8 @@ def cmd_init(args) -> None:
         return
 
     gateway = args.gateway.rstrip("/")
+    telemetry.set_gateway(gateway)
+    telemetry.track("cli.init_started", {"sandbox": False})
     result = _device_login(gateway, open_browser=args.open)
     api_key = result.get("api_key")
     if not api_key:
@@ -200,6 +217,8 @@ def cmd_init(args) -> None:
     _write_env({"CASPIAN_API_KEY": api_key, "CASPIAN_BASE_URL": gateway})
     email = result.get("email") or "your account"
     project_id = result.get("project_id") or "?"
+    telemetry.set_identity(email=result.get("email"), project_id=result.get("project_id"),
+                           api_key=api_key)
     print(f"\nSigned in as {email}.")
     print(f"Project {project_id} ready.")
     print(f"Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to {ENV_PATH}")
@@ -310,18 +329,24 @@ def _email_body(args) -> dict:
 
 
 def _print_authorize(channel: str, connection: dict) -> None:
+    telemetry.track("cli.connect_authorize_shown", {"channel": channel})
     print(f"\nOpen this link to authorize {channel} (it becomes your bot):")
     print(f"  {connection.get('authorize_url')}")
     print(f"After approving, run: caspian status   (connection {connection['id']})")
 
 
 def _await_active(connection: dict) -> None:
+    channel = connection.get("channel") or "unknown"
     deadline = time.monotonic() + 60
     while connection["status"] == "provisioning" and time.monotonic() < deadline:
         time.sleep(0.5)
         connection = _request("GET", f"/v1/connections/{connection['id']}")
     if connection["status"] != "active":
+        telemetry.track("cli.connect_failed", {
+            "channel": channel, "reason": connection.get("status") or "timeout",
+        })
         sys.exit(f"Provisioning did not complete: {json.dumps(connection, indent=2)}")
+    telemetry.track("cli.connect_succeeded", {"channel": channel})
     print(f"{connection['channel'].capitalize()} connected: {connection['address']}")
     print(f"Connection id: {connection['id']}")
 
@@ -336,7 +361,7 @@ def _connect_install_channel(channel: str, args) -> None:
         conn = _request("POST", f"/v1/connections/{channel}/install",
                         json_body={"display_name": args.name})
         _print_authorize(channel, conn)
-        return
+        return  # OAuth finish is outside this process
     # bring-your-own paths
     if channel == "discord":
         token = args.bot_token or _ask("Paste your bot token (discord.com/developers)")
@@ -375,34 +400,47 @@ def _connect_install_channel(channel: str, args) -> None:
 
 
 def _connect_one(channel: str, args) -> None:
-    if channel in INSTALL_CHANNELS:
-        _connect_install_channel(channel, args)
-        return
-    if channel == "email":
-        body = _email_body(args)
-    elif channel in TOKEN_CHANNELS:
-        where = TOKEN_CHANNELS[channel]
-        token = args.bot_token or _ask(f"Paste the bot token (create one at {where})")
-        if not token:
-            sys.exit(f"{channel} needs a bot token.")
-        body = {"display_name": args.name, "bot_token": token}
-    elif channel == "bluesky":
-        body = {
-            "display_name": args.name,
-            "identifier": _ask("Bluesky handle or email (e.g. myagent.bsky.social)"),
-            "app_password": _ask(
-                "Bluesky app password (bsky.app -> Settings -> Privacy and "
-                "security -> App passwords)"
-            ),
-        }
-    else:
-        body = {"display_name": args.name}
+    telemetry.track("cli.connect_started", {"channel": channel})
+    try:
+        if channel in INSTALL_CHANNELS:
+            _connect_install_channel(channel, args)
+            # Install/OAuth paths end at authorize URL; success is later via status.
+            return
+        if channel == "email":
+            body = _email_body(args)
+        elif channel in TOKEN_CHANNELS:
+            where = TOKEN_CHANNELS[channel]
+            token = args.bot_token or _ask(f"Paste the bot token (create one at {where})")
+            if not token:
+                telemetry.track("cli.connect_failed", {
+                    "channel": channel, "reason": "missing_bot_token",
+                })
+                sys.exit(f"{channel} needs a bot token.")
+            body = {"display_name": args.name, "bot_token": token}
+        elif channel == "bluesky":
+            body = {
+                "display_name": args.name,
+                "identifier": _ask("Bluesky handle or email (e.g. myagent.bsky.social)"),
+                "app_password": _ask(
+                    "Bluesky app password (bsky.app -> Settings -> Privacy and "
+                    "security -> App passwords)"
+                ),
+            }
+        else:
+            body = {"display_name": args.name}
 
-    connection = _request("POST", f"/v1/connections/{channel}", json_body=body)
-    if channel in OAUTH_CHANNELS:
-        _print_authorize(channel, connection)
-        return
-    _await_active(connection)
+        connection = _request("POST", f"/v1/connections/{channel}", json_body=body)
+        if channel in OAUTH_CHANNELS:
+            _print_authorize(channel, connection)
+            return
+        _await_active(connection)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        telemetry.track("cli.connect_failed", {
+            "channel": channel, "reason": type(exc).__name__,
+        })
+        raise
 
 
 def cmd_connect(args) -> None:
@@ -465,6 +503,9 @@ def cmd_login(args) -> None:
     base_url = _resolve(
         "CASPIAN_BASE_URL", "COMM_BASE_URL", default=DEFAULT_GATEWAY
     ).rstrip("/")
+    telemetry.set_gateway(base_url)
+    if api_key:
+        telemetry.set_identity(api_key=api_key)
     result = _device_login(base_url, api_key=api_key, open_browser=args.open)
     # Prefer the account key from the token response (dashboard-first accounts
     # may differ from the anonymous sandbox key that started the flow).
@@ -518,6 +559,11 @@ def cmd_topup(args) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="caspian", description="Caspian communication CLI")
+    parser.add_argument(
+        "--no-telemetry",
+        action="store_true",
+        help="Disable CLI analytics (also: CASPIAN_TELEMETRY=0)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser(
@@ -596,10 +642,64 @@ def main() -> None:
     p_topup.set_defaults(func=cmd_topup)
 
     args = parser.parse_args()
+    gateway = getattr(args, "gateway", None) or _resolve(
+        "CASPIAN_BASE_URL", "COMM_BASE_URL", default=DEFAULT_GATEWAY
+    )
+    api_key = _resolve("CASPIAN_API_KEY", "COMM_API_KEY")
+    telemetry.configure(
+        disabled=bool(getattr(args, "no_telemetry", False)),
+        gateway=gateway,
+        api_key=api_key,
+    )
+    telemetry.track("cli.session_started", {"command": args.command or ""})
+    started = time.monotonic()
+    flags = telemetry.argv_flags(args)
+    telemetry.track("cli.command_started", {
+        "command": args.command or "",
+        "argv_flags": flags,
+    })
+    exit_code = 0
     try:
         args.func(args)
     except KeyboardInterrupt:
-        pass
+        exit_code = 130
+        telemetry.track("cli.command_failed", {
+            "command": args.command or "",
+            "error_code": exit_code,
+            "reason": "interrupted",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "argv_flags": flags,
+        })
+    except SystemExit as exc:
+        code = exc.code
+        exit_code = 0 if code in (None, 0) else (code if isinstance(code, int) else 1)
+        props = {
+            "command": args.command or "",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "argv_flags": flags,
+        }
+        if exit_code == 0:
+            telemetry.track("cli.command_succeeded", props)
+        else:
+            props["error_code"] = exit_code
+            telemetry.track("cli.command_failed", props)
+        raise
+    except Exception as exc:
+        exit_code = 1
+        telemetry.track("cli.command_failed", {
+            "command": args.command or "",
+            "error_code": exit_code,
+            "reason": type(exc).__name__,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "argv_flags": flags,
+        })
+        raise
+    else:
+        telemetry.track("cli.command_succeeded", {
+            "command": args.command or "",
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "argv_flags": flags,
+        })
 
 
 if __name__ == "__main__":

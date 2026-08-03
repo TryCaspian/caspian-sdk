@@ -87,4 +87,11 @@ def safe_props(event_type: str, data: dict) -> dict:
             v = msg.get(k)
             if isinstance(v, (str, int)):
                 props[k] = v
+    # connection.* events nest channel under data["connection"].
+    conn = data.get("connection")
+    if isinstance(conn, dict):
+        for k in ("channel", "provider", "status"):
+            v = conn.get(k)
+            if isinstance(v, str) and k not in props:
+                props[k] = v
     return props

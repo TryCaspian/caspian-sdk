@@ -17,6 +17,7 @@ from .providers import build_providers
 from .routes import (
     api,
     billing,
+    cli_telemetry,
     device,
     domains,
     guides,
@@ -115,6 +116,7 @@ def create_app(
     app.include_router(skill.router)
     app.include_router(usage.router)
     app.include_router(device.router)
+    app.include_router(cli_telemetry.router)
     app.include_router(guides.router)
     app.include_router(legal.router)
     return app
