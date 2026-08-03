@@ -190,9 +190,19 @@ def test_cmd_init_writes_mocked_project_credentials(env_path, monkeypatch, capsy
         calls.append((args, kwargs))
         return response
 
+    # Patching httpx.post is process-wide; disable telemetry so it doesn't share it.
+    monkeypatch.setattr(main.telemetry, "track", lambda *a, **k: None)
+    monkeypatch.setattr(main.telemetry, "set_gateway", lambda *a, **k: None)
+    monkeypatch.setattr(main.telemetry, "set_identity", lambda *a, **k: None)
     monkeypatch.setattr(main.httpx, "post", fake_post)
 
-    main.cmd_init(Namespace(gateway="https://gateway.test/", name="demo", force=False))
+    main.cmd_init(Namespace(
+        gateway="https://gateway.test/",
+        name="demo",
+        force=False,
+        sandbox=True,
+        open=False,
+    ))
 
     assert calls == [
         (
@@ -203,4 +213,4 @@ def test_cmd_init_writes_mocked_project_credentials(env_path, monkeypatch, capsy
     assert env_path.read_text() == (
         "CASPIAN_API_KEY=sandbox-key\nCASPIAN_BASE_URL=https://gateway.test\n"
     )
-    assert "Project project_1 created." in capsys.readouterr().out
+    assert "Sandbox project project_1 created" in capsys.readouterr().out

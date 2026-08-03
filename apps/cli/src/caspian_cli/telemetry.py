@@ -9,7 +9,6 @@ from __future__ import annotations
 import atexit
 import os
 import platform
-import sys
 import time
 import uuid
 from importlib.metadata import PackageNotFoundError, version

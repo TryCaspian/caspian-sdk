@@ -53,8 +53,8 @@ def test_cli_telemetry_rejects_unknown_event(client):
 
 
 def test_cli_telemetry_attaches_project_from_bearer(app, monkeypatch):
-    from fastapi.testclient import TestClient
     from comm_gateway.routes import cli_telemetry as telem
+    from fastapi.testclient import TestClient
 
     events = []
     monkeypatch.setattr(
