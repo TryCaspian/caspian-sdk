@@ -4,11 +4,11 @@ from comm_gateway.analytics import safe_props
 from comm_gateway.auth import hash_key
 from comm_gateway.ids import new_id
 from comm_gateway.models import ApiKey, Project
+from comm_gateway.routes import cli_telemetry as telem
+from fastapi.testclient import TestClient
 
 
 def test_cli_telemetry_allowlisted_without_auth(client, monkeypatch):
-    from comm_gateway.routes import cli_telemetry as telem
-
     events = []
 
     def _capture(distinct_id, event, properties=None):
@@ -18,9 +18,7 @@ def test_cli_telemetry_allowlisted_without_auth(client, monkeypatch):
     monkeypatch.setattr(telem, "identify", lambda *a, **k: None)
 
     # No Authorization — use a bare client so we don't attach the bootstrap key.
-    bare = client.app
-    from fastapi.testclient import TestClient
-    anon = TestClient(bare)
+    anon = TestClient(client.app)
 
     r = anon.post("/v1/cli/telemetry", json={
         "event": "cli.init_started",
@@ -30,6 +28,8 @@ def test_cli_telemetry_allowlisted_without_auth(client, monkeypatch):
             "cli_session_id": "sess1",
             "cli_version": "0.4.0",
             "bot_token": "SHOULD_NOT_FORWARD",
+            "project_id": "proj_spoofed",
+            "email": "spoof@example.com",
         },
     })
     assert r.status_code == 200
@@ -40,6 +40,8 @@ def test_cli_telemetry_allowlisted_without_auth(client, monkeypatch):
     assert distinct == "anonymous:abc"
     assert props.get("sandbox") is False
     assert "bot_token" not in props
+    assert "project_id" not in props
+    assert "email" not in props
     assert props.get("source") == "cli"
 
 
@@ -53,15 +55,16 @@ def test_cli_telemetry_rejects_unknown_event(client):
 
 
 def test_cli_telemetry_attaches_project_from_bearer(app, monkeypatch):
-    from comm_gateway.routes import cli_telemetry as telem
-    from fastapi.testclient import TestClient
-
     events = []
+    identifies = []
     monkeypatch.setattr(
         telem, "capture",
         lambda d, e, p=None: events.append((d, e, p or {})),
     )
-    monkeypatch.setattr(telem, "identify", lambda *a, **k: None)
+    monkeypatch.setattr(
+        telem, "identify",
+        lambda d, p=None: identifies.append((d, p or {})),
+    )
 
     key = "comm_cli_telem_test"
     with app.state.session_factory() as s:
@@ -77,12 +80,33 @@ def test_cli_telemetry_attaches_project_from_bearer(app, monkeypatch):
         json={
             "event": "cli.connect_started",
             "distinct_id": "anonymous:x",
-            "properties": {"channel": "slack"},
+            "properties": {
+                "channel": "slack",
+                "email": "dev@example.com",
+                "project_id": "proj_spoofed",
+            },
         },
     )
     assert r.status_code == 200
+    assert events[0][0] == "dev@example.com"
     assert events[0][2].get("project_id") == pid
     assert events[0][2].get("channel") == "slack"
+    assert identifies == [("dev@example.com", {"email": "dev@example.com", "project_id": pid})]
+
+
+def test_cli_telemetry_unauth_rate_limit(client, monkeypatch):
+    monkeypatch.setattr(telem, "_UNAUTH_LIMIT", 2)
+    monkeypatch.setattr(telem, "capture", lambda *a, **k: None)
+    monkeypatch.setattr(telem, "identify", lambda *a, **k: None)
+    with telem._unauth_lock:
+        telem._unauth_hits.clear()
+
+    anon = TestClient(client.app)
+    body = {"event": "cli.session_started", "properties": {"machine_id": "m1"}}
+    assert anon.post("/v1/cli/telemetry", json=body).json()["ok"] is True
+    assert anon.post("/v1/cli/telemetry", json=body).json()["ok"] is True
+    limited = anon.post("/v1/cli/telemetry", json=body).json()
+    assert limited == {"ok": False, "error": "rate_limited"}
 
 
 def test_safe_props_extracts_channel_from_connection():

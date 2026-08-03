@@ -9,6 +9,7 @@ from __future__ import annotations
 import atexit
 import os
 import platform
+import threading
 import time
 import uuid
 from importlib.metadata import PackageNotFoundError, version
@@ -17,6 +18,10 @@ from pathlib import Path
 import httpx
 
 DEFAULT_GATEWAY = "https://api.trycaspianai.com"
+
+# Per-request HTTP budget and atexit flush deadline (seconds).
+_POST_TIMEOUT = 0.4
+_FLUSH_DEADLINE = 0.8
 
 _session_id = str(uuid.uuid4())
 _started_at = time.monotonic()
@@ -28,6 +33,8 @@ _project_id: str | None = None
 _machine_id: str | None = None
 _atexit_registered = False
 _session_ended = False
+_pending: set[threading.Thread] = set()
+_pending_lock = threading.Lock()
 
 
 def _env_disabled() -> bool:
@@ -106,8 +113,15 @@ def set_gateway(gateway: str) -> None:
     _gateway = gateway.rstrip("/")
 
 
+def _deliver(url: str, payload: dict, headers: dict) -> None:
+    try:
+        httpx.post(url, json=payload, headers=headers, timeout=_POST_TIMEOUT)
+    except Exception:
+        pass
+
+
 def track(event: str, properties: dict | None = None) -> None:
-    """Fire-and-forget POST to ``/v1/cli/telemetry``."""
+    """Fire-and-forget POST to ``/v1/cli/telemetry`` (daemon thread)."""
     if _disabled:
         return
     props = {
@@ -130,19 +144,37 @@ def track(event: str, properties: dict | None = None) -> None:
     headers = {}
     if _api_key:
         headers["Authorization"] = f"Bearer {_api_key}"
-    try:
-        httpx.post(
-            f"{_gateway}/v1/cli/telemetry",
-            json={
-                "event": event,
-                "distinct_id": distinct_id(),
-                "properties": props,
-            },
-            headers=headers,
-            timeout=2.0,
-        )
-    except Exception:
-        pass
+    url = f"{_gateway}/v1/cli/telemetry"
+    payload = {
+        "event": event,
+        "distinct_id": distinct_id(),
+        "properties": props,
+    }
+
+    def _run() -> None:
+        try:
+            _deliver(url, payload, headers)
+        finally:
+            with _pending_lock:
+                _pending.discard(threading.current_thread())
+
+    thread = threading.Thread(target=_run, name="caspian-telemetry", daemon=True)
+    with _pending_lock:
+        _pending.add(thread)
+    thread.start()
+
+
+def _flush_pending(deadline: float) -> None:
+    """Wait for in-flight deliveries up to ``deadline`` (monotonic)."""
+    while True:
+        with _pending_lock:
+            threads = [t for t in _pending if t.is_alive()]
+        if not threads:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        threads[0].join(timeout=min(0.05, remaining))
 
 
 def _emit_session_ended() -> None:
@@ -153,6 +185,7 @@ def _emit_session_ended() -> None:
     track("cli.session_ended", {
         "duration_ms": int((time.monotonic() - _started_at) * 1000),
     })
+    _flush_pending(time.monotonic() + _FLUSH_DEADLINE)
 
 
 def argv_flags(args) -> list[str]:

@@ -6,6 +6,10 @@ _client = None
 
 # Top-level scalar keys from an event's `data` forwarded as properties.
 # Message events nest channel/direction under `data["message"]`.
+# ``email`` is forwarded intentionally: dashboard + CLI join on the Google
+# account address (see ``link_account``). Ops must keep PostHog retention /
+# DPA aligned with that; we do not hash here because a hashed distinct_id
+# would break web ↔ gateway person stitching.
 _SAFE_KEYS = (
     "source", "reason", "scope", "channel", "provider",
     "amount_cents", "cap_cents", "balance_cents", "spent_this_month_cents",
@@ -64,7 +68,11 @@ def alias(previous_id: str, distinct_id: str) -> None:
 
 
 def link_account(project_id: str, email: str, *, source: str) -> None:
-    """Identify the developer and stitch project-scoped events onto their person."""
+    """Identify the developer and stitch project-scoped events onto their person.
+
+    Uses the plain email as distinct_id so CLI/gateway events join the same
+    PostHog person as dashboard ``$identify`` (also email-keyed).
+    """
     if not email:
         return
     identify(email, {"email": email, "project_id": project_id})

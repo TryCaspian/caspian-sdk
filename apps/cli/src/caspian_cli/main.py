@@ -700,6 +700,8 @@ def main() -> None:
             "duration_ms": int((time.monotonic() - started) * 1000),
             "argv_flags": flags,
         })
+    if exit_code:
+        raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":
