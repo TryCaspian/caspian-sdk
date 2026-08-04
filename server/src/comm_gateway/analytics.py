@@ -6,9 +6,14 @@ _client = None
 
 # Top-level scalar keys from an event's `data` forwarded as properties.
 # Message events nest channel/direction under `data["message"]`.
+# ``email`` is forwarded intentionally: dashboard + CLI join on the Google
+# account address (see ``link_account``). Ops must keep PostHog retention /
+# DPA aligned with that; we do not hash here because a hashed distinct_id
+# would break web ↔ gateway person stitching.
 _SAFE_KEYS = (
     "source", "reason", "scope", "channel", "provider",
     "amount_cents", "cap_cents", "balance_cents", "spent_this_month_cents",
+    "email", "from_project_id", "connections", "domains",
 )
 
 
@@ -40,6 +45,43 @@ def capture(distinct_id: str | None, event: str, properties: dict | None = None)
         log.warning("posthog capture failed for %s", event, exc_info=True)
 
 
+def identify(distinct_id: str, properties: dict | None = None) -> None:
+    """Attach person properties (e.g. email) so web + gateway events can join."""
+    if _client is None or not distinct_id:
+        return
+    try:
+        props = {"$set": properties or {}}
+        _client.capture(distinct_id=distinct_id, event="$identify", properties=props)
+    except Exception:
+        log.warning("posthog identify failed for %s", distinct_id, exc_info=True)
+
+
+def alias(previous_id: str, distinct_id: str) -> None:
+    """Merge a prior distinct_id (usually project_id) into the person distinct_id."""
+    if _client is None or not previous_id or not distinct_id or previous_id == distinct_id:
+        return
+    try:
+        # posthog-python: alias(previous_id=..., distinct_id=...)
+        _client.alias(previous_id=previous_id, distinct_id=distinct_id)
+    except Exception:
+        log.warning("posthog alias failed %s -> %s", previous_id, distinct_id, exc_info=True)
+
+
+def link_account(project_id: str, email: str, *, source: str) -> None:
+    """Identify the developer and stitch project-scoped events onto their person.
+
+    Uses the plain email as distinct_id so CLI/gateway events join the same
+    PostHog person as dashboard ``$identify`` (also email-keyed).
+    """
+    if not email:
+        return
+    identify(email, {"email": email, "project_id": project_id})
+    alias(project_id, email)
+    capture(email, "gateway.account_linked", {
+        "email": email, "project_id": project_id, "source": source,
+    })
+
+
 def safe_props(event_type: str, data: dict) -> dict:
     """Extract the forwarded properties from an event payload."""
     props: dict = {"event_type": event_type}
@@ -52,5 +94,12 @@ def safe_props(event_type: str, data: dict) -> dict:
         for k in ("channel", "direction"):
             v = msg.get(k)
             if isinstance(v, (str, int)):
+                props[k] = v
+    # connection.* events nest channel under data["connection"].
+    conn = data.get("connection")
+    if isinstance(conn, dict):
+        for k in ("channel", "provider", "status"):
+            v = conn.get(k)
+            if isinstance(v, str) and k not in props:
                 props[k] = v
     return props

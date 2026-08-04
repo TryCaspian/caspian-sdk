@@ -200,7 +200,10 @@ def _on_permanent_failure(session: Session, job: OutboxJob) -> None:
                 session,
                 connection.project_id,
                 "connection.failed",
-                {"connection": connection_out(connection)},
+                {
+                    "connection": connection_out(connection),
+                    "channel": connection.channel,
+                },
             )
 
 
@@ -272,7 +275,10 @@ def _provision_connection(session: Session, providers: dict, payload: dict) -> N
                 session,
                 connection.project_id,
                 "connection.failed",
-                {"connection": connection_out(connection)},
+                {
+                    "connection": connection_out(connection),
+                    "channel": connection.channel,
+                },
             )
             return
     connection.status = "active"
@@ -281,7 +287,10 @@ def _provision_connection(session: Session, providers: dict, payload: dict) -> N
         session,
         connection.project_id,
         "connection.active",
-        {"connection": connection_out(connection)},
+        {
+            "connection": connection_out(connection),
+            "channel": connection.channel,
+        },
     )
 
 
