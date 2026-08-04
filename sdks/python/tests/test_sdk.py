@@ -14,7 +14,6 @@ from caspian_sdk import (
     WebhookResult,
     WebhookVerificationError,
 )
-
 from caspian_sdk.client import _MessageScheduler
 
 API_KEY = "comm_test_key"

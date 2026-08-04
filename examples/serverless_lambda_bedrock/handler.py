@@ -25,7 +25,9 @@ from caspian_sdk import CommClient
 
 SECRET = os.environ["CASPIAN_WEBHOOK_SECRET"]
 _MODEL = os.environ.get("BEDROCK_MODEL", "us.amazon.nova-lite-v1:0")
-_bedrock = boto3.client("bedrock-runtime", region_name=os.environ.get("BEDROCK_REGION", "us-east-1"))
+_bedrock = boto3.client(
+    "bedrock-runtime", region_name=os.environ.get("BEDROCK_REGION", "us-east-1")
+)
 _out = {}
 
 client = CommClient()  # add api_key=... if your agent replies via the gateway

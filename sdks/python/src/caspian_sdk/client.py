@@ -15,11 +15,11 @@ Usage:
     client.listen()
 """
 
+import asyncio
 import hashlib
 import hmac
-import json as _json
-import asyncio
 import inspect
+import json as _json
 import logging
 import os
 import sys
