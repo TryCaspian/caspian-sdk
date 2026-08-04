@@ -1,5 +1,6 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
+import asyncio
 import json
 import threading
 
@@ -10,7 +11,10 @@ from caspian_sdk import (
     CommClient,
     CommError,
     InsufficientCreditError,
+    WebhookResult,
+    WebhookVerificationError,
 )
+
 from caspian_sdk.client import _MessageScheduler
 
 API_KEY = "comm_test_key"
@@ -979,3 +983,282 @@ def test_non_json_error_body_hits_value_error_fallback():
     assert excinfo.value.detail == "Internal Server Error"
     assert "Internal Server Error" in str(excinfo.value)
 
+
+def test_handle_webhook_dispatches_message():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    payload = json.dumps(_message_event(1, "conv_1", "hello from webhook")).encode("utf-8")
+    signature = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    # Missing signature raises error
+    with pytest.raises(WebhookVerificationError, match="missing"):
+        client.handle_webhook(payload, {}, secret)
+
+    # Bad signature raises error
+    with pytest.raises(WebhookVerificationError, match="mismatch"):
+        client.handle_webhook(payload, {"x-caspian-signature": "sha256=invalid"}, secret)
+
+    # Valid signature dispatches event
+    res = client.handle_webhook(payload, {"x-caspian-signature": signature}, secret)
+    assert res == WebhookResult(status="ok", event_id="1", event_type="message.received")
+    assert len(seen) == 1
+    assert seen[0].text == "hello from webhook"
+    client.close()
+
+
+def test_handle_webhook_dispatches_interaction_and_reaction():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen_interactions = []
+    seen_reactions = []
+
+    client.on_interaction(seen_interactions.append)
+    client.on_reaction(seen_reactions.append)
+
+    secret = "whsec_test123"
+    event = {
+        "id": "evt_interaction_1",
+        "type": "interaction.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "value": "btn_click",
+        },
+    }
+    payload = json.dumps(event).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res.status == "ok"
+    assert res.event_id == "evt_interaction_1"
+    assert len(seen_interactions) == 1
+    assert seen_interactions[0].value == "btn_click"
+    client.close()
+
+
+def test_handle_webhook_idempotent_same_event_id():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    evt = _message_event(1, "conv_1", "duplicate test")
+    evt["id"] = "same_event_id"
+    payload = json.dumps([evt, evt]).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"X-Caspian-Signature": sig}, secret)
+    assert res.status == "ok"
+    assert len(seen) == 1
+    client.close()
+
+
+def test_handle_webhook_cross_invocation_dedup():
+    """Duplicate event across two separate handle_webhook() calls is skipped."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_dedup_test"
+    evt = _message_event(1, "conv_1", "dedup test")
+    evt["id"] = "evt_cross_dedup_1"
+
+    # First invocation — event should be dispatched.
+    payload1 = json.dumps(evt).encode("utf-8")
+    sig1 = "sha256=" + hmac.new(secret.encode(), payload1, hashlib.sha256).hexdigest()
+    res1 = client.handle_webhook(payload1, {"x-caspian-signature": sig1}, secret)
+    assert res1.status == "ok"
+    assert len(seen) == 1
+
+    # Second invocation with same event — should be suppressed by dedup cache.
+    payload2 = json.dumps(evt).encode("utf-8")
+    sig2 = "sha256=" + hmac.new(secret.encode(), payload2, hashlib.sha256).hexdigest()
+    res2 = client.handle_webhook(payload2, {"x-caspian-signature": sig2}, secret)
+    assert res2.status == "ignored"
+    assert len(seen) == 1  # handler NOT called again
+    client.close()
+
+
+def test_handle_webhook_dedup_allows_different_events():
+    """Different event IDs are dispatched normally (no false suppression)."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_diff_events"
+
+    for i in range(3):
+        evt = _message_event(i + 1, "conv_1", f"msg {i}")
+        evt["id"] = f"evt_unique_{i}"
+        payload = json.dumps(evt).encode("utf-8")
+        sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+        assert res.status == "ok"
+
+    assert len(seen) == 3
+    client.close()
+
+
+# --- async handlers ----------------------------------------------------------
+
+
+def _draining_events_transport(events, on_request=None):
+    """Serve ``events`` once from /v1/events, then an empty batch; 200 elsewhere."""
+    last_seq = events[-1]["seq"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= last_seq else events)
+        if on_request is not None:
+            on_request(request)
+        return httpx.Response(200, json={"delivered": True})
+
+    return handler
+
+
+def test_async_handler_is_awaited_and_can_reply():
+    replies = []
+
+    def record(request: httpx.Request) -> None:
+        if request.url.path.endswith("/reply"):
+            replies.append(json.loads(request.content))
+
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "hello")], record))
+    seen: list[str] = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        await asyncio.sleep(0.01)
+        seen.append(message.text)
+        message.reply(f"echo {message.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    # The coroutine ran to completion before dispatch_pending returned.
+    assert seen == ["hello"]
+    assert [r["text"] for r in replies] == ["echo hello"]
+
+
+def test_sync_and_async_handlers_run_in_registration_order():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "order")]))
+    calls: list[str] = []
+
+    @client.on_message
+    def first(message) -> None:
+        calls.append("sync-first")
+
+    @client.on_message
+    async def second(message) -> None:
+        calls.append("async-second")
+
+    @client.on_message
+    def third(message) -> None:
+        calls.append("sync-third")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert calls == ["sync-first", "async-second", "sync-third"]
+
+
+def test_async_handler_error_is_contained_and_later_handlers_still_run():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "boom")]))
+    seen: list[str] = []
+
+    @client.on_message
+    async def bad(message) -> None:
+        raise RuntimeError("async handler failure")
+
+    @client.on_message
+    async def good(message) -> None:
+        seen.append(message.text)
+
+    try:
+        client.dispatch_pending(0)  # must not raise
+    finally:
+        client.close()
+
+    assert seen == ["boom"]
+
+
+def test_async_handlers_share_one_background_event_loop():
+    events = [_message_event(1, "conv_1", "first"), _message_event(2, "conv_1", "second")]
+    client = _client(_draining_events_transport(events))
+    loops = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        loops.append(asyncio.get_running_loop())
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+
+
+def test_on_interaction_accepts_async_handler():
+    events = [
+        {
+            "seq": 1,
+            "type": "interaction.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "value": "reorder_123",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+    client = _client(_draining_events_transport(events))
+    values: list[str] = []
+
+    @client.on_interaction
+    async def handle(interaction) -> None:
+        await asyncio.sleep(0)
+        values.append(interaction.value)
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert values == ["reorder_123"]

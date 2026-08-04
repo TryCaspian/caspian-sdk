@@ -99,6 +99,8 @@ client.listen()  # one loop, every channel
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
+> **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).
+
 **TypeScript** — same contract, zero runtime dependencies:
 
 ```ts
@@ -245,6 +247,17 @@ Restart-safe: `connect_email()` returns the same inbox, never a duplicate.
 
 **🔌 Pluggable registry**<br/>
 Any provider package registers under the `caspian.providers` entry-point group. No forks.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**☁️ Serverless AI agents**<br/>
+No always-on server required: `handle_webhook()` lets your agent run on AWS Lambda, Vercel, or Cloudflare Workers — the gateway pushes events, you verify + dispatch, scale to zero. [Lambda + Bedrock example](./examples/serverless_lambda_bedrock).
+
+</td>
+<td valign="top">
 
 </td>
 </tr>

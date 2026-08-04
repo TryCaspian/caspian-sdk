@@ -180,3 +180,19 @@ export interface ListenOptions {
   /** Quiet window for the debounce strategy in milliseconds (default 500). */
   debounceMs?: number;
 }
+
+export interface WebhookResult {
+  status: "ok" | "ignored" | "error";
+  eventId?: string | null;
+  eventType?: string | null;
+}
+
+export interface HandleWebhookOptions {
+  /** The raw request body as a string, Buffer, or Uint8Array. */
+  body: string | Uint8Array;
+  /** The HTTP headers from the incoming request. */
+  headers: Record<string, string | string[] | undefined>;
+  /** The shared secret configured via setWebhook(url, secret). */
+  secret: string;
+}
+

@@ -13,7 +13,9 @@ import time
 
 from comm_gateway import jobs as jobs_mod
 from comm_gateway.db import make_engine, make_session_factory
-from comm_gateway.models import Base, OutboxJob
+from comm_gateway.models import Base, OutboxJob, ProviderEvent
+from comm_gateway.providers.base import InboundMessage
+from sqlalchemy import event, select
 
 
 def _file_backed_session_factory():
@@ -90,6 +92,77 @@ def test_losing_worker_moves_on_to_the_next_job():
             assert seen == ["a", "b"]
         finally:
             del jobs_mod._HANDLERS["test_ordered_job"]
+    finally:
+        engine.dispose()
+        os.remove(path)
+
+
+def test_concurrent_duplicate_webhook_ingest_is_idempotent():
+    """Two near-simultaneous deliveries of the same provider event (the exact
+    shape of a Twilio/Slack/Meta/Stripe retry racing the original request)
+    must not 500 - the uq_provider_event constraint should be treated as an
+    idempotent no-op, with exactly one ProviderEvent landing.
+
+    A barrier on the dedupe SELECT forces both threads past the "not seen
+    yet" check before either commits its insert - otherwise the two calls
+    would very likely just run back-to-back and never actually race.
+    """
+    session_factory, engine, path = _file_backed_session_factory()
+    try:
+        item = InboundMessage(
+            external_event_id="evt_dup_1",
+            provider_inbox_id="inbox_1",
+            provider_message_id="msg_1",
+            provider_thread_id="thread_1",
+            text="hi",
+        )
+
+        barrier = threading.Barrier(2, timeout=5)
+        released = 0
+        released_lock = threading.Lock()
+
+        def _sync_dedupe_select(conn, cursor, statement, parameters, context, executemany):
+            nonlocal released
+            is_select = statement.strip().upper().startswith("SELECT")
+            if "provider_events" not in statement or not is_select:
+                return
+            with released_lock:
+                if released >= 2:
+                    return
+                released += 1
+            barrier.wait()
+
+        event.listen(engine, "before_cursor_execute", _sync_dedupe_select)
+        try:
+            errors = []
+            counts = []
+            counts_lock = threading.Lock()
+
+            def worker():
+                try:
+                    n = jobs_mod.ingest_inbound(session_factory, "test-provider", [item])
+                    with counts_lock:
+                        counts.append(n)
+                except Exception as exc:  # noqa: BLE001 - asserting none raised, below
+                    with counts_lock:
+                        errors.append(exc)
+
+            t1 = threading.Thread(target=worker)
+            t2 = threading.Thread(target=worker)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+        finally:
+            event.remove(engine, "before_cursor_execute", _sync_dedupe_select)
+
+        assert errors == [], f"ingest_inbound raised: {errors!r}"
+        assert sorted(counts) == [0, 1]
+        with session_factory() as s:
+            rows = s.execute(
+                select(ProviderEvent).where(ProviderEvent.external_event_id == "evt_dup_1")
+            ).scalars().all()
+            assert len(rows) == 1
     finally:
         engine.dispose()
         os.remove(path)
