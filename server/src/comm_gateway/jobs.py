@@ -11,7 +11,8 @@ import json
 import logging
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .crypto import read_credentials, write_credentials
@@ -74,8 +75,17 @@ def ingest_inbound(session_factory, provider_name: str, inbound: list) -> int:
             )
             session.add(provider_event)
             enqueue(session, "process_provider_event", {"provider_event_id": provider_event.id})
+            try:
+                session.commit()
+            except IntegrityError:
+                # Another concurrent request (a provider's webhook retry, which
+                # Twilio/Slack/Meta/Stripe all send on timeout) already ingested
+                # this exact event between our SELECT above and this commit -
+                # uq_provider_event caught it. Treat the retry as an idempotent
+                # no-op instead of raising a 500 back to the provider.
+                session.rollback()
+                continue
             count += 1
-        session.commit()
     return count
 
 
@@ -140,14 +150,28 @@ def run_pending_jobs(session_factory, providers: dict, max_jobs: int = 100) -> i
     handled = 0
     while handled < max_jobs:
         with session_factory() as session:
-            job = session.execute(
-                select(OutboxJob)
+            candidate_seq = session.execute(
+                select(OutboxJob.seq)
                 .where(OutboxJob.status == "pending")
                 .order_by(OutboxJob.seq)
                 .limit(1)
             ).scalar_one_or_none()
-            if job is None:
+            if candidate_seq is None:
                 break
+            # Atomically claim it: the WHERE clause re-checks status="pending" at
+            # UPDATE time, so if another worker claimed this same row between our
+            # SELECT and here, exactly one of the two UPDATEs matches a row (this
+            # is a plain conditional UPDATE, so it works identically on SQLite and
+            # Postgres - no FOR UPDATE SKIP LOCKED needed).
+            claimed = session.execute(
+                update(OutboxJob)
+                .where(OutboxJob.seq == candidate_seq, OutboxJob.status == "pending")
+                .values(status="claimed")
+            ).rowcount
+            session.commit()
+            if not claimed:
+                continue  # lost the race for this job; look for the next one
+            job = session.get(OutboxJob, candidate_seq)
             try:
                 handler = _HANDLERS[job.type]
                 handler(session, providers, job.payload)
@@ -155,7 +179,7 @@ def run_pending_jobs(session_factory, providers: dict, max_jobs: int = 100) -> i
                 job.error = None
             except Exception as exc:
                 session.rollback()
-                job = session.get(OutboxJob, job.seq)
+                job = session.get(OutboxJob, candidate_seq)
                 job.attempts += 1
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.status = "pending" if job.attempts < MAX_ATTEMPTS else "failed"
@@ -165,7 +189,6 @@ def run_pending_jobs(session_factory, providers: dict, max_jobs: int = 100) -> i
             session.commit()
             handled += 1
     return handled
-
 
 def _on_permanent_failure(session: Session, job: OutboxJob) -> None:
     if job.type == "provision_connection":

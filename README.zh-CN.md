@@ -24,6 +24,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
   <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
@@ -225,6 +226,7 @@ Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到�
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram（机器人） | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ 一键安装 |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ 一键安装 |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram 私信 | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |

@@ -8,7 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 import httpx
 from comm_gateway.config import Settings
@@ -76,6 +76,58 @@ def test_twilio_byo_webhook_verifies_with_connection_token():
     from comm_gateway.providers.base import WebhookVerificationError
     with pytest.raises(WebhookVerificationError):
         p.parse_webhook(payload, {"X-Twilio-Signature": "bad"}, credentials=creds)
+
+def test_twilio_byo_send_with_media_adds_repeated_media_url():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = parse_qs(request.content.decode())
+        return httpx.Response(201, json={"sid": "SM2"})
+
+    p = _twilio(handler)
+    p.send(
+        "+15550001111",
+        OutboundMessage(
+            text="pic", to=("+15559998888",),
+            media=(
+                {"url": "https://x/a.png", "mime_type": "image/png"},
+                {"url": "https://x/b.png", "mime_type": "image/png"},
+                {"data": "aGk=", "mime_type": "image/png"},  # no url -> dropped
+            ),
+        ),
+        credentials=TW,
+    )
+    assert seen["body"]["MediaUrl"] == ["https://x/a.png", "https://x/b.png"]
+    assert seen["body"]["Body"] == ["pic"]
+
+
+def test_twilio_byo_inbound_mms_populates_media():
+    p = _twilio(lambda r: httpx.Response(404))
+    url = "https://api.example.com/internal/providers/twilio/webhooks/+15550001111"
+    form = {
+        "MessageSid": "SM9", "From": "+15559998888", "To": "+15550001111",
+        "Body": "check this out", "NumMedia": "1",
+        "MediaUrl0": "https://api.twilio.com/media/ME1",
+        "MediaContentType0": "image/jpeg",
+    }
+    payload = urlencode(form).encode()
+    creds = {**TW, "_webhook_url": url}
+    good = _tw_sig("devtok", url, form)
+    msgs = p.parse_webhook(payload, {"X-Twilio-Signature": good}, credentials=creds)
+    assert msgs[0].media == [
+        {"url": "https://api.twilio.com/media/ME1", "mime_type": "image/jpeg"}
+    ]
+
+
+def test_twilio_byo_inbound_sms_without_media_has_empty_media():
+    p = _twilio(lambda r: httpx.Response(404))
+    url = "https://api.example.com/internal/providers/twilio/webhooks/+15550001111"
+    form = {"MessageSid": "SM8", "From": "+15559998888", "To": "+15550001111", "Body": "hey"}
+    payload = urlencode(form).encode()
+    creds = {**TW, "_webhook_url": url}
+    good = _tw_sig("devtok", url, form)
+    msgs = p.parse_webhook(payload, {"X-Twilio-Signature": good}, credentials=creds)
+    assert msgs[0].media == []
 
 
 def test_telnyx_byo_send_uses_connection_key():
