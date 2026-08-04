@@ -36,6 +36,22 @@ from .base import (
 )
 
 
+def _mms_media(form: dict) -> list[dict]:
+    """MMS attachments ride as NumMedia + MediaUrl{i}/MediaContentType{i} pairs
+    on the same webhook as the text body. Twilio hosts the media itself, so we
+    just pass the URL through - same contract as Telegram/Slack outbound media."""
+    try:
+        count = int(form.get("NumMedia", "0") or "0")
+    except ValueError:
+        count = 0
+    media = []
+    for i in range(count):
+        url = form.get(f"MediaUrl{i}")
+        if not url:
+            continue
+        media.append({"url": url, "mime_type": form.get(f"MediaContentType{i}", "")})
+    return media
+
 def parse_form_webhook(payload: bytes, agent_number: str) -> list[InboundMessage]:
     form = {k: v[0] for k, v in parse_qs(payload.decode()).items()}
     if not form.get("MessageSid") or form.get("Body") is None:
@@ -51,6 +67,7 @@ def parse_form_webhook(payload: bytes, agent_number: str) -> list[InboundMessage
             recipients=[{"address": form.get("To", agent_number)}],
             text=form["Body"],
             chat_type="sms",
+            media=_mms_media(form),
         )
     ]
 
@@ -65,6 +82,7 @@ class TwilioPhoneProvider:
             Capability.SEND,
             Capability.INITIATE,
             Capability.OTP,  # best-effort, same as any CPaaS line
+            Capability.MEDIA,  # MMS: inbound + outbound attachments
         }
     )
     # BYO: the developer brings their own Twilio account + number.
@@ -105,11 +123,22 @@ class TwilioPhoneProvider:
             c.get("from_number") or self._fixed_from,
         )
 
-    def _send_sms(self, credentials, from_number: str, to_number: str, text: str) -> SendResult:
+    def _send_sms(
+        self, credentials, from_number: str, to_number: str, text: str,
+        media: tuple = (),
+    ) -> SendResult:
         sid, token, _ = self._creds(credentials)
+        # Twilio wants a repeated MediaUrl field, one per attachment; httpx
+        # encodes a list value as repeated keys. Only `url` attachments are
+        # supported: Twilio fetches the media itself, so it must already be a
+        # public URL, not inline base64 `data`.
+        form: dict[str, str | list[str]] = {"From": from_number, "To": to_number, "Body": text}
+        media_urls = [item["url"] for item in media if item.get("url")]
+        if media_urls:
+            form["MediaUrl"] = media_urls
         response = self._client.post(
             f"/2010-04-01/Accounts/{sid}/Messages.json",
-            data={"From": from_number, "To": to_number, "Body": text},
+            data=form,
             auth=(sid, token),
         )
         response.raise_for_status()
@@ -138,7 +167,7 @@ class TwilioPhoneProvider:
     ) -> SendResult:
         _, _, from_number = self._creds(credentials)
         return self._send_sms(credentials, from_number or provider_inbox_id,
-                              message.to[0], message.text or "")
+                              message.to[0], message.text or "", message.media or ())
 
     def reply(
         self, provider_inbox_id: str, provider_message_id: str, message: OutboundMessage,
@@ -147,7 +176,7 @@ class TwilioPhoneProvider:
         _, _, from_number = self._creds(credentials)
         remote_number, _ = split_composite_id(provider_message_id)
         return self._send_sms(credentials, from_number or provider_inbox_id,
-                              remote_number, message.text or "")
+                              remote_number, message.text or "", message.media or ())
 
     def initiate(
         self, provider_inbox_id: str, recipient: str, message: OutboundMessage,
@@ -155,7 +184,7 @@ class TwilioPhoneProvider:
     ) -> SendResult:
         _, _, from_number = self._creds(credentials)
         return self._send_sms(credentials, from_number or provider_inbox_id,
-                              recipient, message.text or "")
+                              recipient, message.text or "", message.media or ())
 
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str],

@@ -27,6 +27,17 @@ def handle(message):
 client.listen()  # one loop, every channel
 ```
 
+`on_message` (and `on_interaction` / `on_reaction`) accepts `async def` handlers too —
+coroutines run on a shared background event loop and are awaited before the next
+message is dispatched, so async LLM clients and agent frameworks work without bridging:
+
+```python
+@client.on_message
+async def handle(message):
+    answer = await agent.run(message.text)
+    message.reply(answer)
+```
+
 `api_key` and `base_url` fall back to `CASPIAN_API_KEY` / `CASPIAN_BASE_URL` from the
 environment or a local `.env`, so `CommClient()` with no arguments works too. The legacy
 `COMM_API_KEY` / `COMM_BASE_URL` names are still honoured as a fallback.
