@@ -19,6 +19,7 @@ import httpx
 import websockets
 
 from ..providers.discord import (
+    parse_gateway_command,
     parse_gateway_interaction,
     parse_gateway_message,
     parse_gateway_reaction,
@@ -122,10 +123,15 @@ class DiscordGatewayClient:
             log.info("discord gateway %s ready", self._app_id)
             return
         if event == "INTERACTION_CREATE":
-            # A button tap. Ack within 3s (DEFERRED_UPDATE_MESSAGE) so Discord
-            # doesn't show "interaction failed", then route it as an interaction.
-            await self._ack_interaction(frame.get("d") or {})
-            inbound = parse_gateway_interaction(frame, self._app_id, self._route_by_guild)
+            # Ack within 3s: type 5 for command (type 2),
+            # type 6 for components (type 3) / modal (type 5)
+            interaction_data = frame.get("d") or {}
+            await self._ack_interaction(interaction_data)
+            interaction_type = interaction_data.get("type")
+            if interaction_type == 2:
+                inbound = parse_gateway_command(frame, self._app_id, self._route_by_guild)
+            else:
+                inbound = parse_gateway_interaction(frame, self._app_id, self._route_by_guild)
         elif event in ("MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE"):
             inbound = parse_gateway_reaction(frame, self._app_id, self._route_by_guild)
         elif event == "MESSAGE_CREATE":
@@ -137,17 +143,21 @@ class DiscordGatewayClient:
             await asyncio.to_thread(self._on_message, inbound)
 
     async def _ack_interaction(self, data: dict) -> None:
-        """Acknowledge a component interaction with a deferred update (type 6).
-        Uses the per-interaction id+token, so no bot auth is needed. Best-effort:
-        a failed ack must not drop the interaction we still parse and dispatch."""
+        """Acknowledge a component interaction with a deferred update (type 6),
+        or a command with type 5. Uses the per-interaction id+token, so no bot
+        auth is needed. Best-effort: a failed ack must not drop the interaction
+        we still parse and dispatch.
+        """
         interaction_id, token = data.get("id"), data.get("token")
         if not (interaction_id and token):
             return
+        interaction_type = data.get("type")
+        ack_type = 5 if interaction_type == 2 else 6
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 await c.post(
                     f"{self._api_base}/interactions/{interaction_id}/{token}/callback",
-                    json={"type": 6},
+                    json={"type": ack_type},
                 )
         except Exception as exc:
             log.warning("discord interaction ack failed: %s", exc)

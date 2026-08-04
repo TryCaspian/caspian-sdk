@@ -110,6 +110,33 @@ class FakeDiscordProvider:
             },
         }
 
+    def command_payload(self, *, name="settings", options=None, author="customer") -> dict:
+        self._seq += 1
+        return {
+            "t": "INTERACTION_CREATE",
+            "d": {
+                "type": 2,  # APPLICATION_COMMAND
+                "id": str(800000 + self._seq),
+                "token": f"tok{self._seq}",
+                "application_id": self.app_id,
+                "guild_id": "guild123",
+                "channel_id": "chan123",
+                "data": {
+                    "id": f"cmd_id{self._seq}",
+                    "name": name,
+                    "type": 1,  # CHAT_INPUT
+                    "options": options or [],
+                },
+                "member": {
+                    "user": {
+                        "id": str(555000 + self._seq),
+                        "username": author,
+                        "global_name": "GlobalName",
+                    }
+                }
+            }
+        }
+
 
 class FakeSlackProvider:
     name = "fake-slack"
@@ -132,17 +159,7 @@ class FakeSlackProvider:
 
     @staticmethod
     def route_key(payload: bytes) -> str | None:
-        # Composite api_app_id:team_id, matching the real provider (the pool lets
-        # several apps live in one workspace, so team alone isn't unique).
-        try:
-            data = json.loads(payload)
-        except ValueError:
-            return None
-        team = data.get("team_id", "")
-        app_id = data.get("api_app_id", "")
-        if not (team or app_id):
-            return None
-        return f"{app_id}:{team}"
+        return SlackProvider.route_key(payload)
 
     def pool_size(self) -> int:
         return 1
@@ -217,6 +234,17 @@ class FakeSlackProvider:
         self.reactions.append({"channel": ch, "ts": ts, "emoji": emoji})
 
     def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
+        from ..base import lower_headers
+        from ..slack import _slash_command_payload, parse_slack_command
+
+        h = lower_headers(headers)
+        content_type = h.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type:
+            cmd_data = _slash_command_payload(payload)
+            if cmd_data is None:
+                raise WebhookVerificationError("invalid Slack command payload")
+            return parse_slack_command(cmd_data)
+
         try:
             data = json.loads(payload)
         except ValueError as exc:
@@ -287,6 +315,22 @@ class FakeSlackProvider:
                 "channel_type": "channel",
             },
         }
+
+    def command_payload(
+        self, *, command="/caspian", text="help", user="U456", channel="C123"
+    ) -> bytes:
+        from urllib.parse import urlencode
+        self._seq += 1
+        return urlencode({
+            "command": command,
+            "text": text,
+            "user_id": user,
+            "user_name": "customer",
+            "channel_id": channel,
+            "trigger_id": f"trig{self._seq}",
+            "api_app_id": self.app_id,
+            "team_id": self.team_id,
+        }).encode()
 
 
 class _FakeMetaMessaging:
