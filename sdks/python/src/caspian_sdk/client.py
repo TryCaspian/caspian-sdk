@@ -15,6 +15,9 @@ Usage:
     client.listen()
 """
 
+import hashlib
+import hmac
+import json as _json
 import asyncio
 import inspect
 import logging
@@ -74,6 +77,19 @@ class CommError(Exception):
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class WebhookVerificationError(Exception):
+    """Raised when an inbound webhook delivery fails signature verification."""
+
+
+@dataclass(frozen=True)
+class WebhookResult:
+    """Outcome of processing a single gateway webhook delivery."""
+
+    status: str  # "ok", "ignored", "error"
+    event_id: str | None = None
+    event_type: str | None = None
 
 
 class AccountRequiredError(CommError):
@@ -372,6 +388,41 @@ class _MessageScheduler:
         self._executor.shutdown(wait=True)
 
 
+class _WebhookDedup:
+    """In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+
+    Webhook providers (and the Caspian gateway) retry delivery when they don't
+    get a timely 200.  On serverless platforms the same container often handles
+    the retry, so an in-memory set of recently-seen event IDs is enough to
+    suppress the duplicate.  Bounded to *max_size* entries and *ttl_seconds* to
+    avoid unbounded memory growth.
+    """
+
+    def __init__(self, max_size: int = 1024, ttl_seconds: float = 300.0) -> None:
+        self._entries: dict[str, float] = {}  # event_id -> monotonic timestamp
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+
+    def _evict(self) -> None:
+        now = time.monotonic()
+        expired = [k for k, t in self._entries.items() if now - t > self._ttl]
+        for k in expired:
+            del self._entries[k]
+        # If still over capacity after expiry, drop oldest entries.
+        while len(self._entries) > self._max_size:
+            oldest = min(self._entries, key=self._entries.get)  # type: ignore[arg-type]
+            del self._entries[oldest]
+
+    def seen(self, event_id: str) -> bool:
+        """Return True if *event_id* was already recorded (and not expired)."""
+        self._evict()
+        return event_id in self._entries
+
+    def record(self, event_id: str) -> None:
+        """Mark *event_id* as processed."""
+        self._entries[event_id] = time.monotonic()
+
+
 class CommClient:
     def __init__(
         self,
@@ -391,6 +442,7 @@ class CommClient:
         self._reaction_handlers: list[Callable[[Reaction], Awaitable[None] | None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        self._webhook_dedup = _WebhookDedup()
         # Shared background event loop for async handlers, created on first use.
         self._handler_loop: asyncio.AbstractEventLoop | None = None
         self._handler_loop_thread: Thread | None = None
@@ -1301,3 +1353,85 @@ class CommClient:
             media=message.get("media") or [],
             _client=self,
         )
+
+    # Serverless webhook handler
+
+    def handle_webhook(
+        self,
+        body: bytes | str,
+        headers: dict[str, str],
+        secret: str,
+    ) -> WebhookResult:
+        """Process a single gateway webhook delivery (serverless mode).
+
+        Use this instead of ``listen()`` when running on Lambda, Cloudflare
+        Workers, Vercel, or any request-scoped serverless runtime. The gateway
+        pushes events to your webhook URL (configured via ``set_webhook``); this
+        method verifies the signature, dispatches to your registered handlers,
+        and returns — no loop, no long-lived connection.
+
+        Args:
+            body: The raw request body (bytes or string).
+            headers: The HTTP headers from the incoming request.
+            secret: The shared secret configured via ``set_webhook(url, secret)``.
+
+        Returns:
+            A ``WebhookResult`` with the dispatch outcome.
+
+        Raises:
+            WebhookVerificationError: If the signature is missing or invalid.
+        """
+        raw = body if isinstance(body, bytes) else body.encode("utf-8")
+
+        # -- Verify signature ---------------------------------------------------
+        lower = {k.lower(): v for k, v in headers.items()}
+        received = lower.get("x-caspian-signature", "")
+        if not received:
+            raise WebhookVerificationError("missing x-caspian-signature header")
+
+        expected = "sha256=" + hmac.new(
+            secret.encode("utf-8"), raw, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(received, expected):
+            raise WebhookVerificationError("webhook signature mismatch")
+
+        # -- Parse event --------------------------------------------------------
+        payload = _json.loads(raw)
+
+        # The gateway may push a single event object or a list of events.
+        events: list[dict] = payload if isinstance(payload, list) else [payload]
+
+        seen_ids: set[str] = set()
+        result = WebhookResult(status="ignored")
+
+        for event in events:
+            event_id = str(event.get("id") or event.get("seq") or "")
+            event_type = event.get("type")
+
+            # Intra-invocation idempotency: skip duplicate event ids within
+            # the same payload.
+            if event_id and event_id in seen_ids:
+                continue
+
+            # Cross-invocation dedup: skip events already processed by a
+            # previous invocation on this warm container.
+            if event_id and self._webhook_dedup.seen(event_id):
+                continue
+
+            if event_id:
+                seen_ids.add(event_id)
+
+            self._dispatch_event(event)
+
+            # Record after successful dispatch so retries of genuinely failed
+            # processing are not suppressed.
+            if event_id:
+                self._webhook_dedup.record(event_id)
+
+            result = WebhookResult(
+                status="ok",
+                event_id=event_id or None,
+                event_type=event_type,
+            )
+
+        return result
