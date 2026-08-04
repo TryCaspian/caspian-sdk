@@ -160,6 +160,11 @@ class Message:
     # File attachments received with the message: each {"url"|"data", "mime_type",
     # "name", "size"}. Empty on channels/messages with no attachments.
     media: list[dict] = field(default_factory=list)
+    # Shape of the conversation this arrived in, as reported by the channel:
+    # "dm" for one-to-one, "channel"/"group" for multi-party. None on channels
+    # that have no such distinction (email) or that don't report one. Use it to
+    # answer direct messages while ignoring unrelated group chatter.
+    chat_type: str | None = None
 
     def reply(
         self,
@@ -1356,6 +1361,7 @@ class CommClient:
             text=message.get("text"),
             html=message.get("html"),
             media=message.get("media") or [],
+            chat_type=message.get("chat_type"),
             _client=self,
         )
 

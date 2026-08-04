@@ -474,6 +474,83 @@ def test_message_carries_media_to_handler():
     assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
 
 
+def test_message_carries_chat_type_to_handler():
+    """A Slack DM and a channel message differ only by chat_type, so the field
+    has to survive onto Message for a handler to tell them apart."""
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
+                    "channel": "slack", "text": "ping", "chat_type": "dm",
+                },
+            },
+        },
+        {
+            "seq": 2,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m2", "conversation_id": "c2", "connection_id": "cn1",
+                    "channel": "slack", "text": "lunch?", "chat_type": "channel",
+                },
+            },
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 2 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert [m.chat_type for m in seen] == ["dm", "channel"]
+
+
+def test_message_chat_type_defaults_to_none_when_absent():
+    """Channels with no DM/group distinction (email) omit chat_type entirely;
+    the field must default rather than raise."""
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
+                    "channel": "email", "text": "hello",
+                },
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert seen[0].chat_type is None
+
+
 def test_dispatch_pending_skips_malformed_events_and_keeps_draining():
     """A record without a usable payload is skipped; the rest of the batch
     still dispatches and the cursor advances (data is optional in the schema)."""
