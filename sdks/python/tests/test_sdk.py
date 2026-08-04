@@ -1261,3 +1261,110 @@ def test_on_interaction_accepts_async_handler():
         client.close()
 
     assert values == ["reorder_123"]
+
+
+def test_on_command_dispatches_and_replies():
+    from caspian_sdk import Command
+
+    events = [
+        {
+            "seq": 1,
+            "type": "command.received",
+            "data": {
+                "connection_id": "conn_1",
+                "customer_id": "cus_1",
+                "agent_id": "agt_1",
+                "conversation_id": "conv_1",
+                "command": "settings",
+                "text": "theme dark",
+                "source_message": {"id": "msg_9"},
+                "sender": {"address": "u"},
+            },
+        }
+    ]
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    seen: list[Command] = []
+
+    @client.on_command
+    def handle_cmd(cmd: Command) -> None:
+        seen.append(cmd)
+        cmd.reply(f"executed {cmd.command} with {cmd.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert len(seen) == 1
+    assert seen[0].command == "settings"
+    assert seen[0].text == "theme dark"
+    assert seen[0].source_message["id"] == "msg_9"
+    # reply routed to the source message
+    assert replies[0][0] == "/v1/messages/msg_9/reply"
+    assert replies[0][1]["text"] == "executed settings with theme dark"
+
+
+def test_command_reply_conversation_fallback():
+    from caspian_sdk import Command
+
+    replies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        replies.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"delivered": True})
+
+    client = _client(handler)
+    cmd = Command(
+        connection_id="conn_1",
+        customer_id="cus_1",
+        agent_id="agt_1",
+        conversation_id="conv_1",
+        command="settings",
+        text="theme dark",
+        source_message=None,
+        sender={"address": "u"},
+        _client=client,
+    )
+    try:
+        cmd.reply("hello conv")
+    finally:
+        client.close()
+
+    assert len(replies) == 1
+    assert replies[0][0] == "/v1/conversations/conv_1/messages"
+    assert replies[0][1]["text"] == "hello conv"
+
+
+def test_command_reply_no_target_raises_error():
+    from caspian_sdk import Command
+
+    client = _client(lambda req: httpx.Response(200))
+    cmd = Command(
+        connection_id="conn_1",
+        customer_id="cus_1",
+        agent_id="agt_1",
+        conversation_id=None,
+        command="settings",
+        text="theme dark",
+        source_message=None,
+        sender={"address": "u"},
+        _client=client,
+    )
+    try:
+        with pytest.raises(CommError) as excinfo:
+            cmd.reply("hello fail")
+    finally:
+        client.close()
+
+    assert excinfo.value.status_code == 400
+    assert str(excinfo.value) == "400: command has no conversation or source message to reply to"
+

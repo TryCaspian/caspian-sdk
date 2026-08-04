@@ -1,6 +1,6 @@
 # caspian-sdk
 
-**Give your AI agent one identity that reaches any human, on whatever app they already use** — email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage — all behind a single `onMessage` handler.
+**Give your AI agent one identity that reaches any human, on whatever app they already use** — email, Slack, Discord, WhatsApp, SMS, X, Telegram, iMessage — all behind a single `onMessage` handler (and `onInteraction` / `onReaction` / `onCommand`).
 
 You write the handler once. Caspian handles the provider quirks, threading, delivery, and dedup for every channel.
 

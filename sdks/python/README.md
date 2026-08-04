@@ -27,7 +27,7 @@ def handle(message):
 client.listen()  # one loop, every channel
 ```
 
-`on_message` (and `on_interaction` / `on_reaction`) accepts `async def` handlers too —
+`on_message` (and `on_interaction` / `on_reaction` / `on_command`) accepts `async def` handlers too —
 coroutines run on a shared background event loop and are awaited before the next
 message is dispatched, so async LLM clients and agent frameworks work without bridging:
 

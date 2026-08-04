@@ -148,9 +148,44 @@ export class Reaction {
   ) {}
 }
 
+/**
+ * A slash command or bot command delivered to an onCommand handler.
+ * `command` is the command name; `text` is the arguments/rest of message.
+ */
+export class Command {
+  constructor(
+    readonly connectionId: string,
+    readonly customerId: string,
+    readonly agentId: string,
+    readonly conversationId: string | null,
+    readonly command: string,
+    readonly text: string | null,
+    readonly sourceMessage: Record<string, any> | null,
+    readonly sender: Record<string, unknown> | null,
+    private readonly client: CommClient,
+  ) {}
+
+  /** Reply to the command in the same conversation / thread. */
+  reply(
+    text?: string | null,
+    html?: string | null,
+    blocks?: Block[] | null,
+    media?: Media[] | null,
+  ): Promise<Record<string, unknown>> {
+    if (this.sourceMessage) {
+      return this.client.reply(this.sourceMessage.id, text, html, blocks, media);
+    } else if (this.conversationId) {
+      return this.client.sendMessage(this.conversationId, text, html, blocks, media);
+    } else {
+      throw new CommError(400, "command has no conversation or source message to reply to");
+    }
+  }
+}
+
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type CommandHandler = (command: Command) => void | Promise<void>;
 
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
@@ -344,6 +379,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly commandHandlers: CommandHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
   private readonly webhookDedup = new WebhookDedup();
@@ -1006,6 +1042,12 @@ export class CommClient {
     return handler;
   }
 
+  /** Register a handler for slash or bot commands (command.received). */
+  onCommand(handler: CommandHandler): CommandHandler {
+    this.commandHandlers.push(handler);
+    return handler;
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -1066,12 +1108,30 @@ export class CommClient {
     }
   }
 
+  private async dispatchCommand(data: any): Promise<void> {
+    const cmd = new Command(
+      data.connection_id ?? "",
+      data.customer_id ?? "",
+      data.agent_id ?? "",
+      data.conversation_id ?? null,
+      data.command ?? "",
+      data.text ?? null,
+      data.source_message ?? null,
+      data.sender ?? null,
+      this,
+    );
+    for (const handler of this.commandHandlers) {
+      try {
+        await handler(cmd);
+      } catch (err) {
+        logger.error("onCommand handler failed; continuing", err);
+      }
+    }
+  }
+
   private async dispatchEvent(event: EventRecord): Promise<void> {
-    if (
-      event.type !== "message.received" &&
-      event.type !== "interaction.received" &&
-      event.type !== "reaction.received"
-    ) {
+    const validEvents = ["message.received", "interaction.received", "reaction.received", "command.received"];
+    if (!validEvents.includes(event.type)) {
       return;
     }
     // `data` is optional in the event schema; a record without a usable
@@ -1087,6 +1147,10 @@ export class CommClient {
     }
     if (event.type === "reaction.received") {
       await this.dispatchReaction(data);
+      return;
+    }
+    if (event.type === "command.received") {
+      await this.dispatchCommand(data);
       return;
     }
     if (!isRecord(data.message)) {

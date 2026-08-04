@@ -226,6 +226,42 @@ class Reaction:
     _client: "CommClient" = field(repr=False)
 
 
+@dataclass
+class Command:
+    """A slash command or bot command delivered to an on_command handler.
+    `command` is the command name; `text` is the arguments/rest of message."""
+
+    connection_id: str
+    customer_id: str
+    agent_id: str
+    conversation_id: str | None
+    command: str
+    text: str | None
+    source_message: dict | None
+    sender: dict | None
+    _client: "CommClient" = field(repr=False)
+
+    def reply(
+        self,
+        text: str | None = None,
+        html: str | None = None,
+        blocks: list[dict] | None = None,
+        media: list[dict] | None = None,
+    ) -> dict:
+        """Reply to the command in the same conversation / thread."""
+        if self.source_message:
+            return self._client.reply(
+                self.source_message["id"], text=text, html=html, blocks=blocks, media=media
+            )
+        elif self.conversation_id:
+            return self._client.send_message(
+                self.conversation_id, text=text, html=html, blocks=blocks, media=media
+            )
+        else:
+            raise CommError(400, "command has no conversation or source message to reply to")
+
+
+
 class _MessageScheduler:
     """Process message events according to a per-conversation overlap policy."""
 
@@ -441,6 +477,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], Awaitable[None] | None]] = []
         self._interaction_handlers: list[Callable[[Interaction], Awaitable[None] | None]] = []
         self._reaction_handlers: list[Callable[[Reaction], Awaitable[None] | None]] = []
+        self._command_handlers: list[Callable[[Command], Awaitable[None] | None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
         self._webhook_dedup = _WebhookDedup()
@@ -1080,6 +1117,14 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
+    def on_command(
+        self, handler: Callable[[Command], Awaitable[None] | None]
+    ) -> Callable[[Command], Awaitable[None] | None]:
+        """Register a handler for slash or bot commands (command.received). Sync
+        and ``async def`` handlers are both supported."""
+        self._command_handlers.append(handler)
+        return handler
+
     def _call_handler(self, handler: Callable, argument) -> None:
         """Invoke a handler, supporting both sync and ``async def`` callables.
 
@@ -1120,7 +1165,13 @@ class CommClient:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
         event_type = event.get("type")
-        if event_type not in ("message.received", "interaction.received", "reaction.received"):
+        valid_events = (
+            "message.received",
+            "interaction.received",
+            "reaction.received",
+            "command.received",
+        )
+        if event_type not in valid_events:
             return
         # ``data`` is optional in the event schema; a record without a usable
         # payload is logged and skipped so it can never stop the listener.
@@ -1137,6 +1188,9 @@ class CommClient:
             return
         if event_type == "reaction.received":
             self._dispatch_reaction(data)
+            return
+        if event_type == "command.received":
+            self._dispatch_command(data)
             return
         if not isinstance(data.get("message"), dict):
             logger.warning(
@@ -1341,6 +1395,24 @@ class CommClient:
                 self._call_handler(handler, reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+
+    def _dispatch_command(self, data: dict) -> None:
+        cmd = Command(
+            connection_id=data.get("connection_id", ""),
+            customer_id=data.get("customer_id", ""),
+            agent_id=data.get("agent_id", ""),
+            conversation_id=data.get("conversation_id"),
+            command=data.get("command", ""),
+            text=data.get("text"),
+            source_message=data.get("source_message"),
+            sender=data.get("sender"),
+            _client=self,
+        )
+        for handler in self._command_handlers:
+            try:
+                self._call_handler(handler, cmd)
+            except Exception:
+                logger.exception("on_command handler failed; continuing")
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
