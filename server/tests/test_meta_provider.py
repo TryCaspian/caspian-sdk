@@ -201,6 +201,41 @@ def test_parse_webhook_bad_signature_rejected():
                                credentials=_creds())
 
 
+def test_parse_webhook_skips_message_missing_from_or_id():
+    """A malformed message (missing "from" or "id") must be skipped, not raise
+    a KeyError and 500 the whole delivery - the other, well-formed message in
+    the same batch still comes through."""
+    provider = _graph(_default_handler)
+    body = json.dumps(
+        {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {"phone_number_id": "PN1"},
+                                "messages": [
+                                    {"id": "wamid.missing_from", "type": "text",
+                                     "text": {"body": "no sender"}},
+                                    {"from": "+15551234567", "type": "text",
+                                     "text": {"body": "no id"}},
+                                    {"id": "wamid.ok", "from": "+15559990000",
+                                     "type": "text", "text": {"body": "hello"}},
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ).encode()
+    msgs = provider.parse_webhook(
+        body, {"X-Hub-Signature-256": _sig(body)}, credentials=_creds()
+    )
+    assert len(msgs) == 1
+    assert msgs[0].text == "hello"
+
+
 def test_parse_webhook_multitenant_no_fallback_no_credentials():
     # The unscoped route (one Meta app, many WABAs) hands parse_webhook
     # credentials=None. A pure multi-tenant deployment has no COMM_META_WA_*

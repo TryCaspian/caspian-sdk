@@ -32,6 +32,7 @@ from ..schemas import (
     AgentCreate,
     AgentOut,
     BackfillCreate,
+    BlueskyConnectionCreate,
     ChannelConnectionCreate,
     ConnectionBrandingUpdate,
     ConnectionOut,
@@ -56,7 +57,6 @@ from ..schemas import (
     WebhookConfig,
     WebhookOut,
     XConnectionCreate,
-    BlueskyConnectionCreate
 )
 from ..serialize import (
     agent_out,
@@ -1034,7 +1034,8 @@ def set_webhook(
     """Register a URL to receive all events by push (in addition to polling)."""
     assert_public_url(body.url)  # SSRF guard: no internal/loopback/link-local targets
     project.webhook_url = body.url
-    project.webhook_secret = body.secret
+    if body.secret is not None:
+        project.webhook_secret = body.secret
     session.commit()
     return {"url": project.webhook_url, "configured": True}
 

@@ -88,3 +88,38 @@ def test_webhook_rejects_internal_url(client):
         assert r.status_code == 422, f"{bad} should be rejected, got {r.status_code}"
     # A public URL is still accepted.
     assert client.put("/v1/webhook", json={"url": "https://agent.example/hook"}).status_code == 200
+
+
+def test_updating_webhook_url_preserves_existing_secret(monkeypatch):
+    app, client, _provider = _app()
+    delivered = []
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, content=None, headers=None, timeout=None):
+        delivered.append({"url": url, "body": content, "headers": headers})
+        return _Resp()
+
+    import comm_gateway.jobs as jobs
+
+    monkeypatch.setattr(jobs.httpx, "post", _fake_post)
+
+    client.put("/v1/webhook", json={"url": "https://agent.example/hook", "secret": "shh"})
+    # Rotate the URL alone, secret omitted - must not clear the signing secret.
+    r = client.put("/v1/webhook", json={"url": "https://agent2.example/hook"})
+    assert r.status_code == 200
+
+    cust = client.post("/v1/customers", json={"name": "Acme"}).json()
+    agent = client.post("/v1/agents", json={"name": "A"}).json()
+    client.post("/v1/connections/email", json={"customer_id": cust["id"], "agent_id": agent["id"]})
+    _run(app)
+
+    assert delivered, "no webhook delivered"
+    hook = delivered[-1]
+    assert hook["url"] == "https://agent2.example/hook"
+    expected = "sha256=" + hmac.new(b"shh", hook["body"], hashlib.sha256).hexdigest()
+    assert hook["headers"]["x-caspian-signature"] == expected
