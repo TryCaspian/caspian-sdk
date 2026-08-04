@@ -203,13 +203,17 @@ def test_discord_ack_behavior_regression():
         mock_post = mock.AsyncMock()
         mock_client.return_value.__aenter__.return_value.post = mock_post
 
-        # Test command type 2 ack
+        # Test command type 2 ack — should now use type 4 (immediate visible ack,
+        # not type 5 deferred which commits to a follow-up we never send).
         asyncio.run(client._ack_interaction({"id": "1", "token": "a", "type": 2}))
-        mock_post.assert_called_with("http://localhost/interactions/1/a/callback", json={"type": 5})
+        mock_post.assert_called_with(
+            "http://localhost/interactions/1/a/callback",
+            json={"type": 4, "data": {"content": "", "flags": 64}},
+        )
 
         mock_post.reset_mock()
 
-        # Test component type 3 ack
+        # Test component type 3 ack — should remain type 6 (deferred component update).
         asyncio.run(client._ack_interaction({"id": "2", "token": "b", "type": 3}))
         mock_post.assert_called_with("http://localhost/interactions/2/b/callback", json={"type": 6})
 

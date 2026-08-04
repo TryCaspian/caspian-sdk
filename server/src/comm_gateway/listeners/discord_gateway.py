@@ -144,20 +144,36 @@ class DiscordGatewayClient:
 
     async def _ack_interaction(self, data: dict) -> None:
         """Acknowledge a component interaction with a deferred update (type 6),
-        or a command with type 5. Uses the per-interaction id+token, so no bot
-        auth is needed. Best-effort: a failed ack must not drop the interaction
-        we still parse and dispatch.
+        or a slash command (type 2) with an immediate ack (type 4,
+        CHANNEL_MESSAGE_WITH_SOURCE). Uses the per-interaction id+token, so no
+        bot auth is needed. Best-effort: a failed ack must not drop the
+        interaction we still parse and dispatch.
+
+        Note: type 5 (DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE) is intentionally
+        avoided for slash commands because it commits the application to a
+        follow-up on the interaction webhook that we never send, leaving the
+        user with an infinite loading state. Type 4 with an ephemeral empty
+        message is a clean visible ack.
         """
         interaction_id, token = data.get("id"), data.get("token")
         if not (interaction_id and token):
             return
         interaction_type = data.get("type")
-        ack_type = 5 if interaction_type == 2 else 6
+        if interaction_type == 2:
+            # APPLICATION_COMMAND — immediate ack so the interaction resolves.
+            ack_payload: dict = {
+                "type": 4,
+                "data": {"content": "", "flags": 64},  # 64 = ephemeral
+            }
+        else:
+            # MESSAGE_COMPONENT / MODAL_SUBMIT — deferred component update.
+            ack_payload = {"type": 6}
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 await c.post(
                     f"{self._api_base}/interactions/{interaction_id}/{token}/callback",
-                    json={"type": ack_type},
+                    json=ack_payload,
                 )
         except Exception as exc:
             log.warning("discord interaction ack failed: %s", exc)
+

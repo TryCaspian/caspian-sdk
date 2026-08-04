@@ -296,6 +296,8 @@ class SlackProvider:
         the app id disambiguates which developer's connection this event belongs to."""
         try:
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                return None
             team = data.get("team_id", "")
             app_id = data.get("api_app_id", "")
             if not (team or app_id):
@@ -306,7 +308,7 @@ class SlackProvider:
             if cmd_data:
                 team = cmd_data.get("team_id", "")
                 app_id = cmd_data.get("api_app_id", "")
-                if team and app_id:
+                if team or app_id:
                     return f"{app_id}:{team}"
             return None
 
