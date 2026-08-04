@@ -250,6 +250,17 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+**☁️ Serverless AI agents**<br/>
+No always-on server required: `handle_webhook()` lets your agent run on AWS Lambda, Vercel, or Cloudflare Workers — the gateway pushes events, you verify + dispatch, scale to zero. [Lambda + Bedrock example](./examples/serverless_lambda_bedrock).
+
+</td>
+<td valign="top">
+
+</td>
+</tr>
 </table>
 
 ## Channels
