@@ -940,6 +940,32 @@ def test_insufficient_credit_top_up_fallback_when_no_payment_options():
     assert topup_calls == [{"amount_cents": 2000}]
 
 
+def test_insufficient_credit_top_up_respects_explicit_zero():
+    """InsufficientCreditError.top_up(amount_cents=0) must not be silently
+    overridden to the 2000-cent default (a truthy check bug, not an is-None
+    check, previously treated 0 the same as "not passed")."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up(amount_cents=0)
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 0}]
+
+
 def test_non_json_error_body_hits_value_error_fallback():
     """An error response with non-JSON text triggers ValueError on json() and falls back to text."""
 
