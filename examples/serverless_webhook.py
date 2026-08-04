@@ -9,6 +9,7 @@ Configure your webhook URL and secret in Caspian first:
 
 import json
 import os
+
 from caspian_sdk import CommClient, WebhookVerificationError
 
 client = CommClient()
