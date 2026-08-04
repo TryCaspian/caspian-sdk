@@ -824,7 +824,11 @@ export class CommClient {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
   }
 
-  /** Receive events by push instead of (or alongside) polling. */
+  /**
+   * Receive events by push instead of (or alongside) polling.
+   * Omitting `secret` updates the URL alone and preserves any previously
+   * configured signing secret.
+   */
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/webhook", { json: { url, secret: secret ?? null } });
   }

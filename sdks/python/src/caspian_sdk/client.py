@@ -896,7 +896,11 @@ class CommClient:
         return self._request("POST", f"/v1/messages/{message_id}/typing")
 
     def set_webhook(self, url: str, secret: str | None = None) -> dict:
-        """Receive events by push instead of (or alongside) polling."""
+        """Receive events by push instead of (or alongside) polling.
+
+        Omitting ``secret`` updates the URL alone and preserves any
+        previously configured signing secret.
+        """
         return self._request("PUT", "/v1/webhook", json={"url": url, "secret": secret})
 
     def get_webhook(self) -> dict:
