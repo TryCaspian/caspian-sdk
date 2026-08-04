@@ -8,6 +8,7 @@ thread id is the root Message-ID of the References chain.
 
 import base64
 import json
+import logging
 import re
 import secrets
 import uuid
@@ -28,6 +29,8 @@ from .base import (
     SendResult,
     WebhookVerificationError,
 )
+
+log = logging.getLogger("comm.ses")
 
 _CERT_CACHE: dict[str, bytes] = {}
 
@@ -333,7 +336,13 @@ class SESEmailProvider:
             host = urlparse(subscribe_url).hostname or ""
             if not host.endswith(".amazonaws.com"):
                 raise WebhookVerificationError("untrusted SubscribeURL")
-            httpx.get(subscribe_url, timeout=15)
+            try:
+                httpx.get(subscribe_url, timeout=15).raise_for_status()
+            except httpx.HTTPError:
+                # Best-effort confirmation ping - SNS retries the subscription
+                # confirmation on its own, so a transient failure here must not
+                # 500 the whole webhook delivery.
+                log.warning("SES SubscribeURL confirmation ping failed", exc_info=True)
             return []
         if message_type != "Notification":
             return []
