@@ -15,10 +15,14 @@ reposts, and other notification reasons are ignored.
 """
 
 import base64
+import hashlib
 import hmac
 import json
+import threading
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -34,6 +38,7 @@ from .base import (
 )
 
 SESSION_PATH = "/xrpc/com.atproto.server.createSession"
+REFRESH_SESSION_PATH = "/xrpc/com.atproto.server.refreshSession"
 CREATE_RECORD_PATH = "/xrpc/com.atproto.repo.createRecord"
 LIST_NOTIFICATIONS_PATH = "/xrpc/app.bsky.notification.listNotifications"
 
@@ -116,6 +121,14 @@ def _decode_message_id(provider_message_id: str) -> dict[str, str]:
     return value
 
 
+@dataclass(frozen=True)
+class _BlueskySession:
+    access_token: str
+    refresh_token: str | None
+    did: str
+    handle: str | None
+
+
 class BlueskyProvider:
     """Caspian channel provider for Bluesky accounts."""
 
@@ -147,6 +160,15 @@ class BlueskyProvider:
             base_url=self._base_url,
             timeout=30.0,
         )
+
+        self._sessions: dict[str, _BlueskySession] = {}
+        self._session_locks: dict[str, threading.Lock] = {}
+        self._session_locks_lock = threading.Lock()
+
+    def _get_session_lock(self, cache_key: str) -> threading.Lock:
+        """Return the lock protecting a cached session."""
+        with self._session_locks_lock:
+            return self._session_locks.setdefault(cache_key, threading.Lock())
 
     def _create_session(
         self,
@@ -180,33 +202,188 @@ class BlueskyProvider:
 
         return session
 
-    def provision(
+    def _refresh_session(
         self,
-        request: ProvisionRequest,
-    ) -> ProvisionResult:
-        """Validate credentials and provision the connected Bluesky account."""
-        session = self._create_session(request.credentials)
+        refresh_token: str,
+    ) -> _BlueskySession:
+        """Refresh a Bluesky session using a refresh token."""
+        response = self._client.post(
+            REFRESH_SESSION_PATH,
+            headers={
+                "Authorization": f"Bearer {refresh_token}",
+            },
+        )
 
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ValueError(SESSION_AUTH_ERROR) from exc
+
+        session = response.json()
+
+        if not isinstance(session, dict):
+            raise ValueError(INVALID_SESSION_RESPONSE_ERROR)
+
+        return self._parse_session(session)
+
+    def _refresh_cached_session(
+        self,
+        credentials: Mapping[str, str] | None,
+        stale_session: _BlueskySession | None = None,
+    ) -> _BlueskySession:
+        """Refresh and replace the cached session for an account."""
+        cache_key = self._session_cache_key(credentials)
+        lock = self._get_session_lock(cache_key)
+
+        with lock:
+            cached_session = self._sessions.get(cache_key)
+
+            # Another request may already have refreshed the session.
+            if (
+                cached_session is not None
+                and stale_session is not None
+                and cached_session.access_token != stale_session.access_token
+            ):
+                return cached_session
+
+            if cached_session is None or cached_session.refresh_token is None:
+                session = self._parse_session(self._create_session(credentials))
+            else:
+                try:
+                    session = self._refresh_session(cached_session.refresh_token)
+                except ValueError:
+                    session = self._parse_session(self._create_session(credentials))
+
+            self._sessions[cache_key] = session
+            return session
+
+    def _parse_session(
+        self,
+        session: Mapping[str, object],
+    ) -> _BlueskySession:
+        """Validate and normalize a Bluesky session response."""
+        access_token = self._require_string(
+            session,
+            "accessJwt",
+            MISSING_ACCESS_TOKEN_ERROR,
+        )
         did = self._require_string(
             session,
             "did",
             MISSING_DID_ERROR,
         )
-        handle = self._require_string(
-            session,
-            "handle",
-            MISSING_HANDLE_ERROR,
+
+        refresh_token = session.get("refreshJwt")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            refresh_token = None
+
+        handle = session.get("handle")
+        if not isinstance(handle, str) or not handle:
+            handle = None
+
+        return _BlueskySession(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            did=did,
+            handle=handle,
         )
 
+    def _session_cache_key(
+        self,
+        credentials: Mapping[str, str] | None,
+    ) -> str:
+        """Return a stable cache key for a Bluesky account."""
+        creds = credentials or {}
+
+        identifier = creds.get("identifier")
+        app_password = creds.get("app_password")
+
+        if not identifier or not app_password:
+            raise ValueError(MISSING_CREDENTIALS_ERROR)
+
+        password_hash = hashlib.sha256(app_password.encode("utf-8")).hexdigest()
+
+        return f"{identifier}:{password_hash}"
+
+    def _authenticated_request(
+        self,
+        method: str,
+        path: str,
+        session: _BlueskySession,
+        credentials: Mapping[str, str] | None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Make an authenticated request, refreshing the session once if needed."""
+        extra_headers = dict(kwargs.pop("headers", {}))
+
+        response = self._client.request(
+            method,
+            path,
+            headers={
+                **extra_headers,
+                "Authorization": f"Bearer {session.access_token}",
+            },
+            **kwargs,
+        )
+
+        if response.status_code != httpx.codes.UNAUTHORIZED:
+            return response
+
+        refreshed_session = self._refresh_cached_session(
+            credentials,
+            stale_session=session,
+        )
+
+        return self._client.request(
+            method,
+            path,
+            headers={
+                **extra_headers,
+                "Authorization": f"Bearer {refreshed_session.access_token}",
+            },
+            **kwargs,
+        )
+
+    def _authenticate(
+        self,
+        credentials: Mapping[str, str] | None,
+    ) -> _BlueskySession:
+        """Return a cached session or authenticate the account."""
+        cache_key = self._session_cache_key(credentials)
+
+        lock = self._get_session_lock(cache_key)
+
+        with lock:
+            cached_session = self._sessions.get(cache_key)
+
+            if cached_session is not None:
+                return cached_session
+
+            session = self._parse_session(self._create_session(credentials))
+            self._sessions[cache_key] = session
+
+            return session
+
+    def provision(
+        self,
+        request: ProvisionRequest,
+    ) -> ProvisionResult:
+        """Validate credentials and provision the connected Bluesky account."""
+        session = self._authenticate(request.credentials)
+
+        if session.handle is None:
+            raise ValueError(MISSING_HANDLE_ERROR)
+
         return ProvisionResult(
-            address=handle,
-            provider_resource_id=did,
+            address=session.handle,
+            provider_resource_id=session.did,
         )
 
     def _create_post(
         self,
         *,
-        access_token: str,
+        session: _BlueskySession,
+        credentials: Mapping[str, str] | None,
         repo: str,
         text: str,
         reply: dict[str, object] | None = None,
@@ -227,11 +404,11 @@ class BlueskyProvider:
             "record": record,
         }
 
-        response = self._client.post(
+        response = self._authenticated_request(
+            "POST",
             CREATE_RECORD_PATH,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-            },
+            session,
+            credentials,
             json=payload,
         )
         response.raise_for_status()
@@ -255,22 +432,12 @@ class BlueskyProvider:
         if not message.text:
             raise ValueError(MISSING_TEXT_ERROR)
 
-        session = self._create_session(credentials)
-
-        access_token = self._require_string(
-            session,
-            "accessJwt",
-            MISSING_ACCESS_TOKEN_ERROR,
-        )
-        did = self._require_string(
-            session,
-            "did",
-            MISSING_DID_ERROR,
-        )
+        session = self._authenticate(credentials)
 
         result = self._create_post(
-            access_token=access_token,
-            repo=did,
+            session=session,
+            credentials=credentials,
+            repo=session.did,
             text=message.text,
         )
 
@@ -308,18 +475,7 @@ class BlueskyProvider:
         if not message.text:
             raise ValueError(MISSING_TEXT_ERROR)
 
-        session = self._create_session(credentials)
-
-        access_token = self._require_string(
-            session,
-            "accessJwt",
-            MISSING_ACCESS_TOKEN_ERROR,
-        )
-        did = self._require_string(
-            session,
-            "did",
-            MISSING_DID_ERROR,
-        )
+        session = self._authenticate(credentials)
 
         parent = _decode_message_id(provider_message_id)
 
@@ -335,8 +491,9 @@ class BlueskyProvider:
         }
 
         result = self._create_post(
-            access_token=access_token,
-            repo=did,
+            session=session,
+            credentials=credentials,
+            repo=session.did,
             text=message.text,
             reply=reply_reference,
         )
@@ -456,7 +613,8 @@ class BlueskyProvider:
     def _fetch_notifications(
         self,
         *,
-        access_token: str,
+        session: _BlueskySession,
+        credentials: Mapping[str, str] | None,
         boundary: str | None = None,
     ) -> list[dict[str, object]]:
         """Fetch mention and reply notifications until the boundary or page end."""
@@ -473,11 +631,11 @@ class BlueskyProvider:
             if api_cursor:
                 params.append(("cursor", api_cursor))
 
-            response = self._client.get(
+            response = self._authenticated_request(
+                "GET",
                 LIST_NOTIFICATIONS_PATH,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                },
+                session,
+                credentials,
                 params=params,
             )
             response.raise_for_status()
@@ -628,21 +786,11 @@ class BlueskyProvider:
         cursor: str | None = None,
     ) -> tuple[list[InboundMessage], str]:
         """Poll Bluesky for new mentions and replies."""
-        session = self._create_session(credentials)
-
-        access_token = self._require_string(
-            session,
-            "accessJwt",
-            MISSING_ACCESS_TOKEN_ERROR,
-        )
-        did = self._require_string(
-            session,
-            "did",
-            MISSING_DID_ERROR,
-        )
+        session = self._authenticate(credentials)
 
         notifications = self._fetch_notifications(
-            access_token=access_token,
+            session=session,
+            credentials=credentials,
             boundary=cursor,
         )
 
@@ -661,7 +809,7 @@ class BlueskyProvider:
 
         messages = self._normalize_notifications(
             fresh_notifications,
-            provider_inbox_id=did,
+            provider_inbox_id=session.did,
         )
 
         return messages, newest_cursor or cursor
@@ -676,10 +824,14 @@ class BlueskyProvider:
         if not self._webhook_secret:
             raise WebhookVerificationError(MISSING_WEBHOOK_SECRET_ERROR)
 
-        received_token = lower_headers(headers).get(
-            TOKEN_HEADER,
-            "",
-        ).encode("utf-8")
+        received_token = (
+            lower_headers(headers)
+            .get(
+                TOKEN_HEADER,
+                "",
+            )
+            .encode("utf-8")
+        )
 
         expected_token = self._webhook_secret.encode("utf-8")
 
