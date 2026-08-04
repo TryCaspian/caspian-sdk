@@ -1,5 +1,6 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
 import type {
   Agent,
   AutopayOptions,
@@ -12,11 +13,13 @@ import type {
   Customer,
   Domain,
   EventRecord,
+  HandleWebhookOptions,
   ListenOptions,
   LoginOptions,
   Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
+  WebhookResult,
 } from "./types.js";
 
 const logger = {
@@ -289,6 +292,46 @@ class MessageScheduler {
 }
 
 /**
+ * In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+ *
+ * Webhook providers retry delivery when they don't get a timely 200. On
+ * serverless platforms the same container often handles the retry, so an
+ * in-memory set of recently-seen event IDs suppresses the duplicate. Bounded
+ * to `maxSize` entries and `ttlMs` to avoid unbounded memory growth.
+ */
+class WebhookDedup {
+  private readonly entries = new Map<string, number>();
+
+  constructor(
+    private readonly maxSize = 1024,
+    private readonly ttlMs = 300_000,
+  ) {}
+
+  private evict(): void {
+    const cutoff = Date.now() - this.ttlMs;
+    for (const [id, ts] of this.entries) {
+      if (ts < cutoff) this.entries.delete(id);
+    }
+    // Over capacity: drop oldest (Map iterates in insertion order).
+    while (this.entries.size > this.maxSize) {
+      const oldest = this.entries.keys().next().value!;
+      this.entries.delete(oldest);
+    }
+  }
+
+  /** Return true if `id` was already recorded and not expired. */
+  seen(id: string): boolean {
+    this.evict();
+    return this.entries.has(id);
+  }
+
+  /** Mark `id` as processed. */
+  record(id: string): void {
+    this.entries.set(id, Date.now());
+  }
+}
+
+/**
  * One identity for your AI agent across every channel — behind a single
  * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
  * ./.env when not passed explicitly.
@@ -303,6 +346,7 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private readonly webhookDedup = new WebhookDedup();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -1210,4 +1254,71 @@ export class CommClient {
     }
     return 0;
   }
+
+  /**
+   * Process a single gateway webhook delivery (serverless mode).
+   *
+   * Use this instead of `listen()` when running on Lambda, Cloudflare Workers,
+   * Vercel, or any request-scoped serverless runtime. Verifies the signature,
+   * dispatches to registered handlers, and returns — no loop, no long-lived connection.
+   */
+  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult> {
+    const { body, headers, secret } = opts;
+    const lower: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      if (v !== undefined) {
+        lower[k.toLowerCase()] = Array.isArray(v) ? v[0] : (v as string);
+      }
+    }
+    const signature = lower["x-caspian-signature"] ?? "";
+    if (!signature) {
+      throw new WebhookVerificationError("missing x-caspian-signature header");
+    }
+
+    const raw = typeof body === "string" ? Buffer.from(body, "utf-8") : body;
+    const hmacHex = createHmac("sha256", secret).update(raw).digest("hex");
+    const expected = `sha256=${hmacHex}`;
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+      throw new WebhookVerificationError("webhook signature mismatch");
+    }
+
+    const jsonStr = typeof body === "string" ? body : Buffer.from(body).toString("utf-8");
+    const payload = JSON.parse(jsonStr);
+    const events: EventRecord[] = Array.isArray(payload) ? payload : [payload];
+
+    const seenIds = new Set<string>();
+    let result: WebhookResult = { status: "ignored" };
+
+    for (const event of events) {
+      const eventId = String(event.id ?? event.seq ?? "");
+      const eventType = event.type;
+
+      // Intra-invocation idempotency: skip duplicates within the same payload.
+      if (eventId && seenIds.has(eventId)) continue;
+
+      // Cross-invocation dedup: skip events already processed by a previous
+      // invocation on this warm container.
+      if (eventId && this.webhookDedup.seen(eventId)) continue;
+
+      if (eventId) seenIds.add(eventId);
+
+      await this.dispatchEvent(event);
+
+      // Record after successful dispatch so retries of genuinely failed
+      // processing are not suppressed.
+      if (eventId) this.webhookDedup.record(eventId);
+
+      result = {
+        status: "ok",
+        eventId: eventId || null,
+        eventType,
+      };
+    }
+
+    return result;
+  }
 }
+
