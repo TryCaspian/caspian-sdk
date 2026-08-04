@@ -68,7 +68,13 @@ _GUIDES: dict[str, str] = {
 - Short-form, plain text — no markdown rendering. Keep replies concise (a post is capped at 300 characters).
 - Reply directly to the user's message; the SDK threads it. Conversational, friendly tone.
 - Don't add hashtags or @-handles unless the user asks.""",
+
+    "linear": """## Linear
+- Issue comments and updates thread to the Linear issue (identifier like ENG-123).
+- Markdown is supported for code snippets, lists, and quotes.
+- Keep comments constructive, concise, and focused on issue resolution.""",
 }
+
 
 
 # Setup guides: how a DEVELOPER connects a channel (credentials + where to get

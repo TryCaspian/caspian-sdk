@@ -255,6 +255,19 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
         )
+    if name == "fake-linear":
+        from .fakes.fake_linear import FakeLinearProvider
+
+        return FakeLinearProvider()
+    if name == "linear":
+        from .linear import LinearProvider
+
+        return LinearProvider(
+            client_id=settings.linear_client_id,
+            client_secret=settings.linear_client_secret,
+            webhook_secret=settings.linear_webhook_secret,
+            base_url=settings.linear_base_url,
+        )
     # Plugin providers: third-party or private channel packages can register
     # their own builders under the "caspian.providers" entry-point group, so a
     # new channel can be added without forking. Each builder has the signature

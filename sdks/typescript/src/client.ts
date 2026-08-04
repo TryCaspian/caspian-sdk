@@ -533,6 +533,25 @@ export class CommClient {
     });
   }
 
+  /** Connect Linear issue tracking. */
+  connectLinear(
+    opts: ConnectOptions & {
+      organizationId: string;
+      apiKey?: string;
+      webhookSecret?: string;
+      provider?: string;
+    },
+  ): Promise<Connection> {
+    const { organizationId, apiKey, webhookSecret, provider, ...rest } = opts;
+    return this.connect("linear", rest, {
+      organization_id: organizationId,
+      api_key: apiKey ?? null,
+      webhook_secret: webhookSecret ?? null,
+      provider: provider ?? null,
+    });
+  }
+
+
   /**
    * Register a custom subdomain (e.g. agents.example.com). Returns the DNS
    * records to add at the registrar; poll getDomain() until active.

@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_api_base: str = "https://api.github.com"
 
+    linear_client_id: str = ""
+    linear_client_secret: str = ""
+    linear_webhook_secret: str = ""
+    linear_base_url: str = "https://api.linear.app"
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
