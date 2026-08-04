@@ -136,6 +136,16 @@ class Settings(BaseSettings):
     # endpoint and optional webhook verification secret.
     bluesky_base_url: str = "https://bsky.social"
     bluesky_webhook_secret: str = ""
+    # Reddit app credentials. Reactive PMs + first-touch compose; the connected
+    # account brings its own refresh_token (minted once via OAuth) at connect
+    # time. No webhook exists for Reddit PMs, so inbound is polled.
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = "caspian-sdk/0.1 (by /u/caspian-bot)"
+    reddit_refresh_token: str = ""  # deployment fallback account'''s refresh token
+    reddit_base_url: str = "https://oauth.reddit.com"
+    reddit_auth_url: str = "https://www.reddit.com"
+    reddit_poll_interval: float = 15.0  # seconds between inbox polls per connection
     # Stripe (pay-as-you-go credit; live keys live in SSM SecureString, resolved
     # at startup — only the parameter NAMES sit in .env).
     stripe_secret_key: str = ""
