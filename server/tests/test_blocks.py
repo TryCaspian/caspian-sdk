@@ -69,6 +69,34 @@ def test_to_telegram_html_and_keyboard():
     keys = [k for row in markup["inline_keyboard"] for k in row]
     assert any(k.get("url") == "https://x.test/t" for k in keys)
     assert any(k.get("callback_data", "").startswith("caspian:") for k in keys)
+CARD = [{
+    "type": "card", "title": "Wireless Mouse", "subtitle": "$24.99",
+    "image": "https://x.test/mouse.png", "text": "In stock, ships today.",
+    "buttons": [{"label": "Buy", "url": "https://x.test/buy"}],
+}]
+
+
+def test_card_image_survives_every_renderer():
+    """A card's image is part of the card - every channel should keep it, not
+    just the ones that happen to render images as a distinct block type."""
+    assert "https://x.test/mouse.png" in blocks.to_text(CARD)
+    assert 'src="https://x.test/mouse.png"' in blocks.to_html(CARD)
+
+    slack = blocks.to_slack(CARD)
+    assert any(b.get("type") == "image" and b.get("image_url") == "https://x.test/mouse.png"
+               for b in slack)
+
+    embeds, _ = blocks.to_discord(CARD)
+    assert embeds[0]["image"]["url"] == "https://x.test/mouse.png"
+
+    text, _ = blocks.to_telegram(CARD)
+    assert 'href="https://x.test/mouse.png"' in text
+
+
+def test_card_without_image_renders_no_phantom_image():
+    no_image = [{"type": "card", "title": "Note"}]
+    text, _ = blocks.to_telegram(no_image)
+    assert "href=" not in text
 
 
 def test_unknown_and_malformed_blocks_are_skipped_not_raised():

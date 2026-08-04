@@ -344,9 +344,13 @@ def to_telegram(blocks) -> tuple[str, dict | None]:
             if kind == "card":
                 if b.get("title"):
                     lines.append(f"<b>{_html.escape(str(b['title']))}</b>")
-                for k in ("subtitle", "text"):
-                    if b.get(k):
-                        lines.append(_html.escape(str(b[k])))
+                if b.get("subtitle"):
+                    lines.append(_html.escape(str(b["subtitle"])))
+                if b.get("image"):
+                    img_url = str(b["image"])
+                    lines.append(f'<a href="{_html.escape(img_url, quote=True)}">🖼</a>')
+                if b.get("text"):
+                    lines.append(_html.escape(str(b["text"])))
             for btn in _buttons(b):
                 key = {"text": btn["label"]}
                 if "url" in btn:

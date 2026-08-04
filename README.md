@@ -99,6 +99,8 @@ client.listen()  # one loop, every channel
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
+> **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).
+
 **TypeScript** — same contract, zero runtime dependencies:
 
 ```ts

@@ -18,16 +18,18 @@ Usage:
 import hashlib
 import hmac
 import json as _json
+import asyncio
+import inspect
 import logging
 import os
 import sys
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock, Timer
+from threading import Lock, Thread, Timer
 from typing import Literal
 
 import httpx
@@ -35,6 +37,11 @@ import httpx
 logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
+
+
+async def _consume_awaitable(awaitable: Awaitable[None]) -> None:
+    """Adapt any awaitable to a coroutine for run_coroutine_threadsafe."""
+    await awaitable
 
 
 def _dotenv() -> dict[str, str]:
@@ -430,15 +437,28 @@ class CommClient:
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
-        self._handlers: list[Callable[[Message], None]] = []
-        self._interaction_handlers: list[Callable[[Interaction], None]] = []
-        self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._handlers: list[Callable[[Message], Awaitable[None] | None]] = []
+        self._interaction_handlers: list[Callable[[Interaction], Awaitable[None] | None]] = []
+        self._reaction_handlers: list[Callable[[Reaction], Awaitable[None] | None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
         self._webhook_dedup = _WebhookDedup()
+        # Shared background event loop for async handlers, created on first use.
+        self._handler_loop: asyncio.AbstractEventLoop | None = None
+        self._handler_loop_thread: Thread | None = None
+        self._handler_loop_lock = Lock()
 
     def close(self) -> None:
         self._http.close()
+        with self._handler_loop_lock:
+            loop, self._handler_loop = self._handler_loop, None
+            thread, self._handler_loop_thread = self._handler_loop_thread, None
+        if loop is not None:
+            loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5.0)
+            if not loop.is_running():
+                loop.close()
 
     def _request(
         self, method: str, path: str, *, json: dict | None = None, params: dict | None = None
@@ -1027,25 +1047,69 @@ class CommClient:
 
     # Event handling
 
-    def on_message(self, handler: Callable[[Message], None]) -> Callable[[Message], None]:
+    def on_message(
+        self, handler: Callable[[Message], Awaitable[None] | None]
+    ) -> Callable[[Message], Awaitable[None] | None]:
+        """Register a handler for inbound messages. Plain ``def`` and
+        ``async def`` handlers are both supported; async handlers run on a
+        shared background event loop and are awaited to completion before
+        dispatch moves on, exactly like their sync counterparts."""
         self._handlers.append(handler)
         return handler
 
     def on_interaction(
-        self, handler: Callable[["Interaction"], None]
-    ) -> Callable[["Interaction"], None]:
+        self, handler: Callable[["Interaction"], Awaitable[None] | None]
+    ) -> Callable[["Interaction"], Awaitable[None] | None]:
         """Register a handler for button taps (interaction.received). The same
         handler answers taps from every channel that supports interactive
-        buttons (Slack, Discord, Telegram)."""
+        buttons (Slack, Discord, Telegram). Sync and ``async def`` handlers
+        are both supported."""
         self._interaction_handlers.append(handler)
         return handler
 
     def on_reaction(
-        self, handler: Callable[["Reaction"], None]
-    ) -> Callable[["Reaction"], None]:
-        """Register a handler for emoji reactions (reaction.received)."""
+        self, handler: Callable[["Reaction"], Awaitable[None] | None]
+    ) -> Callable[["Reaction"], Awaitable[None] | None]:
+        """Register a handler for emoji reactions (reaction.received). Sync
+        and ``async def`` handlers are both supported."""
         self._reaction_handlers.append(handler)
         return handler
+
+    def _call_handler(self, handler: Callable, argument) -> None:
+        """Invoke a handler, supporting both sync and ``async def`` callables.
+
+        An ``async def`` handler returns a coroutine when called; it is run on
+        a single long-lived background event loop (created on first use) and
+        awaited to completion before dispatch continues. Using one shared loop
+        rather than ``asyncio.run`` per message lets handlers keep async
+        resources (HTTP clients, connection pools) alive across messages, and
+        keeps dispatch working even when the caller's thread already runs its
+        own event loop. Blocking until the coroutine finishes means ordering,
+        error handling, and the overlap strategies treat sync and async
+        handlers identically; exceptions raised inside the coroutine propagate
+        to the caller just like a sync handler's would.
+        """
+        result = handler(argument)
+        if inspect.isawaitable(result):
+            future = asyncio.run_coroutine_threadsafe(
+                _consume_awaitable(result), self._ensure_handler_loop()
+            )
+            future.result()
+
+    def _ensure_handler_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the shared handler loop, starting it on a daemon thread the
+        first time an async handler runs. Thread-safe because the parallel and
+        debounce overlap strategies dispatch from executor threads."""
+        with self._handler_loop_lock:
+            if self._handler_loop is None:
+                loop = asyncio.new_event_loop()
+                thread = Thread(
+                    target=loop.run_forever, name="caspian-async-handlers", daemon=True
+                )
+                thread.start()
+                self._handler_loop = loop
+                self._handler_loop_thread = thread
+            return self._handler_loop
 
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
@@ -1095,7 +1159,7 @@ class CommClient:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
-                handler(message)
+                self._call_handler(handler, message)
             except AccountRequiredError as exc:
                 # Paid channel used before the developer signed in. Surface the
                 # one-time sign-in prompt loudly (e.g. in Claude Code).
@@ -1248,7 +1312,7 @@ class CommClient:
         )
         for handler in self._interaction_handlers:
             try:
-                handler(interaction)
+                self._call_handler(handler, interaction)
             except InsufficientCreditError as exc:
                 self._warn_out_of_credit(exc)
             except AccountRequiredError as exc:
@@ -1269,7 +1333,7 @@ class CommClient:
         )
         for handler in self._reaction_handlers:
             try:
-                handler(reaction)
+                self._call_handler(handler, reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
 
