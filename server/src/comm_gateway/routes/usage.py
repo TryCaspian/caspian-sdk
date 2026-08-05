@@ -20,6 +20,7 @@ import secrets
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import get_session, hash_key
@@ -108,6 +109,14 @@ def get_or_create_account(
     fresh project + key is created. A COMM_DASHBOARD_LINKS seed still maps a demo
     email to an existing project.
     """
+    def _existing_account(email: str) -> tuple[str, str]:
+        # Another concurrent sign-in for this email already committed its
+        # DashboardAccount row between our lookup above and our own commit -
+        # dashboard_accounts.email (primary key) caught it. Return the
+        # winner's project/key instead of raising.
+        winner = session.get(DashboardAccount, email)
+        return winner.project_id, _decrypt(winner.api_key_enc)["api_key"]
+
     account = session.get(DashboardAccount, email)
     if account is not None:
         return account.project_id, _decrypt(account.api_key_enc)["api_key"]
@@ -124,7 +133,11 @@ def get_or_create_account(
                 email=email, project_id=link_project_id,
                 api_key_enc=_encrypt({"api_key": link_api_key}),
             ))
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                return _existing_account(email)
             return link_project_id, link_api_key
 
     seeded: dict = {}
@@ -147,7 +160,11 @@ def get_or_create_account(
         DashboardAccount(email=email, project_id=project_id,
                          api_key_enc=_encrypt({"api_key": api_key}))
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return _existing_account(email)
     return project_id, api_key
 
 

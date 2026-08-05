@@ -5,13 +5,18 @@ dashboard account's free credit migrates into the project's billing account on
 first touch. Also covers the device sign-in carrying over an anonymous project.
 """
 
+import os
+import tempfile
+import threading
+
 import pytest
 from comm_gateway.auth import hash_key
 from comm_gateway.config import Settings
 from comm_gateway.crypto import _encrypt
+from comm_gateway.db import make_engine, make_session_factory
 from comm_gateway.ids import new_id
 from comm_gateway.main import create_app
-from comm_gateway.models import ApiKey, DashboardAccount, Project
+from comm_gateway.models import Agent, ApiKey, Base, Customer, DashboardAccount, Project
 from comm_gateway.providers.fakes.fake import FakeEmailProvider
 from comm_gateway.routes.usage import get_or_create_account, project_has_account
 from fastapi.testclient import TestClient
@@ -146,3 +151,88 @@ def test_signin_carries_over_anonymous_project(app):
         # Same email signs in again -> same project, no duplicate.
         again_pid, _ = get_or_create_account(s, "dev@example.com", settings)
         assert again_pid == pid
+
+
+def _file_backed_session_factory():
+    path = tempfile.mktemp(suffix=".db")
+    engine = make_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    return make_session_factory(engine), engine, path
+
+
+def test_concurrent_first_signin_does_not_raise():
+    """Two concurrent first-time sign-ins for the same email (e.g. a page
+    reload during the OAuth round-trip, or two open dashboard tabs) must not
+    500 - the loser should see the winner's already-committed account instead
+    of hitting the dashboard_accounts.email primary key head-on.
+
+    A barrier on the account-lookup SELECT forces both threads past the "no
+    account yet" check before either commits - otherwise the two calls would
+    very likely just run back-to-back and never actually race.
+    """
+    session_factory, engine, path = _file_backed_session_factory()
+    try:
+        settings = Settings(database_url="sqlite://", bootstrap_api_key="k")
+
+        barrier = threading.Barrier(2, timeout=5)
+        released = 0
+        released_lock = threading.Lock()
+
+        def _sync_account_lookup(conn, cursor, statement, parameters, context, executemany):
+            nonlocal released
+            is_select = statement.strip().upper().startswith("SELECT")
+            if "dashboard_accounts" not in statement or not is_select:
+                return
+            with released_lock:
+                if released >= 2:
+                    return
+                released += 1
+            barrier.wait()
+
+        event.listen(engine, "before_cursor_execute", _sync_account_lookup)
+        try:
+            errors = []
+            results = []
+            results_lock = threading.Lock()
+
+            def worker():
+                try:
+                    with session_factory() as session:
+                        pid, key = get_or_create_account(
+                            session, "concurrent@example.com", settings
+                        )
+                        with results_lock:
+                            results.append((pid, key))
+                except Exception as exc:  # noqa: BLE001 - asserting none raised, below
+                    with results_lock:
+                        errors.append(exc)
+
+            t1 = threading.Thread(target=worker)
+            t2 = threading.Thread(target=worker)
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+        finally:
+            event.remove(engine, "before_cursor_execute", _sync_account_lookup)
+
+        assert errors == [], f"get_or_create_account raised: {errors!r}"
+        assert len(results) == 2
+        assert results[0] == results[1]  # both callers return identical (project_id, api_key)
+
+        with session_factory() as s:
+            accounts = s.execute(
+                select(DashboardAccount).where(DashboardAccount.email == "concurrent@example.com")
+            ).scalars().all()
+            assert len(accounts) == 1
+            projects = s.execute(select(Project)).scalars().all()
+            api_keys = s.execute(select(ApiKey)).scalars().all()
+            customers = s.execute(select(Customer)).scalars().all()
+            agents = s.execute(select(Agent)).scalars().all()
+            assert len(projects) == 1
+            assert len(api_keys) == 1
+            assert len(customers) == 1
+            assert len(agents) == 1
+    finally:
+        engine.dispose()
+        os.remove(path)
