@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <b>正在进行的黑客松：</b> <a href="https://caspian.devpost.com">caspian.devpost.com</a>
+</p>
+
+<p align="center">
   <a href="https://trycaspianai.com">官网</a>
   ·
   <a href="https://pypi.org/project/caspian-sdk/">PyPI</a>
