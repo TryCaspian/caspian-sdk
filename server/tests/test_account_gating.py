@@ -154,7 +154,8 @@ def test_signin_carries_over_anonymous_project(app):
 
 
 def _file_backed_session_factory():
-    path = tempfile.mktemp(suffix=".db")
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
     engine = make_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
     return make_session_factory(engine), engine, path
