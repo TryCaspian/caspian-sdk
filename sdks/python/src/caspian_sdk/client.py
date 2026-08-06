@@ -440,9 +440,22 @@ class StreamResponse:
             self._last_edit = now
             self._last_sent_text = self._buffer
         elif now - self._last_edit >= self._throttle:
-            self._client.edit(self._outbound_id, text=self._buffer)
+            self._edit_with_retry(self._buffer)
             self._last_edit = now
             self._last_sent_text = self._buffer
+
+    def _edit_with_retry(self, text: str) -> None:
+        delays = [0.2, 0.4, 0.6, 0.8, 1.0]
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                self._client.edit(self._outbound_id, text=text)
+                return
+            except CommError as exc:
+                if exc.status_code == 400 and exc.detail == "Can only edit an outbound message that was sent":
+                    if attempt < len(delays):
+                        time.sleep(delay)
+                        continue
+                raise
 
     def _flush(self) -> None:
         if not self._buffer:
@@ -455,7 +468,7 @@ class StreamResponse:
             remaining = self._throttle - (time.monotonic() - self._last_edit)
             if remaining > 0:
                 time.sleep(remaining)
-            self._client.edit(self._outbound_id, text=self._buffer)
+            self._edit_with_retry(self._buffer)
 
 
 class CommClient:

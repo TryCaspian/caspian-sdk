@@ -361,9 +361,31 @@ export class StreamResponse {
       this.lastEdit = now;
       this.lastSentText = this.buffer;
     } else if (now - this.lastEdit >= this.throttleMs && this.buffer !== this.lastSentText) {
-      await this.client.edit(this.outboundId, this.buffer);
+      await this.editWithRetry(this.buffer);
       this.lastEdit = now;
       this.lastSentText = this.buffer;
+    }
+  }
+
+  private async editWithRetry(text: string): Promise<void> {
+    const delays = [200, 400, 600, 800, 1000];
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      try {
+        await this.client.edit(this.outboundId!, text);
+        return;
+      } catch (err) {
+        if (
+          err instanceof CommError &&
+          err.statusCode === 400 &&
+          err.detail === "Can only edit an outbound message that was sent"
+        ) {
+          if (attempt < delays.length - 1) {
+            await sleep(delays[attempt]);
+            continue;
+          }
+        }
+        throw err;
+      }
     }
   }
 
@@ -375,7 +397,7 @@ export class StreamResponse {
     } else if (this.buffer !== this.lastSentText) {
       const remaining = this.throttleMs - (Date.now() - this.lastEdit);
       if (remaining > 0) await sleep(remaining);
-      await this.client.edit(this.outboundId, this.buffer);
+      await this.editWithRetry(this.buffer);
     }
   }
 }

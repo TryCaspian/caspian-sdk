@@ -993,4 +993,59 @@ describe("CommClient", () => {
     const replies = bodies.filter((b) => b.path === "/reply");
     expect(replies).toHaveLength(1);
   });
+
+  it("stream retries edit when message not sent yet", async () => {
+    /** When edit() gets the specific 'not sent yet' 400, retry with backoff. */
+    const bodies: any[] = [];
+    let editAttempts = 0;
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ id: "out_1" }))),
+      "POST /v1/messages/out_1/edit": (req) => {
+        editAttempts++;
+        // First edit attempt fails with the race condition error
+        if (editAttempts === 1) {
+          return json({ detail: "Can only edit an outbound message that was sent" }, 400);
+        }
+        // Second attempt succeeds
+        return req.json().then((b) => (bodies.push({ path: "/edit", ...b }), json({ id: "out_1" })));
+      },
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    await s.append("Hello");
+    await s.append(" world"); // This triggers the edit which will retry
+    await s.close();
+
+    // Should have 1 reply + 2 edit attempts (first fails, second succeeds)
+    expect(editAttempts).toBe(2);
+    const edits = bodies.filter((b) => b.path === "/edit");
+    expect(edits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("stream does not retry different 400 errors", async () => {
+    /** A different 400 error should propagate immediately, not retry. */
+    const bodies: any[] = [];
+    const { client } = makeClient({
+      "POST /v1/messages/m1/reply": (req) =>
+        req.json().then((b) => (bodies.push({ path: "/reply", ...b }), json({ id: "out_1" }))),
+      "POST /v1/messages/out_1/edit": (req) => {
+        // Different 400 error (not the race condition)
+        return json({ detail: "Message already deleted" }, 400);
+      },
+    });
+    const msg = new Message("m1", "c1", "cn1", "cus", "agt", "telegram", null, null, "hi", null, client);
+    const s = msg.stream(0);
+    await s.append("Hello");
+    
+    // This triggers edit which will fail with a different error
+    await expect(s.append(" world")).rejects.toMatchObject({
+      statusCode: 400,
+      detail: "Message already deleted",
+    });
+
+    // Should fail with the specific error, and only attempt once (no retry)
+    const edits = bodies.filter((b) => b.path === "/edit");
+    expect(edits).toHaveLength(0); // No successful edits
+  });
 });
