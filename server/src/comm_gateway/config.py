@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     macmini_imessage_handle: str = ""
     macmini_webhook_secret: str = ""
 
+    # Signal via a self-hosted signal-cli daemon (channel "signal"; the
+    # deployment registers one number, so this is config, not per-connection
+    # credentials). signal_webhook_secret is opt-in: the inbound bridge is
+    # verified only when it is set.
+    signal_cli_url: str = ""
+    signal_number: str = ""
+    signal_webhook_secret: str = ""
+
     discord_base_url: str = "https://discord.com/api/v10"
     # Shared "Caspian" Discord bot for one-click install (OAuth). Developers add
     # this ONE bot to their server; messages route by guild_id to their agent.
