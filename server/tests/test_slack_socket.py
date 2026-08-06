@@ -77,7 +77,7 @@ def test_bot_messages_ignored_but_still_acked():
     assert got == []  # but not routed to the agent
 
 
-def _commands_frame(command="/caspian", text="settings", trigger_id="trig123", response_url="http://url"):
+def _commands_frame(command="/caspian", text="settings", trigger_id="trig123", response_url="https://example.com/response"):
     return {
         "type": "slash_commands",
         "envelope_id": "env-2",
@@ -108,7 +108,7 @@ def test_socket_routes_slash_commands_and_acks():
     assert cmd_msg.command["command"] == "caspian"
     assert cmd_msg.command["text"] == "settings"
     assert cmd_msg.command["trigger_id"] == "trig123"
-    assert cmd_msg.command["response_url"] == "http://url"
+    assert cmd_msg.command["response_url"] == "https://example.com/response"
     assert cmd_msg.provider_inbox_id == "A123:T123"
 
 
@@ -116,13 +116,10 @@ def test_socket_slash_commands_parse_failure_logged_and_acked():
     got = []
     client = SlackSocketClient("xapp-1-A123-secret", "conn_1", got.extend)
     ws = _FakeWS()
-    # command parameter is missing -> parse_slack_command returns empty/None or raises
-    # depending on implementation. Let's pass a frame that makes it crash/fail.
-    # We pass a None payload or type error to force parse exception.
     frame = {
         "type": "slash_commands",
         "envelope_id": "env-3",
-        "payload": None,
+        "payload": "invalid-payload-type-causes-attribute-error",
     }
     # Should not raise exception (it is logged and swallowed)
     asyncio.run(client._dispatch(ws, frame))

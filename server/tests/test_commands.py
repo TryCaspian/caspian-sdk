@@ -37,6 +37,8 @@ def test_slack_command_event_parses():
         "command": "caspian",
         "text": "help settings",
         "source_message_id": None,
+        "response_url": None,
+        "trigger_id": "trig123",
     }
     assert cmd.sender_address == "U999"
     assert cmd.sender_name == "alice"
