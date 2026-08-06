@@ -1058,6 +1058,8 @@ describe("CommClient", () => {
                 text: "theme dark",
                 source_message: { id: "msg_9" },
                 sender: { address: "u" },
+                response_url: "http://url",
+                trigger_id: "trig123",
               },
             },
           ]);
@@ -1083,6 +1085,8 @@ describe("CommClient", () => {
       expect(seen).toHaveLength(1);
       expect(seen[0].command).toBe("settings");
       expect(seen[0].text).toBe("theme dark");
+      expect(seen[0].responseUrl).toBe("http://url");
+      expect(seen[0].triggerId).toBe("trig123");
       expect(replies[0]).toEqual({ text: "executed settings with theme dark", html: null, blocks: null, media: null });
     });
 
@@ -1108,6 +1112,8 @@ describe("CommClient", () => {
         "theme dark",
         null,
         { address: "u" },
+        null,
+        null,
         client,
       );
 
@@ -1127,6 +1133,8 @@ describe("CommClient", () => {
         "theme dark",
         null,
         { address: "u" },
+        null,
+        null,
         client,
       );
 

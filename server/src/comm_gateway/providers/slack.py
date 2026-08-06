@@ -91,6 +91,8 @@ def parse_slack_command(data: dict) -> list[InboundMessage]:
                 "command": command.lstrip("/"),
                 "text": text if text else None,
                 "source_message_id": None,
+                "response_url": data.get("response_url"),
+                "trigger_id": trigger_id if trigger_id else None,
             },
         )
     ]

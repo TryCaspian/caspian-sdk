@@ -400,6 +400,8 @@ def _process_command(session: Session, connection: Connection, data: dict) -> No
             "conversation_id": conversation.id if conversation else None,
             "command": command.get("command"),
             "text": command.get("text"),
+            "response_url": command.get("response_url"),
+            "trigger_id": command.get("trigger_id"),
             "source_message": message_out(source) if source else None,
             "sender": {"address": data.get("sender_address"), "name": data.get("sender_name")},
         },

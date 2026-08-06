@@ -1279,6 +1279,8 @@ def test_on_command_dispatches_and_replies():
                 "text": "theme dark",
                 "source_message": {"id": "msg_9"},
                 "sender": {"address": "u"},
+                "response_url": "http://url",
+                "trigger_id": "trig123",
             },
         }
     ]
@@ -1308,6 +1310,8 @@ def test_on_command_dispatches_and_replies():
     assert seen[0].command == "settings"
     assert seen[0].text == "theme dark"
     assert seen[0].source_message["id"] == "msg_9"
+    assert seen[0].response_url == "http://url"
+    assert seen[0].trigger_id == "trig123"
     # reply routed to the source message
     assert replies[0][0] == "/v1/messages/msg_9/reply"
     assert replies[0][1]["text"] == "executed settings with theme dark"

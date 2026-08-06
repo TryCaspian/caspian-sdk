@@ -18,7 +18,7 @@ import logging
 import httpx
 import websockets
 
-from ..providers.slack import parse_event
+from ..providers.slack import parse_event, parse_slack_command
 
 log = logging.getLogger("comm.listener")
 
@@ -108,6 +108,15 @@ class SlackSocketClient:
                 msgs = parse_event(payload)
             except Exception:
                 log.exception("slack socket %s: parse failed", self._conn_id)
+                return
+            if msgs:
+                self._on_message(msgs)
+        elif ftype == "slash_commands":
+            payload = frame.get("payload") or {}
+            try:
+                msgs = parse_slack_command(payload)
+            except Exception:
+                log.exception("slack socket %s: parse command failed", self._conn_id)
                 return
             if msgs:
                 self._on_message(msgs)

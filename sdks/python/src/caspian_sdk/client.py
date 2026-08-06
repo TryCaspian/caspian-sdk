@@ -240,6 +240,9 @@ class Command:
     source_message: dict | None
     sender: dict | None
     _client: "CommClient" = field(repr=False)
+    response_url: str | None = None
+    # Warning: trigger_id is only valid for ~3 seconds and may be expired when received
+    trigger_id: str | None = None
 
     def reply(
         self,
@@ -1406,6 +1409,8 @@ class CommClient:
             text=data.get("text"),
             source_message=data.get("source_message"),
             sender=data.get("sender"),
+            response_url=data.get("response_url"),
+            trigger_id=data.get("trigger_id"),
             _client=self,
         )
         for handler in self._command_handlers:

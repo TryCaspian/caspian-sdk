@@ -75,3 +75,58 @@ def test_bot_messages_ignored_but_still_acked():
 
     assert ws.sent == [{"envelope_id": "env-1"}]  # acked so Slack stops retrying
     assert got == []  # but not routed to the agent
+
+
+def _commands_frame(command="/caspian", text="settings", trigger_id="trig123", response_url="http://url"):
+    return {
+        "type": "slash_commands",
+        "envelope_id": "env-2",
+        "payload": {
+            "api_app_id": "A123",
+            "team_id": "T123",
+            "command": command,
+            "text": text,
+            "user_id": "U1",
+            "user_name": "steve",
+            "channel_id": "C1",
+            "trigger_id": trigger_id,
+            "response_url": response_url,
+        },
+    }
+
+
+def test_socket_routes_slash_commands_and_acks():
+    got = []
+    client = SlackSocketClient("xapp-1-A123-secret", "conn_1", got.extend)
+    ws = _FakeWS()
+    asyncio.run(client._dispatch(ws, _commands_frame()))
+
+    assert ws.sent == [{"envelope_id": "env-2"}]
+    assert len(got) == 1
+    cmd_msg = got[0]
+    assert cmd_msg.kind == "command"
+    assert cmd_msg.command["command"] == "caspian"
+    assert cmd_msg.command["text"] == "settings"
+    assert cmd_msg.command["trigger_id"] == "trig123"
+    assert cmd_msg.command["response_url"] == "http://url"
+    assert cmd_msg.provider_inbox_id == "A123:T123"
+
+
+def test_socket_slash_commands_parse_failure_logged_and_acked():
+    got = []
+    client = SlackSocketClient("xapp-1-A123-secret", "conn_1", got.extend)
+    ws = _FakeWS()
+    # command parameter is missing -> parse_slack_command returns empty/None or raises
+    # depending on implementation. Let's pass a frame that makes it crash/fail.
+    # We pass a None payload or type error to force parse exception.
+    frame = {
+        "type": "slash_commands",
+        "envelope_id": "env-3",
+        "payload": None,
+    }
+    # Should not raise exception (it is logged and swallowed)
+    asyncio.run(client._dispatch(ws, frame))
+
+    assert ws.sent == [{"envelope_id": "env-3"}]
+    assert got == []
+

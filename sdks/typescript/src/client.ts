@@ -162,6 +162,9 @@ export class Command {
     readonly text: string | null,
     readonly sourceMessage: Record<string, any> | null,
     readonly sender: Record<string, unknown> | null,
+    readonly responseUrl: string | null,
+    /** Warning: triggerId is only valid for ~3 seconds and may be expired when received */
+    readonly triggerId: string | null,
     private readonly client: CommClient,
   ) {}
 
@@ -1118,6 +1121,8 @@ export class CommClient {
       data.text ?? null,
       data.source_message ?? null,
       data.sender ?? null,
+      data.response_url ?? null,
+      data.trigger_id ?? null,
       this,
     );
     for (const handler of this.commandHandlers) {
