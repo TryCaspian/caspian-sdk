@@ -1037,6 +1037,53 @@ describe("CommClient", () => {
 
       expect(seen).toHaveLength(3);
     });
+
+    it("records dedup only after successful dispatch, so a retry after a handler throw reaches the handler again", async () => {
+      const { client } = makeClient({
+        "POST /v1/messages/m1/typing": () => json({}),
+      });
+      const seen: Message[] = [];
+      let shouldFail = true;
+      client.onMessage((m) => {
+        if (shouldFail) throw new Error("boom");
+        seen.push(m);
+      });
+
+      const secret = "whsec_ts_retry";
+      const evt = { ...messageEvent(1, "c1", "retry me"), id: "evt_retry_1" };
+      const body = JSON.stringify(evt);
+      const sig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+
+      // First delivery: handler throws -> must report status "error" and
+      // must NOT be recorded as processed.
+      const res1 = await client.handleWebhook({
+        body,
+        headers: { "x-caspian-signature": sig },
+        secret,
+      });
+      expect(res1.status).toBe("error");
+      expect(seen).toHaveLength(0);
+
+      // Provider retries the same event. Because the first attempt was not
+      // recorded, the handler must run again.
+      shouldFail = false;
+      const res2 = await client.handleWebhook({
+        body,
+        headers: { "x-caspian-signature": sig },
+        secret,
+      });
+      expect(res2.status).toBe("ok");
+      expect(seen).toHaveLength(1);
+
+      // A third delivery of the now-successfully-processed event is deduped.
+      const res3 = await client.handleWebhook({
+        body,
+        headers: { "x-caspian-signature": sig },
+        secret,
+      });
+      expect(res3.status).toBe("ignored");
+      expect(seen).toHaveLength(1);
+    });
   });
 });
 

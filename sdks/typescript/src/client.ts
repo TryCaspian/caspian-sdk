@@ -163,7 +163,7 @@ class MessageScheduler {
   private closed = false;
 
   constructor(
-    private readonly dispatch: (event: EventRecord) => Promise<void>,
+    private readonly dispatch: (event: EventRecord) => Promise<boolean>,
     private readonly strategy: ConcurrencyStrategy,
     private readonly debounceMs: number,
   ) {
@@ -1024,7 +1024,7 @@ export class CommClient {
     );
   }
 
-  private async dispatchInteraction(data: any): Promise<void> {
+  private async dispatchInteraction(data: any): Promise<boolean> {
     const interaction = new Interaction(
       data.connection_id ?? "",
       data.customer_id ?? "",
@@ -1035,6 +1035,7 @@ export class CommClient {
       data.sender ?? null,
       this,
     );
+    let ok = true;
     for (const handler of this.interactionHandlers) {
       try {
         await handler(interaction);
@@ -1042,11 +1043,13 @@ export class CommClient {
         if (err instanceof AccountRequiredError) this.warnAccountRequired(err);
         else if (err instanceof InsufficientCreditError) this.warnOutOfCredit(err);
         else logger.error("onInteraction handler failed; continuing", err);
+        ok = false;
       }
     }
+    return ok;
   }
 
-  private async dispatchReaction(data: any): Promise<void> {
+  private async dispatchReaction(data: any): Promise<boolean> {
     const reaction = new Reaction(
       data.connection_id ?? "",
       data.customer_id ?? "",
@@ -1057,43 +1060,51 @@ export class CommClient {
       data.sender ?? null,
       this,
     );
+    let ok = true;
     for (const handler of this.reactionHandlers) {
       try {
         await handler(reaction);
       } catch (err) {
         logger.error("onReaction handler failed; continuing", err);
+        ok = false;
       }
     }
+    return ok;
   }
 
-  private async dispatchEvent(event: EventRecord): Promise<void> {
+  /**
+   * Run handlers for one event. A handler that throws is logged and swallowed
+   * so one bad message can never stop the listener. Returns false if any
+   * handler threw, so callers that care about the outcome (`handleWebhook`)
+   * can tell success from failure without changing how errors are contained
+   * here.
+   */
+  private async dispatchEvent(event: EventRecord): Promise<boolean> {
     if (
       event.type !== "message.received" &&
       event.type !== "interaction.received" &&
       event.type !== "reaction.received"
     ) {
-      return;
+      return true;
     }
     // `data` is optional in the event schema; a record without a usable
     // payload is logged and skipped so it can never stop the listener.
     const data = event.data;
     if (!isRecord(data)) {
       logger.warn(`skipping malformed ${event.type} event (seq ${event.seq}): no event data`);
-      return;
+      return true;
     }
     if (event.type === "interaction.received") {
-      await this.dispatchInteraction(data);
-      return;
+      return this.dispatchInteraction(data);
     }
     if (event.type === "reaction.received") {
-      await this.dispatchReaction(data);
-      return;
+      return this.dispatchReaction(data);
     }
     if (!isRecord(data.message)) {
       logger.warn(
         `skipping malformed message.received event (seq ${event.seq}): no message payload`,
       );
-      return;
+      return true;
     }
     const message = this.buildMessage(data);
     if (this.handlers.length) {
@@ -1119,6 +1130,7 @@ export class CommClient {
         }
       }
     }
+    let ok = true;
     for (const handler of this.handlers) {
       try {
         await handler(message);
@@ -1133,8 +1145,10 @@ export class CommClient {
         } else {
           logger.error(`onMessage handler failed for message ${message.id}; continuing`, err);
         }
+        ok = false;
       }
     }
+    return ok;
   }
 
   /** Print a prominent, rate-limited banner when a paid action needs sign-in. */
@@ -1309,17 +1323,24 @@ export class CommClient {
 
       if (eventId) seenIds.add(eventId);
 
-      await this.dispatchEvent(event);
+      const ok = await this.dispatchEvent(event);
 
-      // Record after successful dispatch so retries of genuinely failed
-      // processing are not suppressed.
-      if (eventId) this.webhookDedup.record(eventId);
-
-      result = {
-        status: "ok",
-        eventId: eventId || null,
-        eventType,
-      };
+      if (ok) {
+        // Record only after successful dispatch so retries of genuinely
+        // failed processing are not suppressed.
+        if (eventId) this.webhookDedup.record(eventId);
+        result = {
+          status: "ok",
+          eventId: eventId || null,
+          eventType,
+        };
+      } else {
+        result = {
+          status: "error",
+          eventId: eventId || null,
+          eventType,
+        };
+      }
     }
 
     return result;
