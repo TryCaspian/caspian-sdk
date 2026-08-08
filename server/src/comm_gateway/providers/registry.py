@@ -162,6 +162,18 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             handle=settings.macmini_imessage_handle,
             webhook_secret=settings.macmini_webhook_secret,
         )
+    if name == "fake-signal":
+        from .fakes.fake_signal import FakeSignalProvider
+
+        return FakeSignalProvider()
+    if name == "signal-cli":
+        from .signal import SignalProvider
+
+        return SignalProvider(
+            base_url=settings.signal_cli_url,
+            number=settings.signal_number,
+            webhook_secret=settings.signal_webhook_secret,
+        )
     if name == "fake-bluesky":
         from .fakes.fake_social import FakeBlueskyProvider
 

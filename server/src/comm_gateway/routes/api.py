@@ -738,6 +738,16 @@ def create_imessage_connection(
     return _create_connection(request, session, project, body, channel="imessage")
 
 
+@router.post("/connections/signal", response_model=ConnectionOut, status_code=201)
+def create_signal_connection(
+    body: ChannelConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="signal")
+
+
 @router.post("/connections/rcs", response_model=ConnectionOut, status_code=201)
 def create_rcs_connection(
     body: ChannelConnectionCreate,
