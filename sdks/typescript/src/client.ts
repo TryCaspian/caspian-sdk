@@ -65,6 +65,13 @@ export class Message {
     private readonly client: CommClient,
     /** File attachments received with the message (empty when none). */
     readonly media: Media[] = [],
+    /**
+     * Shape of the conversation this arrived in, as reported by the channel:
+     * "dm" for one-to-one, "channel"/"group" for multi-party. `null` on channels
+     * with no such distinction (email) or that don't report one. Use it to answer
+     * direct messages while ignoring unrelated group chatter.
+     */
+    readonly chatType: string | null = null,
   ) {}
 
   /**
@@ -1021,6 +1028,7 @@ export class CommClient {
       m.html ?? null,
       this,
       m.media ?? [],
+      m.chat_type ?? null,
     );
   }
 
