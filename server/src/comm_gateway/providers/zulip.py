@@ -70,6 +70,9 @@ class ZulipProvider:
     name = "zulip"
     channel = "zulip"
     connect_credentials = ("bot_email", "bot_api_key", "server_url")
+    # Zulip outgoing webhooks expect a JSON response; an empty 204 is rejected
+    # ("Failure! Invalid JSON in response").
+    webhook_ack_body = {"response_not_required": True}
     capabilities = frozenset(
         {
             Capability.RECEIVE,

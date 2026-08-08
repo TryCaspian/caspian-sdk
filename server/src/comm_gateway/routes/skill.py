@@ -366,6 +366,48 @@ Error handling: a 409 from connect means that bot token is already connected
 elsewhere - ask the developer for a different bot. A 422 naming `bot_token`
 means it was missing or malformed.
 
+## Adding Zulip (bring your own outgoing-webhook bot)
+
+The agent is a Zulip **outgoing-webhook bot**: Zulip POSTs to the gateway when
+the bot is @-mentioned in a channel or sent a direct message, and the gateway
+replies over Zulip's REST API. Everything is the developer's own Zulip
+organization - there is no shared Caspian app. STOP and walk the developer
+through these steps (only they can create the bot):
+
+> In Zulip: gear icon -> Personal settings -> Bots -> Add a new bot.
+> - Bot type: **Outgoing webhook**
+> - Webhook format: **Zulip**
+> - Endpoint URL: `{base}/internal/providers/zulip/webhooks/<BOT_EMAIL>`
+>   (replace `<BOT_EMAIL>` with the email Zulip assigns the bot, e.g.
+>   `my-bot@your-org.zulipchat.com`; URL-encode the `@` as `%40` if Zulip
+>   rejects the raw one). You may need to create the bot first, read its email,
+>   then edit the bot to set this URL.
+> Then send me: the bot's **email**, its **API key**, and (optional) the
+> outgoing-webhook **token**.
+
+Replace `{base}` with this gateway's public URL. Once the developer provides the
+values, connect it:
+
+```python
+conn = client._connect(
+    "zulip",
+    customer_id=customer_id,
+    agent_id=agent_id,
+    bot_email="my-bot@your-org.zulipchat.com",
+    bot_api_key="<the bot's API key>",
+    server_url="https://your-org.zulipchat.com",
+    # bot_token="<outgoing-webhook token>",   # optional; verifies inbound
+)
+print("Zulip bot:", conn["address"])
+```
+
+The same @client.on_message handler receives Zulip messages; message.reply()
+answers in the same channel/topic (direct messages reply as a DM). A stream
+message in the channel's default (empty) topic is answered in an `agent` topic.
+
+To verify: tell the developer to @-mention the bot in a channel (e.g.
+`@**my-bot** hi`) or DM it; the running integration must print it and reply.
+
 ## Adding WhatsApp (ask which provider first)
 
 WhatsApp is served by TWO providers on this gateway, so it appears twice in
