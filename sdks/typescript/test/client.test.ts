@@ -3,6 +3,7 @@ import { getEventListeners } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   AccountRequiredError,
+  Command,
   CommClient,
   CommError,
   InsufficientCreditError,
@@ -1089,6 +1090,116 @@ describe("CommClient", () => {
       }
 
       expect(seen).toHaveLength(3);
+    });
+
+    it("onCommand dispatches a slash command and replies", async () => {
+      const replies: any[] = [];
+      const { client } = makeClient({
+        "GET /v1/events": (req) => {
+          const after = Number(new URL(req.url).searchParams.get("after_seq"));
+          if (after >= 1) return json([]);
+          return json([
+            {
+              seq: 1,
+              type: "command.received",
+              data: {
+                connection_id: "conn_1",
+                customer_id: "cus_1",
+                agent_id: "agt_1",
+                conversation_id: "conv_1",
+                command: "settings",
+                text: "theme dark",
+                source_message: { id: "msg_9" },
+                sender: { address: "u" },
+                response_url: "http://url",
+                trigger_id: "trig123",
+              },
+            },
+          ]);
+        },
+        "POST /v1/messages/msg_9/reply": (req) => {
+          return req
+            .json()
+            .then((b) => {
+              replies.push(b);
+              return json({ delivered: true });
+            });
+        },
+      });
+
+      const seen: Command[] = [];
+      client.onCommand(async (cmd) => {
+        seen.push(cmd);
+        await cmd.reply(`executed ${cmd.command} with ${cmd.text}`);
+      });
+      const last = await client.dispatchPending(0);
+
+      expect(last).toBe(1);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].command).toBe("settings");
+      expect(seen[0].text).toBe("theme dark");
+      expect(seen[0].responseUrl).toBe("http://url");
+      expect(seen[0].triggerId).toBe("trig123");
+      expect(replies[0]).toEqual({ text: "executed settings with theme dark", html: null, blocks: null, media: null });
+    });
+
+    it("command reply falls back to sendMessage when sourceMessage is missing", async () => {
+      const messages: any[] = [];
+      const { client } = makeClient({
+        "POST /v1/conversations/conv_1/messages": (req) => {
+          return req
+            .json()
+            .then((b) => {
+              messages.push(b);
+              return json({ delivered: true });
+            });
+        },
+      });
+
+      const cmd = new Command(
+        "conn_1",
+        "cus_1",
+        "agt_1",
+        "conv_1",
+        "settings",
+        "theme dark",
+        null,
+        { address: "u" },
+        null,
+        null,
+        client,
+      );
+
+      await cmd.reply("hello conv");
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toEqual({ text: "hello conv", html: null, blocks: null, media: null });
+    });
+
+    it("command reply throws when both targets are missing", async () => {
+      const { client } = makeClient({});
+      const cmd = new Command(
+        "conn_1",
+        "cus_1",
+        "agt_1",
+        null,
+        "settings",
+        "theme dark",
+        null,
+        { address: "u" },
+        null,
+        null,
+        client,
+      );
+
+      let error: any = null;
+      try {
+        await cmd.reply("fail");
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toBeInstanceOf(CommError);
+      expect((error as any).statusCode).toBe(400);
+      expect((error as any).detail).toBe("command has no conversation or source message to reply to");
     });
   });
 });

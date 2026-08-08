@@ -18,7 +18,7 @@ import logging
 import httpx
 import websockets
 
-from ..providers.slack import parse_event
+from ..providers.slack import parse_event, parse_slack_command
 
 log = logging.getLogger("comm.listener")
 
@@ -91,7 +91,12 @@ class SlackSocketClient:
 
     async def _dispatch(self, ws, frame: dict) -> None:
         ftype = frame.get("type")
-        etype = (frame.get("payload") or {}).get("event", {}).get("type")
+        payload = frame.get("payload")
+        etype = None
+        if isinstance(payload, dict):
+            event = payload.get("event")
+            if isinstance(event, dict):
+                etype = event.get("type")
         log.debug("slack socket %s frame: %s%s", self._conn_id, ftype,
                   f"/{etype}" if etype else "")
         if ftype == "hello":
@@ -103,11 +108,24 @@ class SlackSocketClient:
         if envelope_id:
             await ws.send(json.dumps({"envelope_id": envelope_id}))
         if ftype == "events_api":
-            payload = frame.get("payload") or {}
+            if not isinstance(payload, dict):
+                log.error("received events_api frame without dict payload")
+                return
+            event = payload.get("event")
+            if not isinstance(event, dict):
+                return
             try:
                 msgs = parse_event(payload)
+                if msgs:
+                    self._on_message(msgs)
             except Exception:
-                log.exception("slack socket %s: parse failed", self._conn_id)
-                return
-            if msgs:
-                self._on_message(msgs)
+                log.exception("failed to process slack event")
+        elif ftype == "slash_commands":
+            try:
+                if not isinstance(payload, dict):
+                    raise ValueError("payload is not a dictionary")
+                msgs = parse_slack_command(payload)
+                if msgs:
+                    self._on_message(msgs)
+            except Exception:
+                log.exception("failed to process slack slash command")
