@@ -305,6 +305,59 @@ describe("CommClient", () => {
     expect(replies[0]).toEqual({ text: "echo: hi", html: null, blocks: null, media: null });
   });
 
+  it("carries chat_type onto Message so handlers can tell DMs from channel chatter", async () => {
+    const { client } = makeClient({
+      "GET /v1/events": (req) => {
+        const after = Number(new URL(req.url).searchParams.get("after_seq"));
+        if (after >= 2) return json([]);
+        return json([
+          {
+            seq: 1,
+            type: "message.received",
+            data: {
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              message: {
+                id: "msg_1",
+                conversation_id: "conv_1",
+                connection_id: "conn_1",
+                channel: "slack",
+                text: "ping",
+                chat_type: "dm",
+              },
+            },
+          },
+          {
+            seq: 2,
+            type: "message.received",
+            data: {
+              customer_id: "cus_1",
+              agent_id: "agt_1",
+              message: {
+                id: "msg_2",
+                conversation_id: "conv_2",
+                connection_id: "conn_1",
+                channel: "slack",
+                text: "lunch?",
+                chat_type: "channel",
+              },
+            },
+          },
+        ]);
+      },
+    });
+
+    const seen: Message[] = [];
+    client.onMessage((m) => {
+      seen.push(m);
+    });
+    await client.dispatchPending(0);
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0].chatType).toBe("dm");
+    expect(seen[1].chatType).toBe("channel");
+  });
+
   it("dispatchPending skips malformed events and keeps draining", async () => {
     // data is optional in the event schema: a record without a usable payload
     // must be skipped, not crash the drain and strand the rest of the batch.
