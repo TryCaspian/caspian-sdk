@@ -9,6 +9,8 @@ from .client import (
     Message,
     Reaction,
     StreamResponse,
+    WebhookResult,
+    WebhookVerificationError,
 )
 
 __all__ = [
@@ -21,5 +23,8 @@ __all__ = [
     "Message",
     "Reaction",
     "StreamResponse",
+    "WebhookResult",
+    "WebhookVerificationError",
     "blocks",
 ]
+

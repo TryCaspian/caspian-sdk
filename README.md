@@ -1,8 +1,12 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img alt="Caspian — one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
+    <img alt="Caspian — the agent communication SDK: one identity for your AI agent, on every channel humans use" src="assets/banner-light.svg" width="760">
   </picture>
+</p>
+
+<p align="center">
+  <b>Ongoing hackathon:</b> <a href="https://caspian.devpost.com">caspian.devpost.com</a>
 </p>
 
 <p align="center">
@@ -26,6 +30,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
   <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
@@ -44,7 +49,9 @@
 
 ---
 
-Your agent's reasoning decides **what** to say. Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Caspian is an **agent communication** SDK. Your agent's reasoning decides **what** to say; Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+
+Most agent communication work is agent-to-human, not agent-to-agent. Protocols like A2A and ACP connect agents to each other; Caspian connects your agent to the people it works for, on the channels they already use.
 
 ## Get started in 30 seconds
 
@@ -93,6 +100,8 @@ client.listen()  # one loop, every channel
 > or just use the SDK directly (below); nothing else about the flow changes.
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+
+> **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).
 
 **TypeScript** — same contract, zero runtime dependencies:
 
@@ -243,6 +252,17 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+**☁️ Serverless AI agents**<br/>
+No always-on server required: `handle_webhook()` lets your agent run on AWS Lambda, Vercel, or Cloudflare Workers — the gateway pushes events, you verify + dispatch, scale to zero. [Lambda + Bedrock example](./examples/serverless_lambda_bedrock).
+
+</td>
+<td valign="top">
+
+</td>
+</tr>
 </table>
 
 ## Channels
@@ -253,6 +273,8 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |

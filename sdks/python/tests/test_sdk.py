@@ -1,5 +1,6 @@
 """Client-level tests against a mock HTTP transport (no gateway needed)."""
 
+import asyncio
 import json
 import threading
 
@@ -10,6 +11,8 @@ from caspian_sdk import (
     CommClient,
     CommError,
     InsufficientCreditError,
+    WebhookResult,
+    WebhookVerificationError,
 )
 from caspian_sdk.client import _MessageScheduler
 
@@ -471,6 +474,126 @@ def test_message_carries_media_to_handler():
     assert seen[0].media == [{"name": "r.pdf", "mime_type": "application/pdf"}]
 
 
+def test_message_carries_chat_type_to_handler():
+    """A Slack DM and a channel message differ only by chat_type, so the field
+    has to survive onto Message for a handler to tell them apart."""
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
+                    "channel": "slack", "text": "ping", "chat_type": "dm",
+                },
+            },
+        },
+        {
+            "seq": 2,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m2", "conversation_id": "c2", "connection_id": "cn1",
+                    "channel": "slack", "text": "lunch?", "chat_type": "channel",
+                },
+            },
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 2 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert [m.chat_type for m in seen] == ["dm", "channel"]
+
+
+def test_message_chat_type_defaults_to_none_when_absent():
+    """Channels with no DM/group distinction (email) omit chat_type entirely;
+    the field must default rather than raise."""
+    events = [
+        {
+            "seq": 1,
+            "type": "message.received",
+            "data": {
+                "customer_id": "cus_1", "agent_id": "agt_1",
+                "message": {
+                    "id": "m1", "conversation_id": "c1", "connection_id": "cn1",
+                    "channel": "email", "text": "hello",
+                },
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 1 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m))
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert seen[0].chat_type is None
+
+
+def test_dispatch_pending_skips_malformed_events_and_keeps_draining():
+    """A record without a usable payload is skipped; the rest of the batch
+    still dispatches and the cursor advances (data is optional in the schema)."""
+    events = [
+        {"seq": 1, "type": "message.received", "data": {}},
+        {"seq": 2, "type": "interaction.received"},
+        {"seq": 3, "type": "reaction.received", "data": None},
+        _message_event(4, "conv_1", "still alive"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= 4 else events)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(handler)
+    seen = []
+    client.on_message(lambda m: seen.append(m.text))
+    client.on_interaction(lambda i: seen.append("interaction"))
+    client.on_reaction(lambda r: seen.append("reaction"))
+    try:
+        last = client.dispatch_pending(0)
+    finally:
+        client.close()
+    assert last == 4
+    assert seen == ["still alive"]
+
+
+def test_scheduler_contains_dispatch_errors_for_non_message_events():
+    """listen() hands non-message events straight to dispatch; an error there
+    must be swallowed so it cannot kill the polling loop."""
+
+    def boom(event: dict) -> None:
+        raise RuntimeError("boom")
+
+    scheduler = _MessageScheduler(boom, "queue", 500)
+    try:
+        scheduler.submit({"seq": 1, "type": "interaction.received"})
+    finally:
+        scheduler.close()
+
+
 def test_queue_serializes_each_conversation_and_keeps_others_moving():
     client = _client(lambda request: httpx.Response(200, json={}))
     first_started = threading.Event()
@@ -876,7 +999,9 @@ def test_stream_retries_edit_when_message_not_sent_yet():
         if "/edit" in request.url.path:
             edit_attempts.append(1)
             if len(edit_attempts) == 1:
-                return httpx.Response(400, json={"detail": "Can only edit an outbound message that was sent"})
+                return httpx.Response(
+                    400, json={"detail": "Can only edit an outbound message that was sent"}
+                )
             # Second attempt succeeds
             return httpx.Response(200, json={"id": "out_1", "delivered": True})
         return httpx.Response(200, json={})
@@ -936,5 +1061,549 @@ def test_stream_does_not_retry_different_400_errors():
     # Should fail with the specific error, and only attempt once per call (no retry)
     assert excinfo.value.status_code == 400
     assert "already deleted" in excinfo.value.detail
-    # Two edit attempts total (one from append, one from flush), but each should only try once (no retries)
+    # Two edit attempts total (one from append, one from flush); each tries once (no retries)
     assert len(edit_attempts) == 2
+
+
+def test_channel_cap_reached_maps_from_429():
+    """A 429 channel cap block raises InsufficientCreditError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"detail": {"reason": "channel_cap_reached", "message": "Capped."}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.reason == "channel_cap_reached"
+    assert err.detail == "Capped."
+
+
+def test_account_required_defaults_when_gateway_omits_fields():
+    """When 401 reason=account_required omits message and login_options, defaults are populated."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"detail": {"reason": "account_required"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(AccountRequiredError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.message == "Sign in to Caspian to use paid channels."
+    assert err.detail == "Sign in to Caspian to use paid channels."
+    assert err.login_options == []
+
+
+def test_insufficient_credit_defaults_when_gateway_omits_fields():
+    """When 402 reason=insufficient_credit omits message/balance/payment_options, defaults apply."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(InsufficientCreditError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert err.message == "Out of Caspian credit."
+    assert err.detail == "Out of Caspian credit."
+    assert err.balance_cents is None
+    assert err.payment_options == []
+
+
+def test_401_unrecognized_reason_falls_through_to_comm_error():
+    """A 401 with an unrecognized reason raises plain CommError, not AccountRequiredError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"detail": {"reason": "invalid_token", "message": "Invalid API key"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.connect_x(access_token="a", user_id="1")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert type(err) is CommError
+    assert not isinstance(err, AccountRequiredError)
+    assert err.status_code == 401
+    assert "Invalid API key" in str(err)
+
+
+def test_402_unrecognized_reason_falls_through_to_comm_error():
+    """A 402 with an unrecognized reason raises plain CommError, not InsufficientCreditError."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "payment_required_other", "message": "Payment needed"}},
+        )
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.reply("m1", text="hi")
+        finally:
+            client.close()
+    err = excinfo.value
+    assert type(err) is CommError
+    assert not isinstance(err, InsufficientCreditError)
+    assert err.status_code == 402
+    assert "Payment needed" in str(err)
+
+
+def test_account_required_login_delegates_to_client():
+    """AccountRequiredError.login() delegates to CommClient.login()."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/connections/x":
+            return httpx.Response(
+                401,
+                json={"detail": {"reason": "account_required", "message": "Sign in required"}},
+            )
+        if request.url.path == "/v1/auth/device/start":
+            calls.append("start")
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "dev_123",
+                    "verification_uri": "https://auth.example.com",
+                    "interval": 0.01,
+                },
+            )
+        if request.url.path == "/v1/auth/device/token":
+            calls.append("token")
+            return httpx.Response(200, json={"status": "approved"})
+        return httpx.Response(404)
+
+    client = _client(handler)
+    try:
+        with pytest.raises(AccountRequiredError) as excinfo:
+            client.connect_x(access_token="a", user_id="1")
+        res = excinfo.value.login(poll_interval=0.01)
+    finally:
+        client.close()
+    assert res["status"] == "approved"
+    assert calls == ["start", "token"]
+
+
+def test_insufficient_credit_top_up_uses_explicit_amount():
+    """InsufficientCreditError.top_up(amount_cents) passes explicit amount to CommClient."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up(amount_cents=3500)
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 3500}]
+
+
+def test_insufficient_credit_top_up_uses_suggested_amount_from_payment_options():
+    """InsufficientCreditError.top_up() uses suggested amount from payment_options."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={
+                "detail": {
+                    "reason": "insufficient_credit",
+                    "payment_options": [{"create": {"body": {"amount_cents": 5000}}}],
+                }
+            },
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up()
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 5000}]
+
+
+def test_insufficient_credit_top_up_fallback_when_no_payment_options():
+    """InsufficientCreditError.top_up() falls back to 2000 cents when payment_options is empty."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit", "payment_options": []}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up()
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 2000}]
+
+
+def test_insufficient_credit_top_up_respects_explicit_zero():
+    """InsufficientCreditError.top_up(amount_cents=0) must not be silently
+    overridden to the 2000-cent default (a truthy check bug, not an is-None
+    check, previously treated 0 the same as "not passed")."""
+    topup_calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/billing/topup":
+            topup_calls.append(json.loads(request.content))
+            return httpx.Response(200, json={"checkout_url": "https://stripe.com/pay"})
+        return httpx.Response(
+            402,
+            json={"detail": {"reason": "insufficient_credit"}},
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(InsufficientCreditError) as excinfo:
+            client.reply("m1", text="hi")
+        res = excinfo.value.top_up(amount_cents=0)
+    finally:
+        client.close()
+    assert res["checkout_url"] == "https://stripe.com/pay"
+    assert topup_calls == [{"amount_cents": 0}]
+
+
+def test_non_json_error_body_hits_value_error_fallback():
+    """An error response with non-JSON text triggers ValueError on json() and falls back to text."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    client = _client(handler)
+    with pytest.raises(CommError) as excinfo:
+        try:
+            client.connect_telegram(bot_token="123:abc")
+        finally:
+            client.close()
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.detail == "Internal Server Error"
+    assert "Internal Server Error" in str(excinfo.value)
+
+
+def test_handle_webhook_dispatches_message():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    payload = json.dumps(_message_event(1, "conv_1", "hello from webhook")).encode("utf-8")
+    signature = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    # Missing signature raises error
+    with pytest.raises(WebhookVerificationError, match="missing"):
+        client.handle_webhook(payload, {}, secret)
+
+    # Bad signature raises error
+    with pytest.raises(WebhookVerificationError, match="mismatch"):
+        client.handle_webhook(payload, {"x-caspian-signature": "sha256=invalid"}, secret)
+
+    # Valid signature dispatches event
+    res = client.handle_webhook(payload, {"x-caspian-signature": signature}, secret)
+    assert res == WebhookResult(status="ok", event_id="1", event_type="message.received")
+    assert len(seen) == 1
+    assert seen[0].text == "hello from webhook"
+    client.close()
+
+
+def test_handle_webhook_dispatches_interaction_and_reaction():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen_interactions = []
+    seen_reactions = []
+
+    client.on_interaction(seen_interactions.append)
+    client.on_reaction(seen_reactions.append)
+
+    secret = "whsec_test123"
+    event = {
+        "id": "evt_interaction_1",
+        "type": "interaction.received",
+        "data": {
+            "connection_id": "conn_1",
+            "customer_id": "cus_1",
+            "agent_id": "agt_1",
+            "value": "btn_click",
+        },
+    }
+    payload = json.dumps(event).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res.status == "ok"
+    assert res.event_id == "evt_interaction_1"
+    assert len(seen_interactions) == 1
+    assert seen_interactions[0].value == "btn_click"
+    client.close()
+
+
+def test_handle_webhook_idempotent_same_event_id():
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_test123"
+    evt = _message_event(1, "conv_1", "duplicate test")
+    evt["id"] = "same_event_id"
+    payload = json.dumps([evt, evt]).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    res = client.handle_webhook(payload, {"X-Caspian-Signature": sig}, secret)
+    assert res.status == "ok"
+    assert len(seen) == 1
+    client.close()
+
+
+def test_handle_webhook_cross_invocation_dedup():
+    """Duplicate event across two separate handle_webhook() calls is skipped."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_dedup_test"
+    evt = _message_event(1, "conv_1", "dedup test")
+    evt["id"] = "evt_cross_dedup_1"
+
+    # First invocation — event should be dispatched.
+    payload1 = json.dumps(evt).encode("utf-8")
+    sig1 = "sha256=" + hmac.new(secret.encode(), payload1, hashlib.sha256).hexdigest()
+    res1 = client.handle_webhook(payload1, {"x-caspian-signature": sig1}, secret)
+    assert res1.status == "ok"
+    assert len(seen) == 1
+
+    # Second invocation with same event — should be suppressed by dedup cache.
+    payload2 = json.dumps(evt).encode("utf-8")
+    sig2 = "sha256=" + hmac.new(secret.encode(), payload2, hashlib.sha256).hexdigest()
+    res2 = client.handle_webhook(payload2, {"x-caspian-signature": sig2}, secret)
+    assert res2.status == "ignored"
+    assert len(seen) == 1  # handler NOT called again
+    client.close()
+
+
+def test_handle_webhook_dedup_allows_different_events():
+    """Different event IDs are dispatched normally (no false suppression)."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+
+    @client.on_message
+    def handle(msg):
+        seen.append(msg)
+
+    secret = "whsec_diff_events"
+
+    for i in range(3):
+        evt = _message_event(i + 1, "conv_1", f"msg {i}")
+        evt["id"] = f"evt_unique_{i}"
+        payload = json.dumps(evt).encode("utf-8")
+        sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        res = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+        assert res.status == "ok"
+
+    assert len(seen) == 3
+    client.close()
+
+
+# --- async handlers ----------------------------------------------------------
+
+
+def _draining_events_transport(events, on_request=None):
+    """Serve ``events`` once from /v1/events, then an empty batch; 200 elsewhere."""
+    last_seq = events[-1]["seq"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/events":
+            after = int(dict(request.url.params).get("after_seq", 0))
+            return httpx.Response(200, json=[] if after >= last_seq else events)
+        if on_request is not None:
+            on_request(request)
+        return httpx.Response(200, json={"delivered": True})
+
+    return handler
+
+
+def test_async_handler_is_awaited_and_can_reply():
+    replies = []
+
+    def record(request: httpx.Request) -> None:
+        if request.url.path.endswith("/reply"):
+            replies.append(json.loads(request.content))
+
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "hello")], record))
+    seen: list[str] = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        await asyncio.sleep(0.01)
+        seen.append(message.text)
+        message.reply(f"echo {message.text}")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    # The coroutine ran to completion before dispatch_pending returned.
+    assert seen == ["hello"]
+    assert [r["text"] for r in replies] == ["echo hello"]
+
+
+def test_sync_and_async_handlers_run_in_registration_order():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "order")]))
+    calls: list[str] = []
+
+    @client.on_message
+    def first(message) -> None:
+        calls.append("sync-first")
+
+    @client.on_message
+    async def second(message) -> None:
+        calls.append("async-second")
+
+    @client.on_message
+    def third(message) -> None:
+        calls.append("sync-third")
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert calls == ["sync-first", "async-second", "sync-third"]
+
+
+def test_async_handler_error_is_contained_and_later_handlers_still_run():
+    client = _client(_draining_events_transport([_message_event(1, "conv_1", "boom")]))
+    seen: list[str] = []
+
+    @client.on_message
+    async def bad(message) -> None:
+        raise RuntimeError("async handler failure")
+
+    @client.on_message
+    async def good(message) -> None:
+        seen.append(message.text)
+
+    try:
+        client.dispatch_pending(0)  # must not raise
+    finally:
+        client.close()
+
+    assert seen == ["boom"]
+
+
+def test_async_handlers_share_one_background_event_loop():
+    events = [_message_event(1, "conv_1", "first"), _message_event(2, "conv_1", "second")]
+    client = _client(_draining_events_transport(events))
+    loops = []
+
+    @client.on_message
+    async def handle(message) -> None:
+        loops.append(asyncio.get_running_loop())
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+
+
+def test_on_interaction_accepts_async_handler():
+    events = [
+        {
+            "seq": 1,
+            "type": "interaction.received",
+            "data": {
+                "connection_id": "conn_1", "customer_id": "cus_1", "agent_id": "agt_1",
+                "conversation_id": "conv_1", "value": "reorder_123",
+                "source_message": {"id": "msg_9"}, "sender": {"address": "u"},
+            },
+        }
+    ]
+    client = _client(_draining_events_transport(events))
+    values: list[str] = []
+
+    @client.on_interaction
+    async def handle(interaction) -> None:
+        await asyncio.sleep(0)
+        values.append(interaction.value)
+
+    try:
+        client.dispatch_pending(0)
+    finally:
+        client.close()
+
+    assert values == ["reorder_123"]

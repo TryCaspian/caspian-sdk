@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     # endpoint and optional webhook verification secret.
     bluesky_base_url: str = "https://bsky.social"
     bluesky_webhook_secret: str = ""
+    bluesky_poll_interval: float = 5.0
     # Stripe (pay-as-you-go credit; live keys live in SSM SecureString, resolved
     # at startup — only the parameter NAMES sit in .env).
     stripe_secret_key: str = ""

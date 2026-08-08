@@ -54,12 +54,15 @@ def parse_meta_webhook(payload: bytes, phone_number_id: str) -> list[InboundMess
             for m in value.get("messages", []):
                 if m.get("type") != "text":
                     continue
-                remote = m["from"]
+                remote = m.get("from")
+                message_id = m.get("id")
+                if not remote or not message_id:
+                    continue
                 out.append(
                     InboundMessage(
-                        external_event_id=m["id"],
+                        external_event_id=message_id,
                         provider_inbox_id=inbox,
-                        provider_message_id=f"{remote}:{m['id']}",
+                        provider_message_id=f"{remote}:{message_id}",
                         provider_thread_id=remote,
                         sender_address=remote,
                         recipients=[{"address": inbox}],
