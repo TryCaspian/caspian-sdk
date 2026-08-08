@@ -253,7 +253,7 @@ class _MessageScheduler:
 
     def __init__(
         self,
-        dispatch: Callable[[dict], None],
+        dispatch: Callable[[dict], bool],
         strategy: ConcurrencyStrategy,
         debounce_ms: int,
     ) -> None:
@@ -1236,12 +1236,16 @@ class CommClient:
                 self._handler_loop_thread = thread
             return self._handler_loop
 
-    def _dispatch_event(self, event: dict) -> None:
+    def _dispatch_event(self, event: dict) -> bool:
         """Run handlers for one event. A handler that raises is logged and
-        swallowed so one bad message can never stop the listener."""
+        swallowed so one bad message can never stop the listener.
+
+        Returns False if any handler raised, so callers that care about the
+        outcome (``handle_webhook``) can tell success from failure without
+        changing how exceptions are contained here."""
         event_type = event.get("type")
         if event_type not in ("message.received", "interaction.received", "reaction.received"):
-            return
+            return True
         # ``data`` is optional in the event schema; a record without a usable
         # payload is logged and skipped so it can never stop the listener.
         data = event.get("data")
@@ -1251,19 +1255,17 @@ class CommClient:
                 event_type,
                 event.get("seq"),
             )
-            return
+            return True
         if event_type == "interaction.received":
-            self._dispatch_interaction(data)
-            return
+            return self._dispatch_interaction(data)
         if event_type == "reaction.received":
-            self._dispatch_reaction(data)
-            return
+            return self._dispatch_reaction(data)
         if not isinstance(data.get("message"), dict):
             logger.warning(
                 "skipping malformed message.received event (seq %s): no message payload",
                 event.get("seq"),
             )
-            return
+            return True
         message = self._build_message(data)
         if self._handlers:
             # Show a 'thinking…' indicator up front so the human sees the agent is
@@ -1282,6 +1284,7 @@ class CommClient:
                     self._warn_out_of_credit(exc)
                 except Exception:
                     logger.exception("ack reply failed for message %s", message.id)
+        ok = True
         for handler in self._handlers:
             try:
                 self._call_handler(handler, message)
@@ -1289,15 +1292,19 @@ class CommClient:
                 # Paid channel used before the developer signed in. Surface the
                 # one-time sign-in prompt loudly (e.g. in Claude Code).
                 self._warn_account_required(exc)
+                ok = False
             except InsufficientCreditError as exc:
                 # The agent tried to reply on a paid channel but the project is
                 # out of credit / capped. Make it loud on the CLI so the operator
                 # (e.g. running this in Claude Code) sees it and can top up.
                 self._warn_out_of_credit(exc)
+                ok = False
             except Exception:
                 logger.exception(
                     "on_message handler failed for message %s; continuing", message.id
                 )
+                ok = False
+        return ok
 
     def _warn_account_required(self, exc: "AccountRequiredError") -> None:
         """Print a prominent, rate-limited banner when a paid action needs sign-in."""
@@ -1424,7 +1431,7 @@ class CommClient:
                 logger.warning("could not read starting cursor; retrying in 2s", exc_info=True)
                 time.sleep(2.0)
 
-    def _dispatch_interaction(self, data: dict) -> None:
+    def _dispatch_interaction(self, data: dict) -> bool:
         interaction = Interaction(
             connection_id=data.get("connection_id", ""),
             customer_id=data.get("customer_id", ""),
@@ -1435,17 +1442,22 @@ class CommClient:
             sender=data.get("sender"),
             _client=self,
         )
+        ok = True
         for handler in self._interaction_handlers:
             try:
                 self._call_handler(handler, interaction)
             except InsufficientCreditError as exc:
                 self._warn_out_of_credit(exc)
+                ok = False
             except AccountRequiredError as exc:
                 self._warn_account_required(exc)
+                ok = False
             except Exception:
                 logger.exception("on_interaction handler failed; continuing")
+                ok = False
+        return ok
 
-    def _dispatch_reaction(self, data: dict) -> None:
+    def _dispatch_reaction(self, data: dict) -> bool:
         reaction = Reaction(
             connection_id=data.get("connection_id", ""),
             customer_id=data.get("customer_id", ""),
@@ -1456,11 +1468,14 @@ class CommClient:
             sender=data.get("sender"),
             _client=self,
         )
+        ok = True
         for handler in self._reaction_handlers:
             try:
                 self._call_handler(handler, reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
+                ok = False
+        return ok
 
     def _build_message(self, data: dict) -> Message:
         message = data["message"]
@@ -1547,17 +1562,23 @@ class CommClient:
             if event_id:
                 seen_ids.add(event_id)
 
-            self._dispatch_event(event)
+            ok = self._dispatch_event(event)
 
-            # Record after successful dispatch so retries of genuinely failed
-            # processing are not suppressed.
-            if event_id:
-                self._webhook_dedup.record(event_id)
-
-            result = WebhookResult(
-                status="ok",
-                event_id=event_id or None,
-                event_type=event_type,
-            )
+            if ok:
+                # Record only after successful dispatch so retries of
+                # genuinely failed processing are not suppressed.
+                if event_id:
+                    self._webhook_dedup.record(event_id)
+                result = WebhookResult(
+                    status="ok",
+                    event_id=event_id or None,
+                    event_type=event_type,
+                )
+            else:
+                result = WebhookResult(
+                    status="error",
+                    event_id=event_id or None,
+                    event_type=event_type,
+                )
 
         return result
