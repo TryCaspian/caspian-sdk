@@ -32,6 +32,7 @@ from ..schemas import (
     AgentCreate,
     AgentOut,
     BackfillCreate,
+    BlueskyConnectionCreate,
     ChannelConnectionCreate,
     ConnectionBrandingUpdate,
     ConnectionOut,
@@ -57,7 +58,6 @@ from ..schemas import (
     WebhookConfig,
     WebhookOut,
     XConnectionCreate,
-    BlueskyConnectionCreate,
     ZulipConnectionCreate,
 )
 from ..serialize import (
