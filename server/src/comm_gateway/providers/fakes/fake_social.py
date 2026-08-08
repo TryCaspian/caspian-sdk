@@ -37,6 +37,7 @@ class FakeDiscordProvider:
         self.app_id = str(9_100_000 + secrets.randbelow(100_000))
         self.sent: list[dict] = []
         self.replies: list[dict] = []
+        self.edits: list[dict] = []
         self._seq = 0
 
     def _app(self, credentials):
@@ -90,6 +91,18 @@ class FakeDiscordProvider:
             provider_message_id=f"{cid}:{secrets.randbelow(99999)}", provider_thread_id=cid
         )
 
+    def edit_message(self, provider_message_id, text, credentials=None):
+        creds = credentials or {}
+        if creds.get("webhook_url"):
+            if ":" in provider_message_id:
+                wh_id = provider_message_id.split(":")[1]
+            else:
+                wh_id = provider_message_id
+            self.edits.append({"webhook": creds["webhook_url"], "message_id": wh_id, "text": text})
+        else:
+            cid, _, msg_id = provider_message_id.partition(":")
+            self.edits.append({"channel": cid, "message_id": msg_id, "text": text})
+
     def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
         try:
             event = json.loads(payload)
@@ -124,6 +137,7 @@ class FakeSlackProvider:
         self.app_id = f"A{secrets.token_hex(4).upper()}"
         self.sent: list[dict] = []
         self.replies: list[dict] = []
+        self.edits: list[dict] = []
         self.reactions: list[dict] = []
         self.refreshes = 0
         self._seq = 0
@@ -215,6 +229,10 @@ class FakeSlackProvider:
     def react(self, provider_message_id, emoji, credentials=None) -> None:
         ch, _, ts = provider_message_id.partition(":")
         self.reactions.append({"channel": ch, "ts": ts, "emoji": emoji})
+
+    def edit_message(self, provider_message_id, text, credentials=None):
+        ch, _, ts = provider_message_id.partition(":")
+        self.edits.append({"channel": ch, "ts": ts, "text": text, "ok": True})
 
     def parse_webhook(self, payload, headers, credentials=None) -> list[InboundMessage]:
         try:
