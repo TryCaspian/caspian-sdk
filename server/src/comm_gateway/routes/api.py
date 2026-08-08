@@ -58,6 +58,7 @@ from ..schemas import (
     WebhookConfig,
     WebhookOut,
     XConnectionCreate,
+    ZulipConnectionCreate,
 )
 from ..serialize import (
     agent_out,
@@ -656,6 +657,16 @@ def create_bluesky_connection(
         body,
         channel="bluesky",
     )
+
+@router.post("/connections/zulip", response_model=ConnectionOut, status_code=201)
+def create_zulip_connection(
+    body: ZulipConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="zulip")
+
 
 @router.post("/connections/x/install", response_model=ConnectionOut, status_code=201)
 def install_x(

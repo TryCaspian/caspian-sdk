@@ -29,6 +29,11 @@ router = APIRouter(prefix="/internal/providers")
 
 def _ingest(request: Request, provider, inbound) -> Response:
     ingest_inbound(request.app.state.session_factory, provider.name, inbound)
+    # Some providers (Zulip outgoing webhooks) require a JSON response body or
+    # they surface a "Failure! Invalid JSON in response" error in the channel.
+    ack = getattr(provider, "webhook_ack_body", None)
+    if ack is not None:
+        return JSONResponse(ack)
     return Response(status_code=204)
 
 

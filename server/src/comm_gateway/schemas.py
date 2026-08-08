@@ -119,6 +119,17 @@ class BlueskyConnectionCreate(BaseModel):
     app_password: str
 
 
+class ZulipConnectionCreate(BaseModel):
+    customer_id: str | None = None
+    agent_id: str | None = None
+    display_name: str | None = None
+    capabilities: list[str] | None = None
+    bot_email: str | None = None
+    bot_api_key: str | None = None
+    bot_token: str | None = None
+    server_url: str | None = None
+
+
 class PhoneConnectionCreate(BaseModel):
     customer_id: str | None = None
     agent_id: str | None = None
