@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <b>Ongoing hackathon:</b> <a href="https://caspian.devpost.com">caspian.devpost.com</a>
+</p>
+
+<p align="center">
   <a href="https://trendshift.io/repositories/91107?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-91107" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/91107/daily?language=Python" alt="TryCaspian%2Fcaspian-sdk | Trendshift" width="250" height="55"/></a>
 </p>
 
@@ -19,8 +23,6 @@
   <a href="./llms.txt">llms.txt for agents</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
-  ·
-  <a href="https://discord.gg/A28qnkvgCM">Discord</a>
 </p>
 
 <p align="center">
@@ -28,13 +30,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
   <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
-  <a href="https://discord.gg/A28qnkvgCM"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -98,6 +100,8 @@ client.listen()  # one loop, every channel
 > or just use the SDK directly (below); nothing else about the flow changes.
 
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+
+> **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).
 
 **TypeScript** — same contract, zero runtime dependencies:
 
@@ -184,7 +188,7 @@ flowchart LR
     E[Email] --> A
     M[Instagram · Messenger] --> A
     X[X] --> A
-    A["gateway providers<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
+    A["caspian-adapters<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
     I --> H["your on_message handler"]
     H -->|"message.reply()"| I
 ```
@@ -216,7 +220,7 @@ Adapters declare what the channel can physically do; an agent can never be grant
 <td valign="top">
 
 **🧪 Offline fakes for every channel**<br/>
-Fakes consume each platform's *real* payload shapes — 131 tests across Python + TS, zero network.
+Fakes consume each platform's *real* payload shapes — 98 tests across Python + TS, zero network.
 
 </td>
 </tr>
@@ -248,6 +252,17 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+**☁️ Serverless AI agents**<br/>
+No always-on server required: `handle_webhook()` lets your agent run on AWS Lambda, Vercel, or Cloudflare Workers — the gateway pushes events, you verify + dispatch, scale to zero. [Lambda + Bedrock example](./examples/serverless_lambda_bedrock).
+
+</td>
+<td valign="top">
+
+</td>
+</tr>
 </table>
 
 ## Channels
@@ -259,6 +274,7 @@ Any provider package registers under the `caspian.providers` entry-point group. 
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/zulip" width="14"/> &nbsp;Zulip | ✅ | — |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
@@ -336,8 +352,7 @@ client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
 <summary><b>Adapters without the SDK</b> — use the channel layer directly</summary>
 
 ```python
-from comm_gateway.config import Settings
-from comm_gateway.providers.registry import build_providers
+from caspian_adapters import Settings, build_providers
 
 providers = build_providers(Settings(
     providers="instagram",
@@ -410,7 +425,7 @@ that can't render blocks; omit it and a clean text fallback is generated for you
 
 | Package | |
 |---|---|
-| [`server`](./server) | `comm-gateway` — the self-hostable backend. Channel adapters (`server/src/comm_gateway/providers/`) implement one small interface per platform (`provision` / `send` / `reply` / `parse_webhook`) with real signature verification and an offline fake each. |
+| [`packages/adapters`](./packages/adapters) | `caspian-adapters` — the channel adapters. One small interface per platform (`provision` / `send` / `reply` / `parse_webhook`), real signature verification, an offline fake per channel. |
 | [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
 | [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
@@ -418,23 +433,6 @@ that can't render blocks; omit it and a clean text fallback is generated for you
 | [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
 | [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
 | [`examples`](./examples) | Minimal runnable agents. |
-| [`server`](./server) | `comm-gateway` — the backend the client talks to. A self-hostable FastAPI gateway (providers, routing, webhook verification, workers). |
-
-## Self-hosting
-
-The whole stack lives here: the client SDKs above **and** the gateway they talk to, in [`server/`](./server). You can run your own instead of the hosted one.
-
-```bash
-docker compose up
-```
-
-That brings the gateway up on `http://localhost:8000` with Postgres and the in-memory `fake` provider, so you can point the SDK at it right away:
-
-```python
-client = CommClient(base_url="http://localhost:8000", api_key="comm_dev_key_change_me")
-```
-
-Bring your own channel credentials (per connection or via env); billing and analytics stay off unless you configure them. Full guide in [`server/README.md`](./server/README.md).
 
 ## Starter templates
 
@@ -467,9 +465,9 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 100 Python tests, all offline
+uv run pytest        # 49 Python tests, all offline
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 31 vitest tests
+cd sdks/typescript && npm ci && npm test   # 49 vitest tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
@@ -478,8 +476,4 @@ Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-The self-hostable server (`server/`, published as `comm-gateway`) is
-**AGPL-3.0-or-later**: run it yourself freely, but if you offer it as a hosted
-service you must publish your changes. The client libraries are permissive
-**MIT** so you can use them in any app: the Python and TypeScript `caspian-sdk`
-packages (`sdks/`) and the `caspian` CLI (`apps/cli`).
+Apache-2.0 for this repository. The `caspian-sdk` package on PyPI is MIT.

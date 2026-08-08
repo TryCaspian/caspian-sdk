@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <b>正在进行的黑客松：</b> <a href="https://caspian.devpost.com">caspian.devpost.com</a>
+</p>
+
+<p align="center">
   <a href="https://trycaspianai.com">官网</a>
   ·
   <a href="https://pypi.org/project/caspian-sdk/">PyPI</a>
@@ -15,8 +19,6 @@
   <a href="./llms.txt">面向 AI 编程助手的 llms.txt</a>
   ·
   <a href="./CONTRIBUTING.md">参与贡献</a>
-  ·
-  <a href="https://discord.gg/A28qnkvgCM">Discord</a>
 </p>
 
 <p align="center">
@@ -24,13 +26,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TryCaspian/caspian-sdk/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="PyPI" src="https://img.shields.io/pypi/v/caspian-sdk?color=%2334D058&label=caspian-sdk" /></a>
   <a href="https://pepy.tech/project/caspian-sdk"><img alt="Downloads" src="https://img.shields.io/pypi/dm/caspian-sdk" /></a>
   <a href="https://www.npmjs.com/package/caspian-sdk"><img alt="npm" src="https://img.shields.io/npm/v/caspian-sdk?label=npm&color=CB3837" /></a>
   <a href="https://pypi.org/project/caspian-sdk/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/caspian-sdk" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue" /></a>
   <a href="https://github.com/TryCaspian/caspian-sdk"><img alt="GitHub stars" src="https://img.shields.io/github/stars/TryCaspian/caspian-sdk?style=social" /></a>
-  <a href="https://discord.gg/A28qnkvgCM"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -151,7 +153,7 @@ flowchart LR
     E[邮件] --> A
     M[Instagram · Messenger] --> A
     X[X] --> A
-    A["gateway providers<br/>签名校验 · 归一化 · 线程"] --> I["同一个智能体身份"]
+    A["caspian-adapters<br/>签名校验 · 归一化 · 线程"] --> I["同一个智能体身份"]
     I --> H["你的 on_message handler"]
     H -->|"message.reply()"| I
 ```
@@ -183,7 +185,7 @@ Slack signing secret、Meta `X-Hub-Signature-256`、Telegram secret header、X C
 <td valign="top">
 
 **🧪 每个渠道的离线 fake**<br/>
-fake 消费各平台*真实*的入站消息格式——Python + TS 共 131 个测试，零网络请求。
+fake 消费各平台*真实*的入站消息格式——Python + TS 共 98 个测试，零网络请求。
 
 </td>
 </tr>
@@ -225,6 +227,7 @@ Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到�
 | <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram（机器人） | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ 一键安装 |
 | <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ 一键安装 |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram 私信 | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
@@ -296,8 +299,7 @@ client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
 <summary><b>不经过 SDK 直接使用适配器</b></summary>
 
 ```python
-from comm_gateway.config import Settings
-from comm_gateway.providers.registry import build_providers
+from caspian_adapters import Settings, build_providers
 
 providers = build_providers(Settings(
     providers="instagram",
@@ -313,7 +315,7 @@ providers = build_providers(Settings(
 
 | 包 | |
 |---|---|
-| [`server`](./server) | `comm-gateway`——可自托管的后端。渠道适配器（`server/src/comm_gateway/providers/`）为每个平台实现一个小接口（`provision` / `send` / `reply` / `parse_webhook`），带真实签名校验与离线 fake。 |
+| [`packages/adapters`](./packages/adapters) | `caspian-adapters`——渠道适配器。每个平台一个小巧接口（`provision` / `send` / `reply` / `parse_webhook`），真实的签名校验，每个渠道配一个离线 fake。 |
 | [`sdks/python`](./sdks/python) | `caspian-sdk`（PyPI）——Python 客户端：`on_message`、`connect_*()`、`message.reply()`、行为指南。 |
 | [`sdks/typescript`](./sdks/typescript) | `caspian-sdk`（npm）——TypeScript 客户端：同一契约，camelCase API，零运行时依赖，Node 18+。 |
 | [`apps/cli`](./apps/cli) | `caspian`——在终端里初始化项目、连接渠道、追踪事件。 |
@@ -338,9 +340,9 @@ providers = build_providers(Settings(
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 100 个 Python 测试，全部离线
+uv run pytest        # 49 个 Python 测试，全部离线
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 31 个 vitest 测试
+cd sdks/typescript && npm ci && npm test   # 49 个 vitest 测试
 ```
 
 欢迎贡献——见 [CONTRIBUTING.md](./CONTRIBUTING.md)。

@@ -230,6 +230,10 @@ class ReplyCreate(BaseModel):
     media: list[dict] | None = None
 
 
+class EditCreate(BaseModel):
+    text: str
+
+
 class MessageCreate(BaseModel):
     text: str | None = None
     html: str | None = None

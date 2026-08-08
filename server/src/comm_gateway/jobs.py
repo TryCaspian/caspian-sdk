@@ -12,6 +12,7 @@ import logging
 
 import httpx
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .crypto import read_credentials, write_credentials
@@ -74,8 +75,17 @@ def ingest_inbound(session_factory, provider_name: str, inbound: list) -> int:
             )
             session.add(provider_event)
             enqueue(session, "process_provider_event", {"provider_event_id": provider_event.id})
+            try:
+                session.commit()
+            except IntegrityError:
+                # Another concurrent request (a provider's webhook retry, which
+                # Twilio/Slack/Meta/Stripe all send on timeout) already ingested
+                # this exact event between our SELECT above and this commit -
+                # uq_provider_event caught it. Treat the retry as an idempotent
+                # no-op instead of raising a 500 back to the provider.
+                session.rollback()
+                continue
             count += 1
-        session.commit()
     return count
 
 
@@ -479,6 +489,25 @@ def _send_reply(session: Session, providers: dict, payload: dict) -> None:
     _mark_sent(session, connection, message, result)
 
 
+def _edit_message(session: Session, providers: dict, payload: dict) -> None:
+    message = session.get(Message, payload["message_id"])
+    if message is None:
+        return
+    if not message.provider_message_id:
+        log.warning("edit_message for message %s has no provider_message_id; skipping", message.id)
+        return
+    connection = session.get(Connection, message.connection_id)
+    provider = _resolve(providers, connection.provider)
+    if not hasattr(provider, "edit_message"):
+        log.warning("Provider %s does not support edit_message; skipping", provider.name)
+        return
+    provider.edit_message(
+        message.provider_message_id,
+        payload["text"],
+        credentials=_live_credentials(session, connection, provider),
+    )
+
+
 def _send_message(session: Session, providers: dict, payload: dict) -> None:
     message = session.get(Message, payload["message_id"])
     if message is None or message.status != "queued":
@@ -631,6 +660,7 @@ _HANDLERS = {
     "deliver_event_webhook": _deliver_event_webhook,
     "process_provider_event": _process_provider_event,
     "send_reply": _send_reply,
+    "edit_message": _edit_message,
     "send_message": _send_message,
     "initiate": _initiate,
     "backfill": _backfill,

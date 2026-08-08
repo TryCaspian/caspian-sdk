@@ -27,6 +27,17 @@ def handle(message):
 client.listen()  # one loop, every channel
 ```
 
+`on_message` (and `on_interaction` / `on_reaction`) accepts `async def` handlers too —
+coroutines run on a shared background event loop and are awaited before the next
+message is dispatched, so async LLM clients and agent frameworks work without bridging:
+
+```python
+@client.on_message
+async def handle(message):
+    answer = await agent.run(message.text)
+    message.reply(answer)
+```
+
 `api_key` and `base_url` fall back to `CASPIAN_API_KEY` / `CASPIAN_BASE_URL` from the
 environment or a local `.env`, so `CommClient()` with no arguments works too. The legacy
 `COMM_API_KEY` / `COMM_BASE_URL` names are still honoured as a fallback.
@@ -82,6 +93,24 @@ message.reply(blocks=[
 
 Block types: `heading`, `text`, `divider`, `image`, `fields`, `list`, `buttons`,
 `card`. A button with a `url` is a link; a button with a `value` is a callback.
+
+## Streaming
+
+Stream LLM tokens with live edits on channels that support it:
+
+```python
+@client.on_message
+def handle(message):
+    with message.stream() as s:
+        for chunk in my_llm(message.text):
+            s.append(chunk)
+```
+
+On **Telegram, Discord and Slack** the first chunk posts the message and
+subsequent chunks edit it in place (throttled to avoid rate limits). On
+channels without outbound edit support (**email, SMS, WhatsApp, X, …**) all
+chunks buffer silently and a single reply fires when the block exits — no
+code change needed, the fallback is automatic.
 
 ## How it works
 
