@@ -285,13 +285,44 @@ def _provision_connection(session: Session, providers: dict, payload: dict) -> N
     )
 
 
-def _find_conversation(session: Session, connection: Connection, thread_id: str):
-    return session.execute(
+def _find_or_create_conversation(
+    session: Session, connection: Connection, thread_id: str | None, subject: str | None = None
+):
+    if not thread_id:
+        return None
+    conversation = session.execute(
         select(Conversation).where(
             Conversation.connection_id == connection.id,
             Conversation.provider_thread_id == thread_id,
         )
     ).scalar_one_or_none()
+    if conversation is not None:
+        return conversation
+
+    try:
+        with session.begin_nested():
+            conversation = Conversation(
+                id=new_id("conv"),
+                project_id=connection.project_id,
+                connection_id=connection.id,
+                subject=subject,
+                provider_thread_id=thread_id,
+            )
+            session.add(conversation)
+            session.flush()
+            return conversation
+    except IntegrityError:
+        # Unique constraint violation (raced with another worker)
+        conversation = session.execute(
+            select(Conversation).where(
+                Conversation.connection_id == connection.id,
+                Conversation.provider_thread_id == thread_id,
+            )
+        ).scalar_one_or_none()
+        if conversation is not None:
+            return conversation
+        raise
+
 
 
 def _source_message(session: Session, connection: Connection, provider_message_id: str | None):
@@ -311,7 +342,7 @@ def _process_interaction(session: Session, connection: Connection, data: dict) -
     event (distinct from message.received so handlers subscribe to it separately)."""
     action = data.get("action") or {}
     source = _source_message(session, connection, action.get("source_message_id"))
-    conversation = _find_conversation(session, connection, data.get("provider_thread_id"))
+    conversation = _find_or_create_conversation(session, connection, data.get("provider_thread_id"))
     emit_event(
         session,
         connection.project_id,
@@ -332,6 +363,7 @@ def _process_reaction(session: Session, connection: Connection, data: dict) -> N
     """An emoji reaction on one of our messages, surfaced as reaction.received."""
     reaction = data.get("reaction") or {}
     source = _source_message(session, connection, reaction.get("source_message_id"))
+    conversation = _find_or_create_conversation(session, connection, data.get("provider_thread_id"))
     emit_event(
         session,
         connection.project_id,
@@ -340,8 +372,34 @@ def _process_reaction(session: Session, connection: Connection, data: dict) -> N
             "customer_id": connection.customer_id,
             "agent_id": connection.agent_id,
             "connection_id": connection.id,
+            "conversation_id": conversation.id if conversation else None,
             "emoji": reaction.get("emoji"),
             "action": reaction.get("action", "added"),
+            "source_message": message_out(source) if source else None,
+            "sender": {"address": data.get("sender_address"), "name": data.get("sender_name")},
+        },
+    )
+
+
+def _process_command(session: Session, connection: Connection, data: dict) -> None:
+    """A slash command or bot command invoked by a user, surfaced as command.received.
+    Deduplication/Idempotency limit: Slack, Telegram, and Discord can redeliver webhook/events.
+    Full deduplication is tracked separately under issue #83.
+    """
+    command = data.get("command") or {}
+    source = _source_message(session, connection, command.get("source_message_id"))
+    conversation = _find_or_create_conversation(session, connection, data.get("provider_thread_id"))
+    emit_event(
+        session,
+        connection.project_id,
+        "command.received",
+        {
+            "customer_id": connection.customer_id,
+            "agent_id": connection.agent_id,
+            "connection_id": connection.id,
+            "conversation_id": conversation.id if conversation else None,
+            "command": command.get("command"),
+            "text": command.get("text"),
             "source_message": message_out(source) if source else None,
             "sender": {"address": data.get("sender_address"), "name": data.get("sender_name")},
         },
@@ -369,8 +427,8 @@ def _process_provider_event(session: Session, providers: dict, payload: dict) ->
         provider_event.processed = True
         return
 
-    # Button taps and reactions don't create messages; they emit their own event
-    # against the message they target. Only "message" flows into the store below.
+    # Button taps, reactions, and commands don't create messages; they emit their own event
+    # against the message/conversation they target. Only "message" flows into the store below.
     kind = data.get("kind", "message")
     if kind == "interaction":
         _process_interaction(session, connection, data)
@@ -380,22 +438,14 @@ def _process_provider_event(session: Session, providers: dict, payload: dict) ->
         _process_reaction(session, connection, data)
         provider_event.processed = True
         return
+    if kind == "command":
+        _process_command(session, connection, data)
+        provider_event.processed = True
+        return
 
-    conversation = session.execute(
-        select(Conversation).where(
-            Conversation.connection_id == connection.id,
-            Conversation.provider_thread_id == data["provider_thread_id"],
-        )
-    ).scalar_one_or_none()
-    if conversation is None:
-        conversation = Conversation(
-            id=new_id("conv"),
-            project_id=connection.project_id,
-            connection_id=connection.id,
-            subject=data.get("subject"),
-            provider_thread_id=data["provider_thread_id"],
-        )
-        session.add(conversation)
+    conversation = _find_or_create_conversation(
+        session, connection, data["provider_thread_id"], data.get("subject")
+    )
 
     duplicate = session.execute(
         select(Message).where(
