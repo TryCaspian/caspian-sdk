@@ -389,14 +389,13 @@ Replace `{base}` with this gateway's public URL. Once the developer provides the
 values, connect it:
 
 ```python
-conn = client._connect(
-    "zulip",
-    customer_id=customer_id,
-    agent_id=agent_id,
+conn = client.connect_zulip(
     bot_email="my-bot@your-org.zulipchat.com",
     bot_api_key="<the bot's API key>",
     server_url="https://your-org.zulipchat.com",
     # bot_token="<outgoing-webhook token>",   # optional; verifies inbound
+    customer_id=customer_id,
+    agent_id=agent_id,
 )
 print("Zulip bot:", conn["address"])
 ```

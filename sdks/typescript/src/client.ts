@@ -639,6 +639,32 @@ export class CommClient {
   }
 
   /**
+   * Connect a Zulip outgoing-webhook bot (bring-your-own). In your Zulip org, add
+   * an *Outgoing webhook* bot and set its Endpoint URL to
+   * `<gateway>/internal/providers/zulip/webhooks/<botEmail>`. Pass the bot's
+   * `botEmail`, its `botApiKey`, and your org's `serverUrl` (e.g.
+   * `https://your-org.zulipchat.com`). Optional `botToken` (the outgoing-webhook
+   * token) verifies inbound. The same onMessage handler receives @-mentions in
+   * channels and direct messages.
+   */
+  connectZulip(
+    opts: ConnectOptions & {
+      botEmail: string;
+      botApiKey: string;
+      serverUrl: string;
+      botToken?: string;
+    },
+  ): Promise<Connection> {
+    const { botEmail, botApiKey, serverUrl, botToken, ...rest } = opts;
+    return this.connect("zulip", rest, {
+      bot_email: botEmail,
+      bot_api_key: botApiKey,
+      server_url: serverUrl,
+      bot_token: botToken ?? null,
+    });
+  }
+
+  /**
    * Connect a Bluesky account. Pass the handle or DID as `identifier` and an app
    * password (bsky.app -> Settings -> Privacy and security -> App passwords) as
    * `appPassword` — never the account's real password. The gateway polls Bluesky
