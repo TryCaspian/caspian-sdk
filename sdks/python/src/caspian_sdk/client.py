@@ -707,6 +707,36 @@ class CommClient:
         """Connect a Telegram bot. Get a token from @BotFather; we do the rest."""
         return self._connect("telegram", customer_id, agent_id, bot_token=bot_token, **kwargs)
 
+    def connect_zulip(
+        self,
+        bot_email: str,
+        bot_api_key: str,
+        server_url: str,
+        bot_token: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Connect a Zulip outgoing-webhook bot (bring-your-own).
+
+        In your Zulip org, add an *Outgoing webhook* bot and set its Endpoint URL
+        to ``<gateway>/internal/providers/zulip/webhooks/<bot_email>``. Then pass
+        the bot's ``bot_email``, its ``bot_api_key``, and your org's
+        ``server_url`` (e.g. ``https://your-org.zulipchat.com``). Optional
+        ``bot_token`` (the outgoing-webhook token) verifies inbound. The same
+        on_message handler receives @-mentions in channels and direct messages.
+        """
+        return self._connect(
+            "zulip",
+            customer_id,
+            agent_id,
+            bot_email=bot_email,
+            bot_api_key=bot_api_key,
+            server_url=server_url,
+            bot_token=bot_token,
+            **kwargs,
+        )
+
     def add_domain(self, domain: str) -> dict:
         """Register a custom subdomain (e.g. agents.example.com). Returns the
         DNS records to add at the registrar; poll get_domain() until active."""
