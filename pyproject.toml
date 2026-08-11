@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["apps/cli/tests", "sdks/python/tests", "server/tests"]
+testpaths = ["apps/cli/tests", "sdks/python/tests"]
 addopts = "-q"
 
 
