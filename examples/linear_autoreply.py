@@ -23,7 +23,11 @@ connection_id = os.getenv("LINEAR_CONNECTION_ID")
 
 if not connection_id:
     # Auto-discover existing active Linear connection to avoid duplicate provisioning
-    existing = [c for c in client.list_connections(channel="linear") if c.get("status") in ("active", "provisioning")]
+    existing = [
+        c
+        for c in client.list_connections(channel="linear")
+        if c.get("status") in ("active", "provisioning")
+    ]
     if existing:
         connection_id = existing[0]["id"]
 
