@@ -44,6 +44,7 @@ from ..schemas import (
     EmailConnectionCreate,
     EventOut,
     InitiateCreate,
+    LinearConnectionCreate,
     MessageCreate,
     MessageOut,
     PhoneConnectionCreate,
@@ -367,10 +368,14 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
             if existing.status == "pending_oauth":
                 out["authorize_url"] = read_credentials(existing).get("authorize_url")
             return out
-        # Bring-your-own Socket Mode: paste an existing app's bot + app token.
-        # No OAuth, no public webhook — the connection goes active now and the
-        # gateway holds a WebSocket to Slack for inbound (Socket Mode listener).
-        if getattr(body, "slack_bot_token", None) and getattr(body, "slack_app_token", None):
+        has_bot_token = bool(getattr(body, "slack_bot_token", None))
+        has_app_token = bool(getattr(body, "slack_app_token", None))
+        if has_bot_token != has_app_token:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide both slack_bot_token and slack_app_token, or neither",
+            )
+        if has_bot_token and has_app_token:
             prov = provider.socket_mode_provision(body.slack_bot_token, body.slack_app_token)
             creds = dict(prov["credentials"])
             if getattr(body, "display_name", None):
@@ -657,6 +662,16 @@ def create_bluesky_connection(
         body,
         channel="bluesky",
     )
+
+@router.post("/connections/linear", response_model=ConnectionOut, status_code=201)
+def create_linear_connection(
+    body: LinearConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="linear")
+
 
 @router.post("/connections/zulip", response_model=ConnectionOut, status_code=201)
 def create_zulip_connection(

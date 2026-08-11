@@ -185,7 +185,16 @@ def _ask(prompt: str, default: str = "") -> str:
     return answer or default
 
 
+def _ask_secret(prompt: str) -> str:
+    import getpass
+    try:
+        return getpass.getpass(f"{prompt}: ").strip()
+    except (EOFError, getpass.GetPassWarning):
+        return _ask(prompt)
+
+
 def _live_channels() -> list[str]:
+
     try:
         return [c["channel"] for c in _request("GET", "/v1/channels")]
     except SystemExit:
@@ -326,6 +335,13 @@ def _connect_one(channel: str, args) -> None:
                 "Bluesky app password (bsky.app -> Settings -> Privacy and "
                 "security -> App passwords)"
             ),
+        }
+    elif channel == "linear":
+        body = {
+            "display_name": args.name,
+            "api_key": _ask_secret("Linear Personal API Key / Token"),
+            "organization_id": _ask("Linear Organization ID"),
+            "webhook_secret": _ask_secret("Linear Webhook Secret"),
         }
     else:
         body = {"display_name": args.name}
@@ -475,10 +491,11 @@ def main() -> None:
         default=None,
         choices=[
             None, "email", "telegram", "phone", "whatsapp", "imessage", "rcs",
-            "discord", "slack", "github", "x", "instagram", "facebook",
+            "discord", "slack", "github", "x", "instagram", "facebook", "linear",
         ],
         help="Channel to connect; omit to be shown the live options and asked",
     )
+
     p_connect.add_argument("--name", default=None, help="Display name for the connection")
     p_connect.add_argument("--bot-token", default=None, help="Telegram bot token from @BotFather")
     p_connect.add_argument("--domain", default=None, help="Verified custom domain for the inbox")
