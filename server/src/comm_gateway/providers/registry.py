@@ -162,6 +162,16 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             handle=settings.macmini_imessage_handle,
             webhook_secret=settings.macmini_webhook_secret,
         )
+    if name == "fake-zulip":
+        from .fakes.fake_zulip import FakeZulipProvider
+
+        return FakeZulipProvider()
+    if name == "zulip":
+        from .zulip import ZulipProvider
+
+        return ZulipProvider(
+            webhook_base=settings.zulip_webhook_base,
+        )
     if name == "fake-bluesky":
         from .fakes.fake_social import FakeBlueskyProvider
 

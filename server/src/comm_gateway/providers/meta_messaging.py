@@ -40,7 +40,9 @@ def parse_messaging_webhook(payload: bytes, page_id: str, channel: str) -> list[
             message = m.get("message")
             if not message or message.get("is_echo") or not message.get("text"):
                 continue
-            sender = m["sender"]["id"]
+            sender = (m.get("sender") or {}).get("id")
+            if not sender:
+                continue
             mid = message.get("mid", "")
             out.append(
                 InboundMessage(

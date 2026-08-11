@@ -10,5 +10,5 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-
-
+caspian-vercel-demo/
+*.tgz

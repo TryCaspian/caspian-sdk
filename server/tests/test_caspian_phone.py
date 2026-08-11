@@ -2,6 +2,7 @@
 
 from comm_gateway.config import Settings
 from comm_gateway.main import create_app
+from comm_gateway.providers.caspian_phone import parse_message_event
 from comm_gateway.providers.fakes.fake_caspian_phone import FakeCaspianPhoneProvider
 from fastapi.testclient import TestClient
 
@@ -67,3 +68,35 @@ def test_caspian_phone_release_hands_number_back():
     client.delete(f"/v1/connections/{conn['id']}")
     _run(app)
     assert provider.released == [number]
+
+
+def test_parse_message_event_skips_payload_missing_data_or_from_or_to():
+    """A malformed inbound payload (missing "data", or missing "from"/"to"
+    inside it) must be skipped, not raise a KeyError."""
+    assert parse_message_event({"event": "agent.message"}) == []
+    assert parse_message_event(
+        {"event": "agent.message", "data": {"direction": "inbound", "to": "+1555"}}
+    ) == []
+    assert parse_message_event(
+        {"event": "agent.message", "data": {"direction": "inbound", "from": "+1555"}}
+    ) == []
+
+
+def test_parse_message_event_accepts_well_formed_payload():
+    msgs = parse_message_event(
+        {
+            "event": "agent.message",
+            "channel": "sms",
+            "data": {
+                "direction": "inbound",
+                "from": "+15551234567",
+                "to": "+15559990000",
+                "message": "hi",
+                "numberId": "num_1",
+                "receivedAt": "2026-01-01T00:00:00Z",
+            },
+        }
+    )
+    assert len(msgs) == 1
+    assert msgs[0].sender_address == "+15551234567"
+    assert msgs[0].provider_inbox_id == "+15559990000"

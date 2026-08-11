@@ -44,19 +44,22 @@ def parse_message_event(payload: dict) -> list[InboundMessage]:
     """
     if payload.get("event") != "agent.message":
         return []
-    d = payload["data"]
+    d = payload.get("data") or {}
     if d.get("direction") != "inbound":
         return []
-    remote = d["from"]
+    remote = d.get("from")
+    to = d.get("to")
+    if not remote or not to:
+        return []
     stamp = d.get("receivedAt") or payload.get("timestamp", "")
     return [
         InboundMessage(
             external_event_id=f"{d.get('numberId', '')}:{stamp}:{remote}",
-            provider_inbox_id=d["to"],
+            provider_inbox_id=to,
             provider_message_id=f"{remote}:{stamp}",
             provider_thread_id=remote,
             sender_address=remote,
-            recipients=[{"address": d["to"]}],
+            recipients=[{"address": to}],
             text=d.get("message"),
             chat_type=payload.get("channel", "sms"),
         )

@@ -13,6 +13,7 @@ For first-time provisioning, also set:
 """
 
 import os
+import time
 
 from caspian_sdk import CommClient
 
@@ -47,8 +48,11 @@ else:
 @client.on_message
 def handle(message):
     print(f"Inbound from {message.sender['address']}: {message.text!r}")
+    time.sleep(10)
     message.reply(f"Thanks for reaching out. You said: {message.text}")
 
 
 print("Listening for inbound messages (Ctrl+C to stop)")
-client.listen()
+client.listen(
+    ack="Please wait while I process your request. I'm working on it now."
+)

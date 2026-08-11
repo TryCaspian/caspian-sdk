@@ -48,6 +48,7 @@ class Capability:
     INTERACTIONS = "interactions"  # button taps / message components round-trip back to the agent
     MEDIA = "media"  # send and/or receive file attachments (images, documents, ...)
     REACTIONS = "reactions"  # add emoji reactions and receive reaction events
+    EDIT_OUTBOUND = "edit_outbound"  # edit messages we previously sent (streaming post+edit)
 
 
 # Every valid capability string, for validating a connection's manifest.
