@@ -47,7 +47,7 @@ alone are not enough.
 **Tools missing after setup?** Check OpenCode’s log for
 `failed to load plugin … caspian-opencode-plugin`. OpenCode requires the package
 entry to export **only** plugin functions (no helper constants). Use
-`caspian-opencode-plugin@>=0.1.6`. Then fully quit and relaunch OpenCode (or clear
+`caspian-opencode-plugin@>=0.1.7`. Then fully quit and relaunch OpenCode (or clear)
 `~/.cache/opencode/packages/caspian-opencode-plugin*` and bunx's cached `0.1.1`).
 
 ### Manual install (no setup CLI)
@@ -85,7 +85,7 @@ OpenCode** so `"channels"` in `~/.config/opencode/caspian.json` is reloaded.
 Someone emails your agent inbox → OpenCode answers on the same thread. Follow-ups
 stay in one session via the `caspian-opencode:session=…` footer:
 
-![Caspian OpenCode email thread in Gmail](docs/email-thread.png)
+![Caspian OpenCode email thread in Gmail](https://raw.githubusercontent.com/TryCaspian/caspian-sdk/main/packages/opencode/docs/email-thread.png)
 
 ### Local monorepo (developing this package)
 
