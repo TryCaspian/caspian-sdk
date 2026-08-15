@@ -42,6 +42,7 @@ asyncio_mode = "auto"
 
 [tool.importlinter]
 root_packages = ["caspian"]
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "core must not import I/O or adapters or provision"

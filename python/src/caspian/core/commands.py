@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from caspian.core.types import ThreadId
+from caspian.core.types import Attachment, Block, Button, ThreadId
 
 
 class Post(BaseModel):
@@ -16,7 +16,39 @@ class Post(BaseModel):
     tag: Literal["Post"] = "Post"
     thread_id: ThreadId
     text: str
-    actions: tuple[dict[str, Any], ...] = ()
+    actions: tuple[Button, ...] = ()
+
+
+class Reply(BaseModel):
+    """Send a message as a reply to a specific message (threaded)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Reply"] = "Reply"
+    thread_id: ThreadId
+    reply_to: str
+    text: str
+    actions: tuple[Button, ...] = ()
+
+
+class SendBlocks(BaseModel):
+    """Send rich blocks (Slack Block Kit, Discord embeds, Telegram-rendered)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["SendBlocks"] = "SendBlocks"
+    thread_id: ThreadId
+    blocks: tuple[Block, ...]
+    text: str = ""
+    actions: tuple[Button, ...] = ()
+
+
+class SendMedia(BaseModel):
+    """Send a media attachment (photo, file, audio, video)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["SendMedia"] = "SendMedia"
+    thread_id: ThreadId
+    attachment: Attachment
+    caption: str = ""
 
 
 class Edit(BaseModel):
@@ -27,6 +59,16 @@ class Edit(BaseModel):
     thread_id: ThreadId
     message_id: str
     text: str
+    actions: tuple[Button, ...] = ()
+
+
+class Delete(BaseModel):
+    """Delete a message."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Delete"] = "Delete"
+    thread_id: ThreadId
+    message_id: str
 
 
 class React(BaseModel):
@@ -45,6 +87,96 @@ class Typing(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     tag: Literal["Typing"] = "Typing"
     thread_id: ThreadId
+
+
+class Pin(BaseModel):
+    """Pin a message in a thread."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Pin"] = "Pin"
+    thread_id: ThreadId
+    message_id: str
+
+
+class Unpin(BaseModel):
+    """Unpin a message in a thread."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Unpin"] = "Unpin"
+    thread_id: ThreadId
+    message_id: str
+
+
+class Forward(BaseModel):
+    """Forward a message to another thread."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Forward"] = "Forward"
+    from_thread_id: ThreadId
+    to_thread_id: ThreadId
+    message_id: str
+
+
+class MarkRead(BaseModel):
+    """Mark a thread (or up to a message) as read."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["MarkRead"] = "MarkRead"
+    thread_id: ThreadId
+    message_id: str = ""
+
+
+class Initiate(BaseModel):
+    """Start a conversation with someone who hasn't messaged first (cold-DM)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["Initiate"] = "Initiate"
+    thread_id: ThreadId
+    text: str
+    actions: tuple[Button, ...] = ()
+
+
+class ScheduleSend(BaseModel):
+    """Send a message at a future time (epoch seconds)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["ScheduleSend"] = "ScheduleSend"
+    thread_id: ThreadId
+    text: str
+    send_at: int
+    actions: tuple[Button, ...] = ()
+
+
+class OpenModal(BaseModel):
+    """Open an interactive modal (Slack views, Discord modals)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["OpenModal"] = "OpenModal"
+    thread_id: ThreadId
+    trigger_id: str
+    blocks: tuple[Block, ...]
+    title: str = ""
+    callback_id: str = ""
+
+
+class UpdateModal(BaseModel):
+    """Update an already-open modal."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["UpdateModal"] = "UpdateModal"
+    view_id: str
+    blocks: tuple[Block, ...]
+    title: str = ""
+
+
+class ListHistory(BaseModel):
+    """Pull recent messages from a thread (backfill)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    tag: Literal["ListHistory"] = "ListHistory"
+    thread_id: ThreadId
+    limit: int = 20
+    before: str = ""
 
 
 class Subscribe(BaseModel):
@@ -66,7 +198,7 @@ class SetState(BaseModel):
 
 
 class Call(BaseModel):
-    """Call a native adapter method (e.g. telegram.send_photo)."""
+    """Call a native adapter method (e.g. telegram.send_poll). Escape hatch."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     tag: Literal["Call"] = "Call"
@@ -83,6 +215,49 @@ class Host(BaseModel):
 
 
 Command = Annotated[
-    Post | Edit | React | Typing | Subscribe | SetState | Call | Host,
+    Post
+    | Reply
+    | SendBlocks
+    | SendMedia
+    | Edit
+    | Delete
+    | React
+    | Typing
+    | Pin
+    | Unpin
+    | Forward
+    | MarkRead
+    | Initiate
+    | ScheduleSend
+    | OpenModal
+    | UpdateModal
+    | ListHistory
+    | Subscribe
+    | SetState
+    | Call
+    | Host,
     Field(discriminator="tag"),
 ]
+
+# Commands that carry a thread_id used for overlap keying / routing.
+OUTBOUND_TAGS = frozenset(
+    {
+        "Post",
+        "Reply",
+        "SendBlocks",
+        "SendMedia",
+        "Edit",
+        "Delete",
+        "React",
+        "Typing",
+        "Pin",
+        "Unpin",
+        "Forward",
+        "MarkRead",
+        "Initiate",
+        "ScheduleSend",
+        "OpenModal",
+        "UpdateModal",
+        "ListHistory",
+    }
+)

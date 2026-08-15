@@ -19,11 +19,20 @@ class MatchAll(BaseModel):
 
 
 class MatchKind(BaseModel):
-    """Match event kind (message / action / reaction)."""
+    """Match event kind."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     op: Literal["kind"] = "kind"
-    kind: Literal["message", "action", "reaction"]
+    kind: Literal[
+        "message",
+        "action",
+        "reaction",
+        "receipt",
+        "member_join",
+        "member_leave",
+        "edited",
+        "deleted",
+    ]
 
 
 class MatchChannel(BaseModel):
@@ -92,6 +101,26 @@ def action() -> MatchKind:
 
 def reaction() -> MatchKind:
     return MatchKind(kind="reaction")
+
+
+def receipt() -> MatchKind:
+    return MatchKind(kind="receipt")
+
+
+def member_join() -> MatchKind:
+    return MatchKind(kind="member_join")
+
+
+def member_leave() -> MatchKind:
+    return MatchKind(kind="member_leave")
+
+
+def edited() -> MatchKind:
+    return MatchKind(kind="edited")
+
+
+def deleted() -> MatchKind:
+    return MatchKind(kind="deleted")
 
 
 def channel(*names: str) -> MatchChannel:
