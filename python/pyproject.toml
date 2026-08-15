@@ -1,0 +1,66 @@
+[project]
+name = "caspian"
+version = "0.1.0"
+description = "Caspian Python SDK — one bot program across channels"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "httpx>=0.27,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.4",
+    "import-linter>=2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caspian"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["tests/"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.importlinter]
+root_packages = ["caspian"]
+
+[[tool.importlinter.contracts]]
+name = "core must not import I/O or adapters or provision"
+type = "forbidden"
+source_modules = ["caspian.core"]
+forbidden_modules = [
+    "httpx",
+    "asyncio",
+    "time",
+    "random",
+    "os",
+    "datetime",
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+]
+
+[[tool.importlinter.contracts]]
+name = "provision must not import core"
+type = "forbidden"
+source_modules = ["caspian.provision"]
+forbidden_modules = ["caspian.core"]
