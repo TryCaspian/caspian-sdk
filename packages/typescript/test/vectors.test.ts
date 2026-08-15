@@ -23,4 +23,6 @@ test("golden vector fixture is present for Phase 2 kernel replay", async () => {
   }
 })
 
-test.todo("replay golden vectors through step() — Phase 2")
+test.todo("replay golden vectors through step() — Phase 2", () => {
+  // Implemented in Phase 2 when `step()` exists.
+})

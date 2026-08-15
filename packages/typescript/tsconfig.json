@@ -14,6 +14,7 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["bun"]
   },
   "include": ["src", "test"]
