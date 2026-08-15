@@ -49,7 +49,7 @@ class StepResult:
 
 def _get_thread_id(event: Event) -> ThreadId:
     """Extract thread_id from any event variant."""
-    return event.thread_id  # type: ignore[union-attr]
+    return event.thread_id
 
 
 def step(

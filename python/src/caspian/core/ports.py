@@ -85,6 +85,16 @@ class AdapterPort(Protocol):
     def capabilities(self) -> frozenset[str]: ...
 
 
+class TransportPort(Protocol):
+    """Port: performs the actual HTTP dispatch of an adapter-built payload.
+
+    Adapters build platform payloads (pure); the transport sends them.
+    This keeps adapters testable and isolates all real I/O to one place.
+    """
+
+    def send(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Result: ...
+
+
 class HostPort(Protocol):
     """Port: the customer's agent function."""
 
