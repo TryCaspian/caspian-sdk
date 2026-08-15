@@ -28,8 +28,7 @@ You don't have push access to this repo, so contribute through a fork:
 
 ## Setup
 
-This is a small monorepo: a **Python** side (a uv workspace: SDK, adapters, CLI) and
-a **TypeScript** SDK.
+This is a small monorepo: a **Python** side (uv) and a **TypeScript** SDK (bun).
 
 **Python (SDK, adapters, CLI):**
 
@@ -39,21 +38,19 @@ uv run pytest        # everything should be green before you start
 uv run ruff check .
 ```
 
-**TypeScript SDK** (`sdks/typescript`):
+**TypeScript SDK** (`packages/typescript`):
 
 ```bash
-cd sdks/typescript
-npm install
-npm run build
-npm test             # vitest
-npm run typecheck    # tsc --noEmit
+cd packages/typescript
+bun install
+bun run ci           # tsc + eslint + dependency-cruiser + bun test
 ```
 
 ## What lives where
 
 - `server/src/comm_gateway/providers` — channel adapters. Each adapter implements the small provider interface in `providers/base.py`: `provision` / `send` / `reply` / `parse_webhook` (+ optional `typing`, OAuth hooks), a `capabilities` set, and webhook signature verification.
-- `sdks/python` — the Python `caspian-sdk` client.
-- `sdks/typescript` — the TypeScript / JavaScript `caspian-sdk` client (published to npm).
+- `sdks/python` / `python/` — the Python client (rewrite lives under `python/` when present).
+- `packages/typescript` — the TypeScript client (bun). `src/core` must stay free of I/O.
 - `apps/cli` — the `caspian` CLI. It ships as a separate package `caspian-cli` (`pip install caspian-cli`, or run without installing via `uvx caspian-cli`), while `caspian-sdk` is the library. `comm` is a legacy alias only.
 
 ## Adding a new channel adapter
@@ -67,7 +64,7 @@ npm run typecheck    # tsc --noEmit
 ## Ground rules
 
 - Python: `uv run pytest` and `uv run ruff check .` must pass.
-- TypeScript: in `sdks/typescript`, `npm test` and `npm run typecheck` must pass.
+- TypeScript: in `packages/typescript`, `bun run ci` must pass.
 - No secrets in code, tests, or fixtures — use obviously-fake placeholder values.
 - Webhook verification is not optional: if the platform signs its webhooks, the adapter must verify the signature and reject mismatches.
 - Commit messages: concise imperative subject ("add reminder example", not "added"/"adds"), no emojis, and reference the issue number when there is one (e.g. `fix email triage classifier (#42)`).
