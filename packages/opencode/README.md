@@ -26,12 +26,12 @@ That’s it. OpenCode pulls the **plugin** (tools/hooks) from npm on startup
 
 | Scope | Config | Commands | Skills |
 |---|---|---|---|
-| `setup` (default) | `~/.config/opencode/opencode.json` | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
-| `setup --project` | `./opencode.json` | `./.opencode/commands/` | `./.opencode/skills/` |
+| `setup` (default) | `~/.config/opencode/opencode.jsonc` **and** `opencode.json` (whichever exist) | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
+| `setup --project` | `./opencode.jsonc` / `./opencode.json` / `.opencode/opencode.json(c)` | `./.opencode/commands/` | `./.opencode/skills/` |
 
 What setup does:
 
-1. Adds `"plugin": ["caspian-opencode-plugin"]` to `opencode.json` (tools/hooks)
+1. Adds `"caspian-opencode-plugin"` to the `plugin` array in every `opencode.json` / `opencode.jsonc` it finds (tools/hooks). JSONC comments and trailing commas are preserved.
 2. Merges `/caspian:*` command templates
 3. Copies **slash commands** and **skills** into OpenCode discovery paths
 
@@ -47,8 +47,8 @@ alone are not enough.
 **Tools missing after setup?** Check OpenCode’s log for
 `failed to load plugin … caspian-opencode-plugin`. OpenCode requires the package
 entry to export **only** plugin functions (no helper constants). Use
-`caspian-opencode-plugin@>=0.1.4`. Then fully quit and relaunch OpenCode (or clear
-`~/.cache/opencode/packages/caspian-opencode-plugin*`).
+`caspian-opencode-plugin@>=0.1.6`. Then fully quit and relaunch OpenCode (or clear
+`~/.cache/opencode/packages/caspian-opencode-plugin*` and bunx's cached `0.1.1`).
 
 ### Manual install (no setup CLI)
 

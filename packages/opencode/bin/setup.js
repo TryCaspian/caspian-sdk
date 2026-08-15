@@ -18,13 +18,18 @@
  */
 
 import { cp, readdir, readFile, writeFile, mkdir, access } from "node:fs/promises";
-import { dirname, resolve, join } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import {
+  PLUGIN_NAME,
+  registerPluginInConfig,
+  resolveConfigPaths,
+} from "./setup-register.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(__dirname, "..");
-const pkgName = "caspian-opencode-plugin";
+const pkgName = PLUGIN_NAME;
 
 const ourPkg = JSON.parse(
   await readFile(resolve(packageRoot, "package.json"), "utf-8"),
@@ -51,13 +56,6 @@ async function exists(path) {
   }
 }
 
-/** Strip // and /* *\/ comments for JSONC parse (best-effort). */
-function parseJsonc(text) {
-  const stripped = text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
-  return JSON.parse(stripped);
-}
 
 async function copyMarkdownDir(source, target, label) {
   let entries;
@@ -139,56 +137,30 @@ async function copySkillTrees(source, target) {
   return { copied, skipped };
 }
 
-/**
- * Ensure plugin is listed. For .jsonc with comments, do a surgical string edit
- * when possible so we don't wipe comments.
- */
 async function ensurePluginRegistered(configPath) {
   const label = configPath.endsWith(".jsonc") ? "opencode.jsonc" : "opencode.json";
   let raw;
+  let existed = true;
   try {
     raw = await readFile(configPath, "utf-8");
   } catch {
     raw = "{\n}\n";
+    existed = false;
   }
 
-  if (raw.includes(`"${pkgName}"`) || raw.includes(`'${pkgName}'`)) {
+  const { text, changed, action } = registerPluginInConfig(raw, pkgName);
+  if (!changed) {
     console.log(`  [skip] ${pkgName} already in ${label} plugin array`);
     return;
   }
 
-  // Surgical insert into an existing "plugin": [ ... ] array
-  const pluginArray = /("plugin"\s*:\s*\[)([\s\S]*?)(\])/m;
-  if (pluginArray.test(raw)) {
-    const updated = raw.replace(pluginArray, (full, open, body, close) => {
-      const trimmed = body.trim();
-      if (!trimmed) {
-        return `${open}\n    "${pkgName}"\n  ${close}`;
-      }
-      const needsComma = /["\w]\s*$/.test(trimmed);
-      const insertion = needsComma
-        ? `${body.replace(/\s*$/, "")},\n    "${pkgName}"\n  `
-        : `${body.replace(/\s*$/, "")}\n    "${pkgName}"\n  `;
-      return `${open}${insertion}${close}`;
-    });
-    await writeFile(configPath, updated);
-    console.log(`  [add] ${pkgName} to ${label} plugin array`);
-    return;
-  }
-
-  // No plugin array — parse (json/jsonc) and rewrite
-  let config;
-  try {
-    config = configPath.endsWith(".jsonc") ? parseJsonc(raw) : JSON.parse(raw);
-  } catch {
-    config = {};
-  }
-  if (!config.$schema) config.$schema = "https://opencode.ai/config.json";
-  if (!Array.isArray(config.plugin)) config.plugin = [];
-  config.plugin.push(pkgName);
   await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
-  console.log(`  [add] ${pkgName} to ${label} plugin array (created/rewrote)`);
+  await writeFile(configPath, text.endsWith("\n") ? text : `${text}\n`);
+  if (action === "create-key" && !existed) {
+    console.log(`  [add] ${pkgName} to ${label} plugin array (created)`);
+  } else {
+    console.log(`  [add] ${pkgName} to ${label} plugin array`);
+  }
 }
 
 async function mergeCommandsIntoJson(configPath) {
@@ -235,33 +207,17 @@ async function mergeCommandsIntoJson(configPath) {
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 }
 
-async function resolveConfigPaths(projectLocal) {
-  if (projectLocal) {
-    const root = process.cwd();
-    const paths = [
-      join(root, "opencode.jsonc"),
-      join(root, "opencode.json"),
-      join(root, ".opencode", "opencode.jsonc"),
-      join(root, ".opencode", "opencode.json"),
-    ];
-    const found = [];
-    for (const p of paths) {
-      if (await exists(p)) found.push(p);
-    }
-    return found.length ? found : [join(root, "opencode.json")];
-  }
-
-  const dir = join(homedir(), ".config", "opencode");
-  const paths = [join(dir, "opencode.jsonc"), join(dir, "opencode.json")];
-  const found = [];
-  for (const p of paths) {
-    if (await exists(p)) found.push(p);
-  }
-  return found.length ? found : [join(dir, "opencode.json")];
+async function resolveSetupConfigPaths(projectLocal) {
+  return resolveConfigPaths({
+    projectLocal,
+    cwd: process.cwd(),
+    home: homedir(),
+    exists,
+  });
 }
 
 async function setup(projectLocal) {
-  const configPaths = await resolveConfigPaths(projectLocal);
+  const configPaths = await resolveSetupConfigPaths(projectLocal);
 
   const commandsSource = resolve(packageRoot, "src", "commands");
   const commandsTarget = projectLocal
