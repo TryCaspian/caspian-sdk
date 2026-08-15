@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema"
 import { ChatKind } from "./events.ts"
+import type { Event } from "./events.ts"
 
 export const MatchAll = Schema.Struct({
   op: Schema.Literal("all"),
@@ -86,3 +87,32 @@ export const channel = (...names: string[]): MatchChannel => ({
 })
 export const dm = (): MatchChatKind => ({ op: "chat_kind", chat_kind: "dm" })
 export const group = (): MatchChatKind => ({ op: "chat_kind", chat_kind: "group" })
+
+export const evaluate = (
+  pred: Predicate,
+  event: Event,
+  channelName: string,
+): boolean => {
+  switch (pred.op) {
+    case "all":
+      return true
+    case "kind":
+      return event.kind === pred.kind
+    case "channel":
+      return pred.channels.includes(channelName)
+    case "chat_kind":
+      return "chat_kind" in event && event.chat_kind === pred.chat_kind
+    case "and":
+      return (
+        evaluate(pred.left, event, channelName) &&
+        evaluate(pred.right, event, channelName)
+      )
+    case "or":
+      return (
+        evaluate(pred.left, event, channelName) ||
+        evaluate(pred.right, event, channelName)
+      )
+    case "not":
+      return !evaluate(pred.inner, event, channelName)
+  }
+}
