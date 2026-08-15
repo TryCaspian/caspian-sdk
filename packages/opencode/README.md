@@ -82,6 +82,11 @@ After restart:
 Email works with zero config. Telegram / Discord need a connect step, then **restart
 OpenCode** so `"channels"` in `~/.config/opencode/caspian.json` is reloaded.
 
+Someone emails your agent inbox → OpenCode answers on the same thread. Follow-ups
+stay in one session via the `caspian-opencode:session=…` footer:
+
+![Caspian OpenCode email thread in Gmail](docs/email-thread.png)
+
 ### Local monorepo (developing this package)
 
 ```bash
