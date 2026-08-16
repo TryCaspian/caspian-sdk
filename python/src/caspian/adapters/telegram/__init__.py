@@ -263,6 +263,18 @@ class TelegramAdapter:
             )
         return None
 
+    def poll(self, offset: int, conn: Connection) -> Result:
+        """Build a getUpdates request-description for long-polling (pure).
+
+        The adapter performs no I/O: it returns the request Sent, exactly like
+        execute(). A polling transport dispatches it and parses the response
+        (see caspian.interpreters.polling.fetch_updates).
+        """
+        token = conn.config.get("bot_token", "")
+        if not token:
+            return Result.err(AdapterError(reason="No bot_token in connection config"))
+        return Result.ok(self._req(token, "getUpdates", {"offset": offset, "timeout": 0}))
+
     # ─── Outbound ────────────────────────────────────────────────────────────
 
     def execute(self, cmd: Command, conn: Connection) -> Result:
