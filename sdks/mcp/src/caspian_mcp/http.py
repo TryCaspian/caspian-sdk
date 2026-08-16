@@ -37,7 +37,12 @@ def require_http_token() -> str:
     return token
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def run_http(mcp, host: str = "127.0.0.1", port: int = 8765) -> None:
+    if host not in _LOOPBACK_HOSTS:
+        raise ValueError("HTTP mode only binds loopback (127.0.0.1)")
     token = require_http_token()
     mcp.settings.host = host
     mcp.settings.port = port

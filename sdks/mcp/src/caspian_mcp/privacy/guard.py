@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -16,11 +18,7 @@ from caspian_mcp.privacy.types import (
 )
 
 _PLACEHOLDER_KEY = re.compile(r"^\[(.+)_[0-9A-Fa-f]+\]$")
-
-
-def _placeholder_for(category: Category, value: str) -> str:
-    digest = hashlib.sha256(f"{category}:{value}".encode()).hexdigest()[:8].upper()
-    return f"[{category}_{digest}]"
+_PLACEHOLDER_HEX_CHARS = 32  # 128 bits
 
 
 @dataclass
@@ -29,6 +27,8 @@ class Guard:
 
     store: MappingStore = field(default_factory=MappingStore)
     categories: frozenset[Category] | None = None
+    _hmac_key: bytes = field(default_factory=lambda: os.urandom(32), repr=False, compare=False)
+    _placeholders: dict[tuple[Category, str], str] = field(default_factory=dict, repr=False)
     _scanners: list[object] = field(init=False, repr=False)
     _categories: frozenset[Category] = field(init=False, repr=False)
 
@@ -38,6 +38,20 @@ class Guard:
         self.categories = allowed
         regex_allowed = allowed & REGEX_CATEGORIES
         self._scanners = [RegexScanner(allowed=regex_allowed)] if regex_allowed else []
+
+    def _placeholder_for(self, category: Category, value: str) -> str:
+        key = (category, value)
+        cached = self._placeholders.get(key)
+        if cached:
+            return cached
+        digest = hmac.new(
+            self._hmac_key,
+            f"{category}:{value}".encode(),
+            hashlib.sha256,
+        ).hexdigest()[:_PLACEHOLDER_HEX_CHARS].upper()
+        placeholder = f"[{category}_{digest}]"
+        self._placeholders[key] = placeholder
+        return placeholder
 
     def sanitize(self, text: str, mapping_id: str | None = None) -> SanitizeResult:
         if mapping_id and self.store.alive(mapping_id):
@@ -55,7 +69,7 @@ class Guard:
         for span in spans:
             key = (span.category, span.value)
             if key not in assigned:
-                placeholder = _placeholder_for(span.category, span.value)
+                placeholder = self._placeholder_for(span.category, span.value)
                 assigned[key] = placeholder
                 self.store.put(mapping_id, placeholder, span.value)
 

@@ -7,9 +7,10 @@ This is a **separate package**. `pip install caspian-sdk` is unchanged (httpx + 
 ## Tools
 
 - `sanitize` / `restore` / `redaction_report` — Guard trio. One Mapping Id per process.
+  `restore` is for local display only — do not send `restored_text` back to the host model.
 - `list_inbox` — conversations + sanitized last-message preview (cap 20). Never raw bodies.
 - `get_thread(conversation_id, limit=50, backfill=false)` — sanitized transcript.
-- `brief_status(n=5, m=20)` — sanitized digest of newest n conversations × last m messages. **No Completer inside the MCP.**
+- `brief_status(n=5, m=20)` — sanitized digest of newest n conversations × last m messages. **No model call inside the MCP.**
 
 No `send`, `reply`, or `listen`.
 
@@ -38,10 +39,10 @@ Do not run `caspian-mcp` in a normal terminal without an MCP client — it speak
 
 ## Private HTTP + bearer
 
-Auth decides who may call **your** process. It does not move Mapping onto the laptop of a remote Completer.
+Auth decides who may call **your** process. It does not move Mapping onto the laptop of a remote host model.
 
 ```bash
-export MCP_AUTH_TOKEN=generate-a-long-random-token
+export MCP_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export CASPIAN_API_KEY=...
 caspian-mcp --http --host 127.0.0.1 --port 8765
 ```
@@ -67,4 +68,4 @@ Default bind is loopback. Mapping is in-memory, TTL-bound, gone on restart. Not 
 
 - Regex Categories only (email, IP, card, API-key shape, phone). No spaCy NER in this package.
 - Conversation list has no last-message field on the API today, so previews fetch messages (capped).
-- Completer never sees raw values **from these tools**; Channel Messages still pass through Caspian's API.
+- The host model never sees raw values **from these tools**; Channel Messages still pass through Caspian's API.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from caspian_mcp.http import BearerAuthMiddleware, require_http_token
+from caspian_mcp.http import BearerAuthMiddleware, require_http_token, run_http
 from caspian_mcp.inbox import Inbox
 from caspian_mcp.privacy.guard import Guard
 from caspian_mcp.server import mcp
@@ -135,6 +135,27 @@ def test_tools_registered() -> None:
         "get_thread",
         "brief_status",
     }
+
+
+def test_http_rejects_non_loopback() -> None:
+    try:
+        run_http(object(), host="0.0.0.0")
+    except ValueError as exc:
+        assert "loopback" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_placeholder_is_not_public_sha256() -> None:
+    import hashlib
+
+    from caspian_mcp.privacy.guard import Guard
+
+    result = Guard().sanitize("box 192.168.1.105")
+    public = hashlib.sha256(b"IP_ADDRESS:192.168.1.105").hexdigest()[:8].upper()
+    assert public not in result.safe_text
+    assert SECRET_IP not in result.safe_text
+    assert "IP_ADDRESS" in result.safe_text
 
 
 def test_http_requires_token(monkeypatch) -> None:

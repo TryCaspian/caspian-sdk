@@ -7,7 +7,7 @@ license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "Caspian", email = "ayushguptadev1@gmail.com" }]
 dependencies = [
-  "caspian-sdk",
+  "caspian-sdk>=0.6.4,<1",
   "cryptography>=44.0.0",
   "mcp>=1.12,<2",
   "python-dotenv>=1.0.0",

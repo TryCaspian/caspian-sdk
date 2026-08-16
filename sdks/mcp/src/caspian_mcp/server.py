@@ -47,7 +47,7 @@ def sanitize(text: str) -> dict[str, str]:
 
 @mcp.tool()
 def restore(text: str, mapping_id: str) -> dict[str, str]:
-    """Substitute real values back into text that still contains Placeholders."""
+    """Restore placeholders for local display only. Do not send restored_text to the host model."""
     try:
         restored = session.restore(text, mapping_id)
     except MappingExpired as exc:
@@ -93,7 +93,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     if args.http:
-        run_http(mcp, host=args.host, port=args.port)
+        try:
+            run_http(mcp, host=args.host, port=args.port)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         return
     mcp.run(transport="stdio")
 
