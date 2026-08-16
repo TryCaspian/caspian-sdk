@@ -1,12 +1,16 @@
 /**
- * Memory interpreter — runs an App in-process. No HTTP.
+ * Memory interpreter — Effect runtime for an App. No HTTP.
  *
- * Owns the overlap buffer the kernel only counts: enqueue stores events,
- * drain runs the latest and passes skipped.
+ * Kernel overlap is counters. This interpreter owns the waiting room:
+ * `Queue.dropping(bound)` for queue, `Queue.sliding(1)` for debounce.
  */
+import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as HashMap from "effect/HashMap"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Queue from "effect/Queue"
+import * as Ref from "effect/Ref"
 import type { App, OverlapPolicy, Rule } from "../core/app.ts"
 import type { Command } from "../core/commands.ts"
 import { HostError } from "../core/errors.ts"
@@ -30,21 +34,22 @@ export type HostFn = (
 ) => ReadonlyArray<Command>
 
 export const memoryHostLayer = (
-  handlers: Map<string, HostFn>,
+  handlers: Ref.Ref<HashMap.HashMap<string, HostFn>>,
 ): Layer.Layer<HostPort> =>
   Layer.succeed(HostPort, {
-    run: (handlerId, event, ctx) => {
-      const fn = handlers.get(handlerId)
-      if (fn === undefined) {
-        return Effect.fail(
-          new HostError({
-            reason: `no handler registered for ${handlerId}`,
-            handlerId,
-          }),
-        )
-      }
-      return Effect.sync(() => fn(event, ctx))
-    },
+    run: (handlerId, event, ctx) =>
+      Effect.gen(function* () {
+        const fn = HashMap.get(yield* Ref.get(handlers), handlerId)
+        if (Option.isNone(fn)) {
+          return yield* Effect.fail(
+            new HostError({
+              reason: `no handler registered for ${handlerId}`,
+              handlerId,
+            }),
+          )
+        }
+        return fn.value(event, ctx)
+      }),
   })
 
 export const chaosHostLayer: Layer.Layer<HostPort> = Layer.succeed(HostPort, {
@@ -59,6 +64,24 @@ export type MemoryInterpreterOptions = {
   readonly host?: Layer.Layer<HostPort>
 }
 
+export type MemoryInterpreter = {
+  readonly register: (
+    handlerId: string,
+    fn: HostFn,
+  ) => Effect.Effect<void>
+  readonly run: (
+    event: Event,
+    overlapKey?: string,
+  ) => Effect.Effect<StepResult>
+  readonly runSequence: (
+    events: ReadonlyArray<Event>,
+    overlapKey?: string,
+  ) => Effect.Effect<ReadonlyArray<StepResult>>
+  readonly commands: Effect.Effect<ReadonlyArray<Command>>
+  readonly errors: Effect.Effect<ReadonlyArray<HostError>>
+  readonly posts: Effect.Effect<ReadonlyArray<Command>>
+}
+
 const overlapOf = (state: StepState, key: string): OverlapState =>
   state.overlap[key] ?? idleOverlapState
 
@@ -70,168 +93,214 @@ const withOverlap = (
   overlap: { ...state.overlap, [key]: next },
 })
 
-export class MemoryInterpreter {
-  private state: StepState = emptyStepState
-  private readonly buffers = new Map<string, Array<Event>>()
-  private readonly policyByKey = new Map<string, OverlapPolicy>()
-  private readonly handlerByKey = new Map<string, string>()
-  private readonly handlers = new Map<string, HostFn>()
-  private readonly recorded: Command[] = []
-  private readonly hostErrors: HostError[] = []
-  private readonly hostLayer: Layer.Layer<HostPort>
-
-  constructor(
-    private readonly app: App,
-    private readonly options: MemoryInterpreterOptions = {},
-  ) {
-    this.hostLayer = options.host ?? memoryHostLayer(this.handlers)
-  }
-
-  register(handlerId: string, fn: HostFn): void {
-    this.handlers.set(handlerId, fn)
-  }
-
-  get commands(): ReadonlyArray<Command> {
-    return this.recorded
-  }
-
-  get errors(): ReadonlyArray<HostError> {
-    return this.hostErrors
-  }
-
-  posts(): ReadonlyArray<Command> {
-    return this.recorded.filter((command) => command.tag === "Post")
-  }
-
-  run(event: Event, overlapKey?: string): StepResult {
-    return this.runSequence([event], overlapKey)[0] ?? this.emptyResult()
-  }
-
-  runSequence(
-    events: ReadonlyArray<Event>,
-    overlapKey?: string,
-  ): ReadonlyArray<StepResult> {
-    const ingested: Array<{ event: Event; result: StepResult; key: string }> =
-      []
-    for (const event of events) {
-      const key = overlapKey ?? event.thread_id
-      const result = this.ingest(event, key)
-      ingested.push({ event, result, key })
-    }
-
-    for (const item of ingested) {
-      if (item.result.decision === "execute" && item.result.matched_rule) {
-        this.interpretHost(item.result.matched_rule, item.event, [])
-      }
-    }
-
-    this.drainAll()
-    return ingested.map((item) => item.result)
-  }
-
-  reset(): void {
-    this.state = emptyStepState
-    this.buffers.clear()
-    this.policyByKey.clear()
-    this.handlerByKey.clear()
-    this.recorded.length = 0
-    this.hostErrors.length = 0
-  }
-
-  private ingest(event: Event, key: string): StepResult {
-    const result = step(this.state, event, this.app, {
-      channelName: this.options.channelName ?? "",
-      overlapKey: key,
-    })
-    this.state = result.state
-    this.recorded.push(...result.commands)
-
-    if (result.matched_rule) {
-      this.policyByKey.set(key, result.matched_rule.overlap.policy)
-      this.handlerByKey.set(key, result.matched_rule.handler_id)
-    }
-
-    if (result.decision === "enqueue") {
-      const current = this.buffers.get(key) ?? []
-      if (result.matched_rule?.overlap.policy === "debounce") {
-        this.buffers.set(key, [event])
-      } else {
-        this.buffers.set(key, [...current, event])
-      }
-    }
-
-    return result
-  }
-
-  private drainAll(): void {
-    for (const key of Object.keys(this.state.overlap)) {
-      this.drainKey(key)
-    }
-  }
-
-  private drainKey(key: string): void {
-    const policy = this.policyByKey.get(key) ?? "queue"
-    for (;;) {
-      const transition = drainTransition(overlapOf(this.state, key), policy)
-      this.state = withOverlap(this.state, key, transition.new_state)
-      if (transition.decision !== "execute") {
-        return
-      }
-      const buffer = this.buffers.get(key) ?? []
-      const latest = buffer[buffer.length - 1]
-      const skipped = buffer.slice(0, -1)
-      this.buffers.set(key, [])
-      if (latest === undefined) {
-        return
-      }
-      const handlerId = this.handlerByKey.get(key)
-      const rule = this.app.rules.find((item) => item.handler_id === handlerId)
-      if (rule === undefined) {
-        return
-      }
-      this.recorded.push(
-        { tag: "Typing", thread_id: latest.thread_id },
-        { tag: "Host", handler_id: rule.handler_id },
-      )
-      this.interpretHost(rule, latest, skipped)
-    }
-  }
-
-  private interpretHost(
-    rule: Rule,
-    event: Event,
-    skipped: ReadonlyArray<Event>,
-  ): void {
-    const program = Effect.gen(function* () {
-      const host = yield* HostPort
-      return yield* host.run(rule.handler_id, event, { skipped })
-    }).pipe(Effect.provide(this.hostLayer), Effect.either)
-
-    const result = Effect.runSync(program)
-    if (Either.isLeft(result)) {
-      if (result.left._tag === "HostError") {
-        this.hostErrors.push(result.left)
-      } else {
-        this.hostErrors.push(
-          new HostError({
-            reason: result.left._tag,
-            handlerId: rule.handler_id,
-          }),
-        )
-      }
-      return
-    }
-    this.recorded.push(...result.right)
-  }
-
-  private emptyResult(): StepResult {
-    return {
-      decision: "unmatched",
-      commands: [],
-      matched_rule: undefined,
-      skipped_count: 0,
-      dropped: false,
-      state: this.state,
-    }
+const makeBuffer = (
+  policy: OverlapPolicy,
+  bound: number,
+): Effect.Effect<Queue.Queue<Event>> => {
+  switch (policy) {
+    case "debounce":
+      return Queue.sliding<Event>(1)
+    case "queue":
+      return Queue.dropping<Event>(bound)
+    case "drop":
+    case "parallel":
+      return Queue.dropping<Event>(1)
   }
 }
+
+export const makeMemoryInterpreter = (
+  app: App,
+  options: MemoryInterpreterOptions = {},
+): Effect.Effect<MemoryInterpreter> =>
+  Effect.gen(function* () {
+    const handlers = yield* Ref.make(HashMap.empty<string, HostFn>())
+    const hostLayer = options.host ?? memoryHostLayer(handlers)
+    const stepState = yield* Ref.make<StepState>(emptyStepState)
+    const recorded = yield* Ref.make<ReadonlyArray<Command>>([])
+    const hostErrors = yield* Ref.make<ReadonlyArray<HostError>>([])
+    const buffers = yield* Ref.make(
+      HashMap.empty<string, Queue.Queue<Event>>(),
+    )
+    const policyByKey = yield* Ref.make(
+      HashMap.empty<string, OverlapPolicy>(),
+    )
+    const handlerByKey = yield* Ref.make(HashMap.empty<string, string>())
+
+    const appendCommands = (commands: ReadonlyArray<Command>) =>
+      Ref.update(recorded, (current) => [...current, ...commands])
+
+    const bufferFor = (
+      key: string,
+      policy: OverlapPolicy,
+      bound: number,
+    ): Effect.Effect<Queue.Queue<Event>> =>
+      Effect.gen(function* () {
+        const existing = HashMap.get(yield* Ref.get(buffers), key)
+        if (Option.isSome(existing)) {
+          return existing.value
+        }
+        const queue = yield* makeBuffer(policy, bound)
+        yield* Ref.update(buffers, HashMap.set(key, queue))
+        return queue
+      })
+
+    const interpretHost = (
+      rule: Rule,
+      event: Event,
+      skipped: ReadonlyArray<Event>,
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const host = yield* HostPort
+        const result = yield* host
+          .run(rule.handler_id, event, { skipped })
+          .pipe(Effect.either)
+        if (result._tag === "Left") {
+          const error =
+            result.left._tag === "HostError"
+              ? result.left
+              : new HostError({
+                  reason: result.left._tag,
+                  handlerId: rule.handler_id,
+                })
+          yield* Ref.update(hostErrors, (current) => [...current, error])
+          return
+        }
+        yield* appendCommands(result.right)
+      }).pipe(Effect.provide(hostLayer))
+
+    const ingest = (
+      event: Event,
+      key: string,
+    ): Effect.Effect<StepResult> =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stepState)
+        const result = step(state, event, app, {
+          channelName: options.channelName ?? "",
+          overlapKey: key,
+        })
+        yield* Ref.set(stepState, result.state)
+        yield* appendCommands(result.commands)
+
+        if (result.matched_rule) {
+          yield* Ref.update(
+            policyByKey,
+            HashMap.set(key, result.matched_rule.overlap.policy),
+          )
+          yield* Ref.update(
+            handlerByKey,
+            HashMap.set(key, result.matched_rule.handler_id),
+          )
+        }
+
+        if (result.decision === "enqueue" && result.matched_rule) {
+          const queue = yield* bufferFor(
+            key,
+            result.matched_rule.overlap.policy,
+            result.matched_rule.overlap.bound,
+          )
+          yield* Queue.offer(queue, event)
+        }
+
+        return result
+      })
+
+    const drainKey = (key: string): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const policy: OverlapPolicy = Option.getOrElse(
+          HashMap.get(yield* Ref.get(policyByKey), key),
+          (): OverlapPolicy => "queue",
+        )
+        for (;;) {
+          const state = yield* Ref.get(stepState)
+          const transition = drainTransition(overlapOf(state, key), policy)
+          yield* Ref.set(stepState, withOverlap(state, key, transition.new_state))
+          if (transition.decision !== "execute") {
+            return
+          }
+          const queueOption = HashMap.get(yield* Ref.get(buffers), key)
+          if (Option.isNone(queueOption)) {
+            return
+          }
+          const waiting = Chunk.toReadonlyArray(
+            yield* Queue.takeAll(queueOption.value),
+          )
+          const latest = waiting[waiting.length - 1]
+          if (latest === undefined) {
+            return
+          }
+          const skipped = waiting.slice(0, -1)
+          const handlerId = HashMap.get(yield* Ref.get(handlerByKey), key)
+          if (Option.isNone(handlerId)) {
+            return
+          }
+          const rule = app.rules.find((item) => item.handler_id === handlerId.value)
+          if (rule === undefined) {
+            return
+          }
+          yield* appendCommands([
+            { tag: "Typing", thread_id: latest.thread_id },
+            { tag: "Host", handler_id: rule.handler_id },
+          ])
+          yield* interpretHost(rule, latest, skipped)
+        }
+      })
+
+    const drainAll = (): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stepState)
+        yield* Effect.forEach(Object.keys(state.overlap), drainKey, {
+          discard: true,
+        })
+      })
+
+    const runSequence = (
+      events: ReadonlyArray<Event>,
+      overlapKey?: string,
+    ): Effect.Effect<ReadonlyArray<StepResult>> =>
+      Effect.gen(function* () {
+        const ingested: Array<{ event: Event; result: StepResult }> = []
+        for (const event of events) {
+          const key = overlapKey ?? event.thread_id
+          const result = yield* ingest(event, key)
+          ingested.push({ event, result })
+        }
+        for (const item of ingested) {
+          if (item.result.decision === "execute" && item.result.matched_rule) {
+            yield* interpretHost(item.result.matched_rule, item.event, [])
+          }
+        }
+        yield* drainAll()
+        return ingested.map((item) => item.result)
+      })
+
+    const unmatched = (): Effect.Effect<StepResult> =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stepState)
+        return {
+          decision: "unmatched" as const,
+          commands: [],
+          matched_rule: undefined,
+          skipped_count: 0,
+          dropped: false,
+          state,
+        }
+      })
+
+    return {
+      register: (handlerId, fn) =>
+        Ref.update(handlers, HashMap.set(handlerId, fn)).pipe(Effect.asVoid),
+      run: (event, overlapKey) =>
+        Effect.gen(function* () {
+          const results = yield* runSequence([event], overlapKey)
+          return results[0] ?? (yield* unmatched())
+        }),
+      runSequence,
+      commands: Ref.get(recorded),
+      errors: Ref.get(hostErrors),
+      posts: Ref.get(recorded).pipe(
+        Effect.map((commands) =>
+          commands.filter((command) => command.tag === "Post"),
+        ),
+      ),
+    }
+  })
