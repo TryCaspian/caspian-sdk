@@ -10,9 +10,10 @@ from caspian.provision import Channels, ProvisionError, Via
 class TestChannelsAdd:
     def test_hosted_is_default(self) -> None:
         channels = Channels()
-        conn = channels.add("telegram")
+        conn = channels.add("email")
         assert conn.via == Via.HOSTED
-        assert conn.channel == "telegram"
+        assert conn.channel == "email"
+        assert conn.inbound_owner == "gateway"
 
     def test_self_host_requires_token(self) -> None:
         channels = Channels()
@@ -32,6 +33,6 @@ class TestChannelsAdd:
 
     def test_list_connections(self) -> None:
         channels = Channels()
-        channels.add("telegram")
+        channels.add("email")
         channels.add("discord")
         assert len(channels.list()) == 2

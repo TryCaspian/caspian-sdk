@@ -6,6 +6,7 @@ from caspian.adapters.telegram import TelegramAdapter
 from caspian.core.ports import Connection, RawInbound, Sent
 from caspian.core.types import ConnectionId
 from caspian.facade.caspian import Caspian
+from caspian.facade.host import FacadeHost
 from caspian.interpreters import ProcessInterpreter
 from caspian.interpreters.transport import HttpTransport, RecordingTransport
 
@@ -37,7 +38,7 @@ class TestProcessInterpreterDispatch:
             cx.app,
             TelegramAdapter(),
             self._conn(),
-            handlers=cx._handlers,
+            host=FacadeHost(cx._handlers),
             transport=transport,
         )
 
@@ -61,7 +62,9 @@ class TestProcessInterpreterDispatch:
             channel="telegram",
             config={"bot_token": "123:ABC", "webhook_secret": "sekret"},
         )
-        interp = ProcessInterpreter(cx.app, TelegramAdapter(), conn, handlers=cx._handlers)
+        interp = ProcessInterpreter(
+            cx.app, TelegramAdapter(), conn, host=FacadeHost(cx._handlers)
+        )
 
         raw = RawInbound(
             body=b'{"message": {"chat": {"id": 1, "type": "private"}, "text": "hi"}}',

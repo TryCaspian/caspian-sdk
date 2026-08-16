@@ -241,6 +241,24 @@ class GatewayPoller:
         self._parser = GatewayEventParser()
         self.cursor = cursor
 
+    def fetch_raw(self) -> Result:
+        """GET /v1/events and return the body as RawInbound (unparsed).
+
+        The facade feeds this into handle('gateway', ...) so poll and webhook
+        share ProcessInterpreter.handle_webhook. Cursor advances on success.
+        """
+        request = GatewayRequest(
+            method="GET", path="/v1/events", params={"cursor": self.cursor}
+        )
+        result = self._client.send(request)
+        if not result.is_ok:
+            return result
+        body = result.value.json_body
+        next_cursor = body.get("cursor")
+        if isinstance(next_cursor, str):
+            self.cursor = next_cursor
+        return Result.ok(RawInbound(body=json.dumps(body).encode()))
+
     def poll(self) -> Result:
         """Issue ``GET /v1/events`` and parse the response into Events.
 

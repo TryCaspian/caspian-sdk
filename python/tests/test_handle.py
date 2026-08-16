@@ -30,9 +30,10 @@ def _tg_update(chat_id: int = 555, text: str = "hi") -> bytes:
 class TestChannelManager:
     def test_add_hosted_default(self) -> None:
         cx = Caspian(dispatch=False)
-        record = cx.channels.add("telegram")
-        assert record.channel == "telegram"
-        assert "telegram" in cx.channels.added()
+        record = cx.channels.add("email")
+        assert record.channel == "email"
+        assert "email" in cx.channels.added()
+        assert record.inbound_owner == "gateway"
 
     def test_add_self_host_requires_token(self) -> None:
         from caspian.provision import ProvisionError

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from caspian.core.commands import Command
 from caspian.core.ports import Connection, RawInbound, Result
-from caspian.core.types import Event
+from caspian.core.types import Event, ThreadId
 from caspian.hosted.inbound import GatewayEventParser, GatewaySignatureVerifier
 from caspian.hosted.outbound import GatewayOutbound
 
@@ -66,3 +66,10 @@ class GatewayAdapter:
 
     def format(self, text: str) -> str:
         return text
+
+    def encode_thread(self, *parts: str) -> ThreadId:
+        return ThreadId(":".join(parts))
+
+    def decode_thread(self, thread_id: ThreadId) -> tuple[str, str]:
+        channel, _, rest = str(thread_id).partition(":")
+        return channel, rest
