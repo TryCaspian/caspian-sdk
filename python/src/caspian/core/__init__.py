@@ -26,11 +26,16 @@ from caspian.core.commands import (
     UpdateModal,
 )
 from caspian.core.errors import (
+    AccountRequired,
     AdapterError,
+    AuthRequired,
     CaspianError,
     DecodeError,
+    GatewayError,
+    InsufficientCredit,
     OverlapFull,
     ProvisionError,
+    RateLimited,
 )
 from caspian.core.overlap import OverlapState, overlap_transition
 from caspian.core.predicates import (
@@ -73,9 +78,11 @@ from caspian.core.types import (
 
 __all__ = [
     "OUTBOUND_TAGS",
+    "AccountRequired",
     "Action",
     "AdapterError",
     "App",
+    "AuthRequired",
     "Attachment",
     "Block",
     "Button",
@@ -92,8 +99,10 @@ __all__ = [
     "Event",
     "EventKind",
     "Forward",
+    "GatewayError",
     "Host",
     "Initiate",
+    "InsufficientCredit",
     "ListHistory",
     "MarkRead",
     "MemberJoin",
@@ -108,6 +117,7 @@ __all__ = [
     "Post",
     "Predicate",
     "ProvisionError",
+    "RateLimited",
     "React",
     "Reaction",
     "Receipt",

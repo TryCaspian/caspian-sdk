@@ -45,7 +45,7 @@ root_packages = ["caspian"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "core must not import I/O or adapters or provision"
+name = "core must not import I/O or adapters or provision or hosted"
 type = "forbidden"
 source_modules = ["caspian.core"]
 forbidden_modules = [
@@ -58,6 +58,7 @@ forbidden_modules = [
     "caspian.adapters",
     "caspian.provision",
     "caspian.facade",
+    "caspian.hosted",
 ]
 
 [[tool.importlinter.contracts]]
@@ -65,3 +66,13 @@ name = "provision must not import core"
 type = "forbidden"
 source_modules = ["caspian.provision"]
 forbidden_modules = ["caspian.core"]
+
+[[tool.importlinter.contracts]]
+name = "hosted must not import adapters or provision or facade"
+type = "forbidden"
+source_modules = ["caspian.hosted"]
+forbidden_modules = [
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+]
