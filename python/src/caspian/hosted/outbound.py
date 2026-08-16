@@ -15,13 +15,22 @@ from typing import Any
 
 from caspian.core.commands import (
     Command,
+    Delete,
     Edit,
+    Forward,
     Initiate,
+    ListHistory,
+    MarkRead,
+    OpenModal,
+    Pin,
     Post,
     React,
     Reply,
+    ScheduleSend,
+    SendBlocks,
     SendMedia,
     Typing,
+    Unpin,
 )
 from caspian.core.errors import AdapterError
 from caspian.core.ports import Connection, Result, Sent
@@ -50,6 +59,20 @@ def _gateway_sent(native: str, method: str, path: str, body: dict[str, Any]) -> 
                 "method": method,
                 "path": path,
                 "json_body": body,
+            },
+        }
+    )
+
+
+def _gateway_get(native: str, path: str, params: dict[str, str]) -> Sent:
+    return Sent(
+        raw={
+            "transport": "gateway",
+            "native": native,
+            "gateway": {
+                "method": "GET",
+                "path": path,
+                "params": params,
             },
         }
     )
@@ -130,6 +153,94 @@ class GatewayOutbound:
                             },
                             "text": caption,
                         },
+                    )
+                )
+
+            case Delete(message_id=mid):
+                return Result.ok(
+                    _gateway_sent("delete", "POST", f"/v1/messages/{mid}/delete", {})
+                )
+
+            case Pin(message_id=mid):
+                return Result.ok(
+                    _gateway_sent("pin", "POST", f"/v1/messages/{mid}/pin", {})
+                )
+
+            case Unpin(message_id=mid):
+                return Result.ok(
+                    _gateway_sent("unpin", "POST", f"/v1/messages/{mid}/unpin", {})
+                )
+
+            case Forward(to_thread_id=to_tid, message_id=mid):
+                return Result.ok(
+                    _gateway_sent(
+                        "forward",
+                        "POST",
+                        f"/v1/messages/{mid}/forward",
+                        {"to": conversation_id(to_tid)},
+                    )
+                )
+
+            case MarkRead(thread_id=tid, message_id=mid):
+                cid = conversation_id(tid)
+                return Result.ok(
+                    _gateway_sent(
+                        "markRead",
+                        "POST",
+                        f"/v1/conversations/{cid}/read",
+                        {"message_id": mid},
+                    )
+                )
+
+            case ScheduleSend(thread_id=tid, text=text, send_at=send_at, actions=actions):
+                cid = conversation_id(tid)
+                return Result.ok(
+                    _gateway_sent(
+                        "schedule",
+                        "POST",
+                        f"/v1/conversations/{cid}/messages",
+                        {"text": text, "actions": _buttons(actions), "send_at": send_at},
+                    )
+                )
+
+            case SendBlocks(thread_id=tid, blocks=blocks, text=text, actions=actions):
+                cid = conversation_id(tid)
+                return Result.ok(
+                    _gateway_sent(
+                        "sendBlocks",
+                        "POST",
+                        f"/v1/conversations/{cid}/messages",
+                        {
+                            "text": text,
+                            "blocks": [b.model_dump() for b in blocks],
+                            "actions": _buttons(actions),
+                        },
+                    )
+                )
+
+            case OpenModal(
+                trigger_id=trigger_id, blocks=blocks, title=title, callback_id=callback_id
+            ):
+                return Result.ok(
+                    _gateway_sent(
+                        "openModal",
+                        "POST",
+                        f"/v1/interactions/{trigger_id}/modal",
+                        {
+                            "blocks": [b.model_dump() for b in blocks],
+                            "title": title,
+                            "callback_id": callback_id,
+                        },
+                    )
+                )
+
+            case ListHistory(thread_id=tid, limit=limit, before=before):
+                cid = conversation_id(tid)
+                return Result.ok(
+                    _gateway_get(
+                        "listHistory",
+                        f"/v1/conversations/{cid}/backfill",
+                        {"limit": str(limit), "before": before},
                     )
                 )
 
