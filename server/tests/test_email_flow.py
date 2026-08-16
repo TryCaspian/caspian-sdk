@@ -119,3 +119,67 @@ def test_reply_requires_inbound_target(client, run_jobs, app):
 def test_unknown_provider_webhook_404(client):
     response = client.post("/internal/providers/nonexistent/webhooks", json={})
     assert response.status_code == 404
+
+
+def test_send_message_targets_email_counterparty():
+    """Regression: a proactive send on email must target the counterparty's
+    address, not the conversation's Message-ID thread key.
+
+    Bug: ``_send_message`` built ``to=(conversation.provider_thread_id,)``. For
+    email that thread key is not a deliverable address, so SES received an empty
+    recipient and the mail silently never left (the route still returned 201).
+    The destination must resolve to the latest inbound sender — while
+    thread-routed channels (Telegram/Slack/Discord) keep their thread id.
+    """
+    from comm_gateway.jobs import _send_destination, _send_message
+    from comm_gateway.models import Base, Connection, Conversation, Message
+    from comm_gateway.providers.fakes.fake import FakeEmailProvider
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        conn = Connection(
+            id="conn_email", project_id="p", customer_id="c", agent_id="a",
+            channel="email", provider="fake", provider_resource_id="inbox@acme.test",
+            address="inbox@acme.test", status="active",
+        )
+        conv = Conversation(
+            id="conv_email", project_id="p", connection_id="conn_email",
+            provider_thread_id="<thread-root@acme.test>",  # a Message-ID, NOT an address
+        )
+        inbound = Message(
+            id="msg_in", project_id="p", conversation_id="conv_email",
+            connection_id="conn_email", channel="email", direction="inbound",
+            status="received", sender_address="lead@customer.test",
+        )
+        outbound = Message(
+            id="msg_out", project_id="p", conversation_id="conv_email",
+            connection_id="conn_email", channel="email", direction="outbound",
+            status="queued", text="Following up",
+        )
+        session.add_all([conn, conv, inbound, outbound])
+        session.commit()
+
+        fake = FakeEmailProvider()
+        _send_message(session, {"fake": fake}, {"message_id": "msg_out"})
+
+        # The whole point: delivered to the counterparty, not the thread key.
+        assert fake.sent[0]["to"] == ["lead@customer.test"]
+        assert fake.sent[0]["to"] != ["<thread-root@acme.test>"]
+        assert session.get(Message, "msg_out").status == "sent"
+
+        # Thread-routed channels still route by provider_thread_id (chat id).
+        tg_conn = Connection(
+            id="conn_tg", project_id="p", customer_id="c", agent_id="a",
+            channel="telegram", provider="telegram", provider_resource_id="123",
+            address="bot", status="active",
+        )
+        tg_conv = Conversation(
+            id="conv_tg", project_id="p", connection_id="conn_tg",
+            provider_thread_id="999888",
+        )
+        session.add_all([tg_conn, tg_conv])
+        session.commit()
+        assert _send_destination(session, tg_conn, tg_conv) == "999888"

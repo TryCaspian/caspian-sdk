@@ -508,6 +508,31 @@ def _edit_message(session: Session, providers: dict, payload: dict) -> None:
     )
 
 
+def _send_destination(session: Session, connection: Connection, conversation: Conversation) -> str:
+    """Resolve where a proactive send should go.
+
+    Most channels route by the conversation's ``provider_thread_id`` (the chat /
+    channel id, which is the deliverable destination). Email is the exception:
+    its ``provider_thread_id`` is a Message-ID thread key, not an address — so
+    sending there yields an empty/invalid recipient and the mail never leaves.
+    For email we send to the counterparty: the most recent inbound sender on the
+    conversation (the same address ``reply()`` uses).
+    """
+    if connection.channel == "email":
+        peer = session.execute(
+            select(Message.sender_address)
+            .where(
+                Message.conversation_id == conversation.id,
+                Message.direction == "inbound",
+                Message.sender_address.is_not(None),
+            )
+            .order_by(Message.created_at.desc())
+        ).scalars().first()
+        if peer:
+            return peer
+    return conversation.provider_thread_id
+
+
 def _send_message(session: Session, providers: dict, payload: dict) -> None:
     message = session.get(Message, payload["message_id"])
     if message is None or message.status != "queued":
@@ -521,7 +546,7 @@ def _send_message(session: Session, providers: dict, payload: dict) -> None:
             text=message.text,
             html=message.html,
             subject=message.subject,
-            to=(conversation.provider_thread_id,),
+            to=(_send_destination(session, connection, conversation),),
             blocks=tuple(payload["blocks"]) if payload.get("blocks") else None,
             media=tuple(message.media) if message.media else None,
         ),
