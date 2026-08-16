@@ -41,6 +41,7 @@ class ChannelConnection:
         self.address = address
         self.authorize_url = authorize_url
         self.config = config or {}
+        self.inbound_owner = "gateway" if via == Via.HOSTED else "local"
 
 
 class ProvisionError(Exception):
@@ -79,6 +80,13 @@ class Channels:
         Default is hosted. `via="self-host"` requires bot_token.
         """
         via_enum = Via(via)
+
+        # Telegram is always BYO BotFather token — hosted does not mint a bot.
+        if channel == "telegram" and not bot_token:
+            raise ProvisionError(
+                "Telegram requires bot_token (from @BotFather). "
+                "Hosted does not mint a Telegram bot; it only owns inbound I/O."
+            )
 
         if via_enum == Via.SELF_HOST and not bot_token:
             raise ProvisionError(

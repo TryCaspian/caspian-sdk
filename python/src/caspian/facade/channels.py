@@ -13,7 +13,7 @@ from typing import Any
 from caspian.adapters import REGISTRY, get_adapter
 from caspian.core.ports import Connection
 from caspian.core.types import ConnectionId
-from caspian.provision import ChannelConnection, Channels
+from caspian.provision import ChannelConnection, Channels, Via
 
 
 class ChannelManager:
@@ -23,8 +23,9 @@ class ChannelManager:
     adapter from the registry, and bridges to a core Connection.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, gateway_client: Any = None) -> None:  # noqa: ANN401
         self._provision = Channels()
+        self._gateway_client = gateway_client
         self._adapters: dict[str, Any] = {}
         self._connections: dict[str, Connection] = {}
         self._records: dict[str, ChannelConnection] = {}
@@ -33,6 +34,7 @@ class ChannelManager:
         """Add a channel. `via` defaults to hosted; self-host requires the secret.
 
         Raises KeyError (clear message) if no adapter exists for the channel.
+        Raises provision.ProvisionError if a required token is missing.
         """
         if channel not in REGISTRY:
             raise KeyError(
@@ -41,6 +43,11 @@ class ChannelManager:
             )
 
         record = self._provision.add(channel, **options)
+        if record.via == Via.HOSTED and self._gateway_client is not None:
+            from caspian.hosted.provisioning import HostedProvisioning
+
+            HostedProvisioning(self._gateway_client).add_connection(channel, options)
+
         self._adapters[channel] = get_adapter(channel)
         self._connections[channel] = Connection(
             id=ConnectionId(f"{channel}:{len(self._connections)}"),
@@ -59,6 +66,11 @@ class ChannelManager:
         if channel not in self._connections:
             raise KeyError(f"Channel {channel!r} was not added; call channels.add() first")
         return self._connections[channel]
+
+    def inbound_owner(self, channel: str) -> str:
+        if channel not in self._records:
+            raise KeyError(f"Channel {channel!r} was not added; call channels.add() first")
+        return self._records[channel].inbound_owner
 
     def added(self) -> list[str]:
         """Names of channels that have been added."""

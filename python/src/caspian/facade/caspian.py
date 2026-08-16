@@ -1,6 +1,7 @@
 """Caspian — the B-surface facade. What bot developers import and write against.
 
 cx.on_message({...}, handler) builds Rules. The App is inspectable data.
+Self-host, poll, and hosted all run the same App through ProcessInterpreter.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from caspian.core.errors import AuthRequired, ProvisionError
 from caspian.core.interpreter_memory import MemoryInterpreter
 from caspian.core.ports import RawInbound, Result, Sent
 from caspian.core.predicates import (
@@ -20,12 +22,14 @@ from caspian.core.predicates import (
 )
 from caspian.core.types import (
     App,
+    ConnectionId,
     Overlap,
     OverlapPolicy,
     Rule,
 )
 from caspian.facade.channels import ChannelManager
-from caspian.interpreters import ProcessInterpreter
+from caspian.facade.host import FacadeHost, HandlerContext
+from caspian.interpreters.process import ProcessInterpreter
 
 Handler = Callable[..., Any]
 
@@ -34,19 +38,12 @@ class Transport(Protocol):
     def dispatch(self, sent: Sent) -> Result: ...
 
 
-class HandlerContext:
-    """Context passed to handlers alongside the thread and event."""
-
-    def __init__(self, *, skipped: int = 0) -> None:
-        self.skipped = skipped
-
-
 class Caspian:
     """The public SDK entry point. Builds an App of Rules from on_message/on_action calls.
 
     The App is pure data — inspectable, serializable, testable without a network.
 
-    To process real inbound webhooks, add channels and call handle():
+    Self-host::
 
         cx = Caspian()
         cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
@@ -55,26 +52,61 @@ class Caspian:
         def reply(thread, msg, ctx):
             thread.post(f"you said: {msg.text}")
 
-        # in your own FastAPI/Flask route:
         results = cx.handle("telegram", request_body, request_headers)
+        # or, no public URL:
+        cx.poll("telegram")
 
-    The developer owns the HTTP server; the SDK owns the pipeline
-    (verify → parse → step → handlers → execute → transport).
+    Hosted (Telegram still needs a BotFather token)::
+
+        cx = Caspian(api_key=KEY)
+        cx.channels.add("telegram", bot_token=TG)
+        cx.handle("gateway", body, headers)  # or cx.run()
     """
 
-    def __init__(self, *, transport: Transport | None = None, dispatch: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str = "",
+        base_url: str = "",
+        webhook_secret: str = "",
+        gateway_client: Any = None,  # noqa: ANN401
+        transport: Transport | None = None,
+        dispatch: bool = True,
+    ) -> None:
         self._rules: list[Rule] = []
         self._handlers: dict[str, Handler] = {}
-        self.channels = ChannelManager()
-        self._interpreters: dict[str, ProcessInterpreter] = {}
+        self._host = FacadeHost(self._handlers)
         self._dispatch = dispatch
+        self._webhook_secret = webhook_secret
+        self._gateway_client = gateway_client
+        if self._gateway_client is None and api_key:
+            from caspian.hosted.client import HttpGatewayClient
+
+            self._gateway_client = HttpGatewayClient(api_key=api_key, base_url=base_url)
+        self.channels = ChannelManager(gateway_client=self._gateway_client)
+        self._interpreters: dict[str, ProcessInterpreter] = {}
         self._transport = transport
         if dispatch and transport is None:
-            # Default to real HTTP dispatch. Import here so pure/test use
-            # (memory interpreter, dispatch=False) never requires httpx wiring.
-            from caspian.interpreters.transport import HttpTransport
+            self._transport = self._default_transport()
 
-            self._transport = HttpTransport()
+    def _default_transport(self) -> Transport:
+        from caspian.hosted.transport import GatewayTransport
+        from caspian.interpreters.smtp import SmtpTransport
+        from caspian.interpreters.transport import HttpTransport, MultiplexTransport
+        from caspian.interpreters.voice import VoiceResponder
+
+        http = HttpTransport()
+        routes: dict[str, Any] = {
+            "http_json": http,
+            "http_form": http,
+            "http_multipart": http,
+            "noop": http,
+            "smtp": SmtpTransport(),
+            "twiml": VoiceResponder(),
+        }
+        if self._gateway_client is not None:
+            routes["gateway"] = GatewayTransport(self._gateway_client)
+        return MultiplexTransport(routes)
 
     @property
     def app(self) -> App:
@@ -87,30 +119,119 @@ class Caspian:
         body: bytes,
         headers: dict[str, str] | None = None,
     ) -> list[Result]:
-        """Composition root: drive one raw inbound webhook through the full pipeline.
+        """Composition root: drive one raw inbound through the full pipeline.
 
-        verify → parse → step → run handlers → execute → transport.
+        verify → parse → step → host → execute → transport.
 
-        The developer calls this from their own HTTP route. Returns one Result per
-        executed command (or a single error Result on verify/parse failure).
-        Per-channel overlap state persists across calls.
+        `channel="gateway"` is the hosted inbound owner. A hosted platform
+        channel (inbound_owner=gateway) cannot be consumed via handle(channel).
         """
+        if channel != "gateway":
+            owner = self.channels.inbound_owner(channel)
+            if owner != "local":
+                return [
+                    Result.err(
+                        ProvisionError(
+                            reason=(
+                                f"Inbound for {channel!r} is owned by the gateway; "
+                                "use handle('gateway', ...) or run()"
+                            )
+                        )
+                    )
+                ]
         interp = self._interpreter_for(channel)
         return interp.handle_webhook(RawInbound(body=body, headers=headers or {}))
 
+    def poll(
+        self,
+        channel: str,
+        *,
+        transport: Transport | None = None,
+        max_iterations: int | None = None,
+        offset: int = 0,
+    ) -> list[Result]:
+        """Self-host long-poll. Each update is fed to the same handle_webhook."""
+        owner = self.channels.inbound_owner(channel)
+        if owner != "local":
+            return [
+                Result.err(
+                    ProvisionError(
+                        reason=f"Inbound for {channel!r} is owned by the gateway; use run()"
+                    )
+                )
+            ]
+        from caspian.interpreters.polling import PollingRunner
+
+        interp = self._interpreter_for(channel)
+        runner = PollingRunner(
+            self.channels.adapter_for(channel),
+            self.channels.connection_for(channel),
+            interp.handle_webhook,
+            transport=transport or self._transport,  # type: ignore[arg-type]
+            offset=offset,
+            sleep=lambda _s: None,
+        )
+        return runner.run_forever(max_iterations=max_iterations)
+
+    def run(self, *, max_iterations: int | None = None) -> list[Result]:
+        """Hosted poll loop: GET /v1/events → handle('gateway', ...)."""
+        if self._gateway_client is None:
+            return [
+                Result.err(
+                    AuthRequired(reason="hosted run() requires api_key or gateway_client")
+                )
+            ]
+        from caspian.hosted.inbound import GatewayPoller
+
+        poller = GatewayPoller(self._gateway_client)
+        collected: list[Result] = []
+        iterations = 0
+        while True:
+            fetched = poller.fetch_raw()
+            if not fetched.is_ok:
+                collected.append(fetched)
+            else:
+                raw: RawInbound = fetched.value
+                collected.extend(self.handle("gateway", raw.body, raw.headers))
+            iterations += 1
+            if max_iterations is not None and iterations >= max_iterations:
+                break
+        return collected
+
     def _interpreter_for(self, channel: str) -> ProcessInterpreter:
-        """Get-or-create the ProcessInterpreter for a channel (preserves overlap state)."""
+        """Get-or-create the ProcessInterpreter (preserves overlap state)."""
         if channel not in self._interpreters:
-            adapter = self.channels.adapter_for(channel)
-            connection = self.channels.connection_for(channel)
-            self._interpreters[channel] = ProcessInterpreter(
-                self.app,
-                adapter,
-                connection,
-                handlers=self._handlers,
-                transport=self._transport if self._dispatch else None,
-            )
+            if channel == "gateway":
+                self._interpreters[channel] = self._gateway_interpreter()
+            else:
+                self._interpreters[channel] = ProcessInterpreter(
+                    self.app,
+                    self.channels.adapter_for(channel),
+                    self.channels.connection_for(channel),
+                    host=self._host,
+                    transport=self._transport if self._dispatch else None,
+                )
+        # Rules may have been added after the first handle(); keep the runner current.
+        self._interpreters[channel]._app = self.app
         return self._interpreters[channel]
+
+    def _gateway_interpreter(self) -> ProcessInterpreter:
+        from caspian.core.ports import Connection
+        from caspian.hosted.adapter import GatewayAdapter
+
+        adapter = GatewayAdapter(webhook_secret=self._webhook_secret)
+        connection = Connection(
+            id=ConnectionId("gateway:0"),
+            channel="gateway",
+            config={},
+        )
+        return ProcessInterpreter(
+            self.app,
+            adapter,
+            connection,
+            host=self._host,
+            transport=self._transport if self._dispatch else None,
+        )
 
     def on_message(
         self,
@@ -122,7 +243,7 @@ class Caspian:
         Options:
             channel: str | list[str] — filter by channel name(s)
             kind: "dm" | "group" | "channel" — filter by chat kind
-            overlap: "queue" | "debounce" | "drop" | "parallel"
+            overlap: "queue" | "debounce" | "drop" | "parallel" | "stream"
             bound: int — overlap queue bound (default 16)
         """
         if handler is not None:
@@ -200,3 +321,6 @@ class Caspian:
         policy = OverlapPolicy(policy_str)
         bound = options.get("bound", 16)
         return Overlap(policy=policy, bound=bound)
+
+
+__all__ = ["Caspian", "HandlerContext"]

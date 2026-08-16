@@ -84,6 +84,12 @@ class AdapterPort(Protocol):
 
     def capabilities(self) -> frozenset[str]: ...
 
+    def format(self, text: str) -> str: ...
+
+    def encode_thread(self, *parts: str) -> ThreadId: ...
+
+    def decode_thread(self, thread_id: ThreadId) -> str | tuple[str, ...]: ...
+
 
 class TransportPort(Protocol):
     """Port: performs the actual HTTP dispatch of an adapter-built payload.
@@ -96,9 +102,9 @@ class TransportPort(Protocol):
 
 
 class HostPort(Protocol):
-    """Port: the customer's agent function."""
+    """Port: the customer's agent. Returns Commands; never talks to a platform."""
 
-    async def run(
+    def run(
         self, handler_id: str, event: Event, *, skipped_count: int = 0
     ) -> list[Command]: ...
 

@@ -52,7 +52,7 @@ def overlap_transition(
     Returns the decision (execute/enqueue/drop) and the new state.
     """
     match policy:
-        case OverlapPolicy.PARALLEL:
+        case OverlapPolicy.PARALLEL | OverlapPolicy.STREAM:
             return OverlapResult(
                 decision=OverlapDecision.EXECUTE,
                 new_state=state,

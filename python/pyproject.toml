@@ -76,3 +76,9 @@ forbidden_modules = [
     "caspian.provision",
     "caspian.facade",
 ]
+
+[[tool.importlinter.contracts]]
+name = "interpreters must not import facade"
+type = "forbidden"
+source_modules = ["caspian.interpreters"]
+forbidden_modules = ["caspian.facade"]

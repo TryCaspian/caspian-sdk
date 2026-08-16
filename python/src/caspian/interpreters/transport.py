@@ -88,3 +88,35 @@ class RecordingTransport:
     def dispatch(self, sent: Sent) -> Result:
         self.dispatched.append(sent)
         return Result.ok(Sent(message_id="rec_1", raw=sent.raw))
+
+
+class ChaosTransport:
+    """Failure interpreter: every dispatch is an AdapterError (sdk-reliability)."""
+
+    def __init__(self, reason: str = "chaos") -> None:
+        self.reason = reason
+
+    def dispatch(self, sent: Sent) -> Result:
+        return Result.err(
+            AdapterError(reason=self.reason, command_tag=str(sent.raw.get("native", "")))
+        )
+
+
+class MultiplexTransport:
+    """Route a Sent to the transport named in sent.raw['transport']."""
+
+    def __init__(
+        self,
+        routes: dict[str, Any],
+        default: Any = None,  # noqa: ANN401
+    ) -> None:
+        self._routes = routes
+        self._default = default
+
+    def dispatch(self, sent: Sent) -> Result:
+        name = str(sent.raw.get("transport", ""))
+        impl = self._routes.get(name, self._default)
+        if impl is None:
+            return Result.err(AdapterError(reason=f"No transport for {name!r}"))
+        dispatched: Result = impl.dispatch(sent)
+        return dispatched

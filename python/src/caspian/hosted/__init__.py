@@ -14,6 +14,7 @@ core must NOT import hosted.
 
 from __future__ import annotations
 
+from caspian.hosted.adapter import GatewayAdapter
 from caspian.hosted.client import (
     FakeGatewayClient,
     GatewayClient,
@@ -22,12 +23,15 @@ from caspian.hosted.client import (
     HttpGatewayClient,
     classify_status,
 )
+from caspian.hosted.provisioning import HostedProvisioning
 
 __all__ = [
     "FakeGatewayClient",
+    "GatewayAdapter",
     "GatewayClient",
     "GatewayRequest",
     "GatewayResponse",
+    "HostedProvisioning",
     "HttpGatewayClient",
     "classify_status",
 ]

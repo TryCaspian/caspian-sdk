@@ -67,6 +67,9 @@ def step(
     """
     thread_id = _get_thread_id(event)
     key = overlap_key or str(thread_id)
+    # Buttons never share the text queue (core-discipline overlap law).
+    if getattr(event, "kind", None) == "action":
+        key = f"{key}::action"
 
     for rule in app.rules:
         if not evaluate(rule.predicate, event, channel_name=channel_name):

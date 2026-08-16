@@ -13,6 +13,7 @@ from caspian.adapters.telegram import TelegramAdapter
 from caspian.core.ports import Connection, RawInbound, Result, Sent
 from caspian.core.types import ConnectionId
 from caspian.facade.caspian import Caspian
+from caspian.facade.host import FacadeHost
 from caspian.interpreters import ProcessInterpreter
 from caspian.interpreters.polling import PollingRunner, fetch_updates
 from caspian.interpreters.transport import RecordingTransport
@@ -125,7 +126,11 @@ class TestPollingRunner:
         )
         rec = RecordingTransport()
         interp = ProcessInterpreter(
-            cx.app, TelegramAdapter(), _conn(), handlers=cx._handlers, transport=rec
+            cx.app,
+            TelegramAdapter(),
+            _conn(),
+            host=FacadeHost(cx._handlers),
+            transport=rec,
         )
         transport = FakeTransport(_get_updates_response())
         runner = PollingRunner(
