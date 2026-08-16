@@ -13,6 +13,7 @@ export * from "./events.ts"
 export { ConnectionId, ThreadId } from "./ids.ts"
 export { Json, JsonObject } from "./json.ts"
 export * from "./overlap.ts"
+export * from "./ports.ts"
 export * from "./predicates.ts"
 export * from "./step.ts"
 
