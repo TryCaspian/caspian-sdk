@@ -20,7 +20,10 @@ export type StepState = {
 
 export const emptyStepState: StepState = { overlap: {} }
 
+export type StepDecision = "execute" | "enqueue" | "drop" | "unmatched"
+
 export type StepResult = {
+  readonly decision: StepDecision
   readonly commands: ReadonlyArray<Command>
   readonly matched_rule: Rule | undefined
   readonly skipped_count: number
@@ -36,6 +39,7 @@ const setOverlap = (state: StepState, key: string, next: OverlapState): StepStat
 })
 
 const unmatched = (state: StepState): StepResult => ({
+  decision: "unmatched",
   commands: [],
   matched_rule: undefined,
   skipped_count: 0,
@@ -70,6 +74,7 @@ export const step = (
     switch (transition.decision) {
       case "drop":
         return {
+          decision: "drop",
           commands: [],
           matched_rule: rule,
           skipped_count: 0,
@@ -78,6 +83,7 @@ export const step = (
         }
       case "enqueue":
         return {
+          decision: "enqueue",
           commands: [],
           matched_rule: rule,
           skipped_count: 0,
@@ -86,6 +92,7 @@ export const step = (
         }
       case "execute":
         return {
+          decision: "execute",
           commands: [
             { tag: "Typing", thread_id: event.thread_id },
             { tag: "Host", handler_id: rule.handler_id },

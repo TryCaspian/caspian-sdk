@@ -21,10 +21,16 @@ export class ProvisionError extends Schema.TaggedError<ProvisionError>()("Provis
   reason: Schema.String,
 }) {}
 
+export class HostError extends Schema.TaggedError<HostError>()("HostError", {
+  reason: Schema.String,
+  handlerId: Schema.String,
+}) {}
+
 export const CaspianError = Schema.Union(
   DecodeError,
   AdapterError,
   OverlapFull,
   ProvisionError,
+  HostError,
 )
 export type CaspianError = typeof CaspianError.Type
