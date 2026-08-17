@@ -59,9 +59,12 @@ export const chaosHostLayer: Layer.Layer<HostPort> = Layer.succeed(HostPort, {
     ),
 })
 
+export const DEFAULT_INTERPRETER_LOG_BOUND = 1024
+
 export type MemoryInterpreterOptions = {
   readonly channelName?: string
   readonly host?: Layer.Layer<HostPort>
+  readonly logBound?: number
 }
 
 export type MemoryInterpreter = {
@@ -78,6 +81,7 @@ export type MemoryInterpreter = {
     overlapKey?: string,
   ) => Effect.Effect<ReadonlyArray<StepResult>>
   readonly commands: Effect.Effect<ReadonlyArray<Command>>
+  readonly produced: Effect.Effect<ReadonlyArray<Command>>
   readonly errors: Effect.Effect<ReadonlyArray<HostError>>
   readonly posts: Effect.Effect<ReadonlyArray<Command>>
 }
@@ -116,7 +120,9 @@ export const makeMemoryInterpreter = (
     const handlers = yield* Ref.make(HashMap.empty<string, HostFn>())
     const hostLayer = options.host ?? memoryHostLayer(handlers)
     const stepState = yield* Ref.make<StepState>(emptyStepState)
+    const logBound = options.logBound ?? DEFAULT_INTERPRETER_LOG_BOUND
     const recorded = yield* Ref.make<ReadonlyArray<Command>>([])
+    const produced = yield* Ref.make<ReadonlyArray<Command>>([])
     const hostErrors = yield* Ref.make<ReadonlyArray<HostError>>([])
     const buffers = yield* Ref.make(
       HashMap.empty<string, Queue.Queue<Event>>(),
@@ -126,8 +132,19 @@ export const makeMemoryInterpreter = (
     )
     const handlerByKey = yield* Ref.make(HashMap.empty<string, string>())
 
+    const slide = <A>(
+      current: ReadonlyArray<A>,
+      extra: ReadonlyArray<A>,
+    ): ReadonlyArray<A> => {
+      const next = extra.length === 0 ? current : [...current, ...extra]
+      return next.length <= logBound ? next : next.slice(next.length - logBound)
+    }
+
     const appendCommands = (commands: ReadonlyArray<Command>) =>
-      Ref.update(recorded, (current) => [...current, ...commands])
+      Effect.gen(function* () {
+        yield* Ref.update(recorded, (current) => slide(current, commands))
+        yield* Ref.update(produced, (current) => [...current, ...commands])
+      })
 
     const bufferFor = (
       key: string,
@@ -162,7 +179,7 @@ export const makeMemoryInterpreter = (
                   reason: result.left._tag,
                   handlerId: rule.handler_id,
                 })
-          yield* Ref.update(hostErrors, (current) => [...current, error])
+          yield* Ref.update(hostErrors, (current) => slide(current, [error]))
           return
         }
         yield* appendCommands(result.right)
@@ -258,6 +275,7 @@ export const makeMemoryInterpreter = (
       overlapKey?: string,
     ): Effect.Effect<ReadonlyArray<StepResult>> =>
       Effect.gen(function* () {
+        yield* Ref.set(produced, [])
         const ingested: Array<{ event: Event; result: StepResult }> = []
         for (const event of events) {
           const key = overlapKey ?? event.thread_id
@@ -296,6 +314,7 @@ export const makeMemoryInterpreter = (
         }),
       runSequence,
       commands: Ref.get(recorded),
+      produced: Ref.get(produced),
       errors: Ref.get(hostErrors),
       posts: Ref.get(recorded).pipe(
         Effect.map((commands) =>

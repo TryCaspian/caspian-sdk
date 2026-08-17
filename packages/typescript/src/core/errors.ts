@@ -12,11 +12,6 @@ export class AdapterError extends Schema.TaggedError<AdapterError>()("AdapterErr
   commandTag: Schema.optionalWith(Schema.String, { default: () => "" }),
 }) {}
 
-export class OverlapFull extends Schema.TaggedError<OverlapFull>()("OverlapFull", {
-  threadId: Schema.String,
-  bound: Schema.Number,
-}) {}
-
 export class ProvisionError extends Schema.TaggedError<ProvisionError>()("ProvisionError", {
   reason: Schema.String,
 }) {}
@@ -29,7 +24,6 @@ export class HostError extends Schema.TaggedError<HostError>()("HostError", {
 export const CaspianError = Schema.Union(
   DecodeError,
   AdapterError,
-  OverlapFull,
   ProvisionError,
   HostError,
 )

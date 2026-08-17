@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import {
   telegramHttpLayer,
@@ -6,8 +8,14 @@ import {
   type TelegramCall,
   type TelegramFetch,
 } from "../src/adapters/telegram.ts"
-import { Connection, ConnectionId } from "../src/core/index.ts"
+import {
+  AdapterPort,
+  Connection,
+  ConnectionId,
+  DecodeError,
+} from "../src/core/index.ts"
 import { Caspian } from "../src/facade/caspian.ts"
+import { makeProcessInterpreter } from "../src/interpreters/process.ts"
 
 const conn = Schema.decodeUnknownSync(Connection)({
   id: Schema.decodeUnknownSync(ConnectionId)("conn-1"),
@@ -131,6 +139,64 @@ test("webhooks.telegram before listen fails", async () => {
   await expect(
     cx.webhooks.telegram(telegramRequest(dmUpdate, "s3cret")),
   ).rejects.toThrow(/listen/)
+})
+
+test("process does not default a Telegram secret header", async () => {
+  const calls: TelegramCall[] = []
+  const process = await Effect.runPromise(
+    makeProcessInterpreter(
+      { rules: [] },
+      {
+        connection: conn,
+        adapter: telegramLayer(calls),
+        secretToken: "s3cret",
+      },
+    ),
+  )
+  const response = await Effect.runPromise(
+    process.handle(telegramRequest(dmUpdate, "s3cret")),
+  )
+  expect(response.status).toBe(401)
+  expect(calls).toEqual([])
+})
+
+test("handle verifies the secretHeader passed with the request", async () => {
+  const calls: TelegramCall[] = []
+  const process = await Effect.runPromise(
+    makeProcessInterpreter(
+      { rules: [] },
+      {
+        connection: conn,
+        adapter: telegramLayer(calls),
+        secretToken: "s3cret",
+      },
+    ),
+  )
+  const response = await Effect.runPromise(
+    process.handle(telegramRequest(dmUpdate, "s3cret"), {
+      secretHeader: "X-Telegram-Bot-Api-Secret-Token",
+    }),
+  )
+  expect(response.status).toBe(200)
+})
+
+test("parse DecodeError still ACKs 200 so Telegram does not retry", async () => {
+  const failing = Layer.succeed(AdapterPort, {
+    name: "fail",
+    parse: () => Effect.fail(new DecodeError({ reason: "bad inbound" })),
+    overlapKey: (event) => String(event.thread_id),
+    ack: () => Effect.succeed({ ok: true as const }),
+    execute: () => Effect.succeed({ ok: true as const }),
+  })
+  const cx = new Caspian()
+  await cx.listen({
+    channel: "telegram",
+    secretToken: "s3cret",
+    connection: conn,
+    adapter: failing,
+  })
+  const response = await cx.webhooks.telegram(telegramRequest({}, "s3cret"))
+  expect(response.status).toBe(200)
 })
 
 test("http layer posts planned calls to api.telegram.org", async () => {

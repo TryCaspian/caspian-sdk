@@ -125,6 +125,28 @@ test("debounce Queue.sliding(1) keeps only the latest waiter", () => {
   ])
 })
 
+test("interpreter logs slide at logBound instead of growing unbounded", () => {
+  const interp = sync(
+    makeMemoryInterpreter(messageApp("queue"), {
+      channelName: "telegram",
+      logBound: 4,
+    }),
+  )
+  sync(
+    interp.register("h1", (event) => [
+      {
+        tag: "Post",
+        thread_id: event.thread_id,
+        text: "x",
+        actions: [],
+      },
+    ]),
+  )
+  const events = Array.from({ length: 20 }, (_, i) => dm("m", `telegram:${i}`))
+  sync(interp.runSequence(events))
+  expect(sync(interp.commands)).toHaveLength(4)
+})
+
 test("chaos host layer records a HostError instead of posting", () => {
   const interp = boot("queue", undefined, chaosHostLayer)
   sync(interp.run(dm("hello")))

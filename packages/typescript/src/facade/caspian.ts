@@ -119,7 +119,11 @@ export class Caspian {
       if (process === undefined) {
         return Promise.reject(new Error("listen() before webhooks.telegram"))
       }
-      return Effect.runPromise(process.handle(request))
+      return Effect.runPromise(
+        process.handle(request, {
+          secretHeader: "X-Telegram-Bot-Api-Secret-Token",
+        }),
+      )
     },
   }
 }
