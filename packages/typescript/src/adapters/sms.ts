@@ -10,6 +10,7 @@ import type { HttpFormCall, PlannedCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   configString,
+  messageDefaults,
   encodePrefixed,
   firstHeader,
   formFieldsOf,
@@ -47,6 +48,7 @@ export const parseSmsUpdate = (
   return Effect.succeed([
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ number: fromNumber }),
       text: form.value.Body ?? "",
       chat_kind: "dm",

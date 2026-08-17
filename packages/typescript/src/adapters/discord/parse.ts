@@ -1,7 +1,14 @@
 import * as Effect from "effect/Effect"
 import type { Event } from "../../core/events.ts"
 import { DecodeError } from "../../core/errors.ts"
-import { asJsonObject, isRecord, jsonObjectOf } from "../util.ts"
+import {
+  actionDefaults,
+  asJsonObject,
+  isRecord,
+  jsonObjectOf,
+  messageDefaults,
+  reactionDefaults,
+} from "../util.ts"
 import { encodeThreadId } from "./ids.ts"
 
 const PING = 1
@@ -47,6 +54,7 @@ const parseCommand = (payload: Record<string, unknown>): ReadonlyArray<Event> =>
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ channelId }),
       text: commandText(data),
       chat_kind: "channel",
@@ -67,6 +75,7 @@ const parseComponent = (
   return [
     {
       kind: "action",
+        ...actionDefaults,
       thread_id: encodeThreadId({ channelId }),
       data: typeof data.custom_id === "string" ? data.custom_id : "",
       sender: senderOf(payload),
@@ -86,6 +95,7 @@ const parseMessageCreate = (
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ channelId }),
       text: typeof payload.content === "string" ? payload.content : "",
       chat_kind: "channel",
@@ -106,6 +116,7 @@ const parseReaction = (
   return [
     {
       kind: "reaction",
+        ...reactionDefaults,
       thread_id: encodeThreadId({ channelId }),
       emoji: typeof emoji.name === "string" ? emoji.name : "",
       sender:

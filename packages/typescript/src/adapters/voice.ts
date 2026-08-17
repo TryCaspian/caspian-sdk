@@ -9,6 +9,7 @@ import type { PlannedCall, TwimlCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   configString,
+  messageDefaults,
   encodePrefixed,
   firstHeader,
   formFieldsOf,
@@ -46,6 +47,7 @@ export const parseVoiceUpdate = (
   return Effect.succeed([
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ callSid }),
       text,
       chat_kind: "dm",

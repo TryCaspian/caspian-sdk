@@ -10,6 +10,7 @@ import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   asJsonObject,
   configString,
+  messageDefaults,
   encodePrefixed,
   firstHeader,
   hmacSha256Base64,
@@ -55,6 +56,7 @@ const parseDm = (dm: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ kind: "dm", targetId: sender }),
       text: typeof data.text === "string" ? data.text : "",
       chat_kind: "dm",
@@ -70,6 +72,7 @@ const parseTweet = (tweet: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ kind: "tweet", targetId: userId }),
       text: typeof tweet.text === "string" ? tweet.text : "",
       chat_kind: "channel",
@@ -84,6 +87,7 @@ const parseSimpleDm = (dm: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ kind: "dm", targetId: sender }),
       text: typeof dm.text === "string" ? dm.text : "",
       chat_kind: "dm",

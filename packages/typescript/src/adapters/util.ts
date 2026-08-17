@@ -6,7 +6,28 @@ import * as Schema from "effect/Schema"
 import type { PostAction } from "../core/commands.ts"
 import { DecodeError } from "../core/errors.ts"
 import { ThreadId } from "../core/ids.ts"
+import type { Attachment, Block } from "../core/events.ts"
 import type { JsonObject } from "../core/json.ts"
+
+export const messageDefaults = {
+  message_id: "",
+  attachments: [] as Attachment[],
+  blocks: [] as Block[],
+  reply_to: "",
+  topic_id: "",
+  metadata: {} as JsonObject,
+}
+
+export const actionDefaults = {
+  message_id: "",
+  interaction_id: "",
+  metadata: {} as JsonObject,
+}
+
+export const reactionDefaults = {
+  message_id: "",
+  removed: false,
+}
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

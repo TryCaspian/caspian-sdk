@@ -67,6 +67,7 @@ export const bHostLayer = (
                   Effect.runPromise(store.setState(event.thread_id, key, value)),
               },
               event,
+              ctx.sink,
             )
             yield* Effect.tryPromise({
               try: () => Promise.resolve(fn(thread, event, ctx)),
