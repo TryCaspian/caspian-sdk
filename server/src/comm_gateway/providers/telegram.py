@@ -16,6 +16,7 @@ their bots never overlap.
 
 import hmac
 import json
+import re
 from collections.abc import Mapping
 
 import httpx
@@ -146,6 +147,50 @@ def parse_update(data: dict, bot_id: str) -> list[InboundMessage]:
     chat = message["chat"]
     chat_id = chat["id"]
     sender = message.get("from") or {}
+
+    entities = message.get("entities") or message.get("caption_entities") or []
+    command_entity = next((e for e in entities if e.get("type") == "bot_command"), None)
+
+    is_command = False
+    cmd_name = ""
+    args = None
+
+    if command_entity and command_entity.get("offset") == 0:
+        offset = command_entity["offset"]
+        length = command_entity["length"]
+        if text:
+            raw_cmd = text[offset:offset+length]
+            cmd_name = raw_cmd.lstrip("/").split("@")[0]
+            args = text[offset+length:].strip()
+            is_command = True
+    elif text and text.startswith("/"):
+        match = re.match(r"^/([a-zA-Z0-9_]+)(?:@\w+)?(?:\s+(.*))?$", text)
+        if match:
+            cmd_name = match.group(1)
+            args = match.group(2).strip() if match.group(2) else None
+            is_command = True
+
+    if is_command:
+        return [
+            InboundMessage(
+                kind="command",
+                external_event_id=f"{bot_id}:{data['update_id']}",
+                provider_inbox_id=bot_id,
+                provider_message_id=f"{chat_id}:{message['message_id']}",
+                provider_thread_id=str(chat_id),
+                sender_address=sender.get("username") or str(sender.get("id", "")) or None,
+                sender_name=_sender_name(sender),
+                command={
+                    "command": cmd_name,
+                    "text": args if args else None,
+                    "source_message_id": f"{chat_id}:{message['message_id']}",
+                },
+                media=media,
+                chat_type=chat.get("type"),
+                edited=edited,
+            )
+        ]
+
     return [
         InboundMessage(
             external_event_id=f"{bot_id}:{data['update_id']}",

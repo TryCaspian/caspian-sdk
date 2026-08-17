@@ -129,6 +129,8 @@ class InboundMessage:
     # For kind="reaction": {"emoji": ..., "source_message_id": ...,
     # "action": "added" | "removed"}.
     reaction: dict | None = None
+    # For kind="command": {"command": ..., "text": ..., "source_message_id": ...}.
+    command: dict | None = None
     # File attachments received with a message (kind="message"). Each item is a
     # dict: {"url"|"data", "mime_type", "name", "size"}.
     media: list[dict] = field(default_factory=list)

@@ -53,6 +53,49 @@ def _interaction_payload(body: bytes) -> dict | None:
         return None
 
 
+def _slash_command_payload(body: bytes) -> dict | None:
+    """Slack slash commands are POSTed as `application/x-www-form-urlencoded`.
+    Extract the key-value pairs (returns None if not a valid slash command)."""
+    from urllib.parse import parse_qs
+
+    try:
+        form = parse_qs(body.decode())
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if "command" not in form:
+        return None
+    return {k: v[0] for k, v in form.items() if v}
+
+
+def parse_slack_command(data: dict) -> list[InboundMessage]:
+    """Normalize a Slack slash command POST payload into our schema."""
+    command = data.get("command", "")
+    text = data.get("text", "")
+    user_id = data.get("user_id", "")
+    user_name = data.get("user_name")
+    channel_id = data.get("channel_id", "")
+    trigger_id = data.get("trigger_id", "")
+    app_id = data.get("api_app_id", "")
+    team_id = data.get("team_id", "")
+
+    return [
+        InboundMessage(
+            kind="command",
+            external_event_id=f"cmd:{app_id}:{team_id}:{trigger_id or command}:{user_id}",
+            provider_inbox_id=f"{app_id}:{team_id}",
+            provider_message_id=f"{channel_id}:{trigger_id}",
+            provider_thread_id=channel_id,
+            sender_address=user_id,
+            sender_name=user_name,
+            command={
+                "command": command.lstrip("/"),
+                "text": text if text else None,
+                "source_message_id": None,
+            },
+        )
+    ]
+
+
 def _media_blocks(media) -> list[dict]:
     """Render outbound attachments as Block Kit image blocks (image mime types).
     Non-image files are surfaced as a link section so the URL still reaches the
@@ -254,13 +297,21 @@ class SlackProvider:
         the app id disambiguates which developer's connection this event belongs to."""
         try:
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                return None
+            team = data.get("team_id", "")
+            app_id = data.get("api_app_id", "")
+            if not (team or app_id):
+                return None
+            return f"{app_id}:{team}"
         except ValueError:
+            cmd_data = _slash_command_payload(payload)
+            if cmd_data:
+                team = cmd_data.get("team_id", "")
+                app_id = cmd_data.get("api_app_id", "")
+                if team or app_id:
+                    return f"{app_id}:{team}"
             return None
-        team = data.get("team_id", "")
-        app_id = data.get("api_app_id", "")
-        if not (team or app_id):
-            return None
-        return f"{app_id}:{team}"
 
     def authorize_url(
         self, redirect_uri: str, state: str, app: Mapping[str, str] | None = None
@@ -513,6 +564,15 @@ class SlackProvider:
     def parse_webhook(
         self, payload: bytes, headers: Mapping[str, str], credentials=None
     ) -> list[InboundMessage]:
+        h = lower_headers(headers)
+        content_type = h.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type:
+            cmd_data = _slash_command_payload(payload)
+            if cmd_data is None:
+                raise WebhookVerificationError("invalid Slack command payload")
+            self._verify_signature(payload, headers, cmd_data, credentials)
+            return parse_slack_command(cmd_data)
+
         try:
             data = json.loads(payload)
         except ValueError as exc:

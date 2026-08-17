@@ -187,3 +187,44 @@ class FakeTelegramProvider:
                 "photo": [{"file_id": file_id, "file_size": 1234, "width": 90, "height": 90}],
             },
         }
+
+    def command_payload(
+        self,
+        *,
+        chat_id: int = 4242,
+        command: str = "start",
+        text: str | None = None,
+        use_entity: bool = True,
+        bot_suffix: str | None = None,
+        sender_username: str = "customer",
+    ) -> dict:
+        """A Telegram command update (a bot command), as the webhook delivers it."""
+        self._update_seq += 1
+        cmd_text = f"/{command}"
+        if bot_suffix:
+            cmd_text += bot_suffix
+        cmd_len = len(cmd_text)
+        if text:
+            full_text = f"{cmd_text} {text}"
+        else:
+            full_text = cmd_text
+
+        payload = {
+            "update_id": 100_000 + self._update_seq,
+            "message": {
+                "message_id": self._update_seq,
+                "from": {
+                    "id": 555_000 + self._update_seq,
+                    "username": sender_username,
+                    "first_name": "Customer",
+                },
+                "chat": {"id": chat_id, "type": "supergroup" if bot_suffix else "private"},
+                "date": 1_752_400_000,
+                "text": full_text,
+            },
+        }
+        if use_entity:
+            payload["message"]["entities"] = [
+                {"type": "bot_command", "offset": 0, "length": cmd_len}
+            ]
+        return payload

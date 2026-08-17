@@ -92,6 +92,75 @@ def parse_gateway_interaction(
     ]
 
 
+def _parse_discord_options(options: list) -> tuple[list[str], list[str]]:
+    """Recursively resolve Discord interaction command options.
+
+    Subcommands and subcommand groups (type 1 and 2) are resolved and flattened
+    into a list of space-separated strings (eventually joined as e.g. "settings
+    channel set" in the command name). The values of other leaf options are
+    returned as flat argument strings.
+    """
+    subcommands = []
+    args = []
+    for opt in options:
+        opt_type = opt.get("type")
+        if opt_type in (1, 2):  # SUB_COMMAND or SUB_COMMAND_GROUP
+            subcommands.append(opt["name"])
+            if "options" in opt:
+                sub_sub, sub_args = _parse_discord_options(opt["options"])
+                subcommands.extend(sub_sub)
+                args.extend(sub_args)
+        else:
+            if "value" in opt:
+                args.append(str(opt["value"]))
+    return subcommands, args
+
+
+def parse_gateway_command(
+    event: dict, application_id: str, route_by_guild: bool = False
+) -> list[InboundMessage]:
+    """Normalize a Discord INTERACTION_CREATE (type 2, APPLICATION_COMMAND) into a command event."""
+    data = event.get("d") or event
+    if data.get("type") != 2:
+        return []
+    comp = data.get("data") or {}
+    name = comp.get("name")
+    if not name:
+        return []
+
+    guild_id = data.get("guild_id")
+    inbox_id = _interaction_inbox(guild_id, application_id, route_by_guild)
+    if inbox_id is None:
+        return []
+
+    channel_id = str(data.get("channel_id") or "")
+    user = data.get("member", {}).get("user") if data.get("member") else data.get("user")
+    user = user or {}
+
+    subcommands, args = _parse_discord_options(comp.get("options") or [])
+    cmd_name = name
+    if subcommands:
+        cmd_name = f"{name} " + " ".join(subcommands)
+    text = " ".join(args) if args else None
+
+    return [
+        InboundMessage(
+            kind="command",
+            external_event_id=str(data["id"]),
+            provider_inbox_id=inbox_id,
+            provider_message_id=str(data["id"]),
+            provider_thread_id=channel_id,
+            sender_address=user.get("username") or str(user.get("id", "")) or None,
+            sender_name=user.get("global_name") or user.get("username"),
+            command={
+                "command": cmd_name,
+                "text": text,
+                "source_message_id": None,
+            },
+        )
+    ]
+
+
 def parse_gateway_reaction(
     event: dict, application_id: str, route_by_guild: bool = False
 ) -> list[InboundMessage]:
