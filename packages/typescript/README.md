@@ -51,6 +51,10 @@ await cx.channels.add("telegram", {
 without `webhookUrl` is an error; `inbound: false` is send-only. This mints a
 `Connection`. It does not call a live gateway yet.
 
+`cx.tools(thread)` / `cx.tools({ preset: "outbound" })` is the same Command
+surface as `thread.post` for models. Parameters come from Command schemas.
+Thread ids only — never a platform chat id. `Host` and `Call` are not tools.
+
 ```bash
 bun install
 bun run ci
