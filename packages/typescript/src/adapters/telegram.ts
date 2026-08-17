@@ -11,6 +11,7 @@ export {
   planTurn,
   type TelegramCall,
 } from "./telegram/execute.ts"
+export { telegramHttpLayer, type TelegramFetch } from "./telegram/http.ts"
 export { telegramLayer } from "./telegram/layer.ts"
 export { executeTurn } from "./turn.ts"
 

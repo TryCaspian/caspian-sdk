@@ -24,8 +24,12 @@ already means “message events.”
 `thread.post` enqueues a `Post` command. It does not call Telegram.
 
 Telegram lives in `caspian/telegram`: `parseTelegramUpdate` turns an Update
-into Events; `planTurn` turns Commands into Bot API method bodies. No live
-HTTP in this phase.
+into Events; `planTurn` turns Commands into Bot API method bodies.
+
+Self-host inbound: `await cx.listen({ adapter: telegramHttpLayer(), ... })`
+then `POST` → `cx.webhooks.telegram(req)`. The platform is ACKed 200 before
+the model; a wrong secret is 401. Tests inject a recording Layer — no live
+network in CI.
 
 ```bash
 bun install

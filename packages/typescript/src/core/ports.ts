@@ -33,7 +33,10 @@ export class AdapterPort extends Context.Tag("caspian/AdapterPort")<
     readonly name: string
     readonly parse: (raw: unknown) => Effect.Effect<ReadonlyArray<Event>>
     readonly overlapKey: (event: Event) => string
-    readonly ack: (event: Event) => Effect.Effect<Sent, AdapterError>
+    readonly ack: (
+      event: Event,
+      conn: Connection,
+    ) => Effect.Effect<Sent, AdapterError>
     readonly execute: (
       command: Command,
       conn: Connection,

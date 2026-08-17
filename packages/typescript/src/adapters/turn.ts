@@ -12,7 +12,7 @@ export const executeTurn = (
 ): Effect.Effect<void, AdapterError, AdapterPort> =>
   Effect.gen(function* () {
     const adapter = yield* AdapterPort
-    yield* adapter.ack(event)
+    yield* adapter.ack(event, conn)
     yield* Effect.forEach(
       commands,
       (command) => adapter.execute(command, conn),
