@@ -4,6 +4,7 @@ import * as Either from "effect/Either"
 import * as Schema from "effect/Schema"
 import { Event, HostPort } from "../src/core/index.ts"
 import { Caspian } from "../src/facade/caspian.ts"
+import { Caspian as PublicCaspian } from "../src/index.ts"
 import { bHostLayer, type BHandler } from "../src/facade/host.ts"
 
 const syncEither = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -103,4 +104,8 @@ test("handler throw is HostError, not a throw from step", async () => {
   await Effect.runPromise(mem.run(dm))
   const errors = await Effect.runPromise(mem.errors)
   expect(errors[0]?.reason).toContain("boom")
+})
+
+test("package root exports Caspian", () => {
+  expect(new PublicCaspian().program.rules).toEqual([])
 })
