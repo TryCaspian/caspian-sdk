@@ -17,6 +17,7 @@ import {
   type ProcessOptions,
 } from "../interpreters/process.ts"
 import { addChannel } from "../provision/add.ts"
+import { deriveTools, splitToolsArgs, type ToolsOptions, type ToolSet } from "../tools/derive.ts"
 import { desugarOnAction, desugarOnMessage } from "./desugar.ts"
 import {
   type ActionHandler,
@@ -25,6 +26,7 @@ import {
 } from "./host.ts"
 import { bHostLayer } from "./host.ts"
 import type { OnActionOptions, OnMessageOptions } from "./options.ts"
+import type { Thread } from "./thread.ts"
 
 export class Caspian {
   readonly #rules: Rule[] = []
@@ -176,6 +178,16 @@ export class Caspian {
       const id = `conn:${this.#connectionCount}`
       return Effect.runPromise(addChannel(channel, options, id))
     },
+  }
+
+  tools(thread: Thread, options?: ToolsOptions): ToolSet
+  tools(options?: ToolsOptions): ToolSet
+  tools(
+    threadOrOptions?: Thread | ToolsOptions,
+    maybeOptions?: ToolsOptions,
+  ): ToolSet {
+    const { thread, preset } = splitToolsArgs(threadOrOptions, maybeOptions)
+    return deriveTools(thread, preset)
   }
 }
 
