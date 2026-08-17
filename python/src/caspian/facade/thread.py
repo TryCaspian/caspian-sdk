@@ -61,13 +61,14 @@ class Thread:
         """Commands accumulated during this turn."""
         return list(self._commands)
 
-    def stream(self, *, min_chars: int = 24) -> Stream:
+    def stream(self, *, min_chars: int = 24, throttle: float = 0.5) -> Stream:
         """Open a streaming reply. See Stream.
 
         Sends chunks as they arrive when the channel supports editing a sent
-        message; otherwise buffers and sends once on close.
+        message; otherwise buffers and sends once on close. `throttle` caps how
+        often an edit goes out, since platforms rate-limit rapid edits.
         """
-        return Stream(self, min_chars=min_chars)
+        return Stream(self, min_chars=min_chars, throttle=throttle)
 
     def post(self, text: str, *, actions: tuple[Any, ...] = ()) -> None:
         """Enqueue a Post command."""
@@ -214,10 +215,17 @@ class Stream:
                 out.append(chunk)
     """
 
-    def __init__(self, thread: Thread, *, min_chars: int = 24) -> None:
+    def __init__(
+        self, thread: Thread, *, min_chars: int = 24, throttle: float = 0.5
+    ) -> None:
         self._thread = thread
         self._sink = thread._sink
         self._min_chars = min_chars
+        # At most one edit every `throttle` seconds. Without it a fast model
+        # produces an edit per token, which platforms rate-limit; close() always
+        # sends the complete text regardless.
+        self._throttle = throttle
+        self._last_flush = 0.0
         self._text = ""
         self._sent = ""
         self._message_id = ""
@@ -238,8 +246,18 @@ class Stream:
         if self._closed or not chunk:
             return
         self._text += chunk
-        if self.live and len(self._text) - len(self._sent) >= self._min_chars:
-            self._flush()
+        if not self.live:
+            return
+        if len(self._text) - len(self._sent) < self._min_chars:
+            return
+        if self._throttle > 0:
+            import time
+
+            now = time.monotonic()
+            if now - self._last_flush < self._throttle:
+                return
+            self._last_flush = now
+        self._flush()
 
     def close(self) -> None:
         """Send whatever is left. Safe to call twice."""
