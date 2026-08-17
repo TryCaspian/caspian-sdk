@@ -105,6 +105,13 @@ class ProcessInterpreter:
         commands: list[Command] = []
         results_so_far: list[Result] = []
         for cmd in sr.commands:
+            if isinstance(cmd, Typing):
+                # Send the indicator NOW. Its whole purpose is to show while the
+                # handler thinks; batching it with the reply makes it invisible.
+                results_so_far.append(
+                    self._maybe_dispatch(self._adapter.execute(cmd, self._connection))
+                )
+                continue
             if isinstance(cmd, Host):
                 if self._host is not None:
                     sink = _Sink(self)

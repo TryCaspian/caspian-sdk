@@ -259,6 +259,9 @@ class TestInboundOwnerAndPipeline:
     def test_run_polls_gateway_through_handle(self) -> None:
         client = FakeGatewayClient()
         client.queue_ok({"id": "c1", "channel": "telegram", "status": "active"})
+        # run() seeks past existing history first, so a fresh bot does not
+        # re-answer old messages; that costs one extra request at startup.
+        client.queue_ok({})
         client.queue_ok(
             {
                 "cursor": "c2",

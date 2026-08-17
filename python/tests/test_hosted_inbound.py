@@ -7,8 +7,8 @@ import hmac
 import json
 from typing import Any
 
-from caspian.core.ports import RawInbound
-from caspian.hosted.client import FakeGatewayClient
+from caspian.core.ports import RawInbound, Result
+from caspian.hosted.client import FakeGatewayClient, GatewayResponse
 from caspian.hosted.inbound import (
     DedupCache,
     GatewayEventParser,
@@ -277,41 +277,39 @@ class TestDedupCache:
 
 class TestGatewayPoller:
     def test_poll_returns_events_and_updates_cursor(self) -> None:
+        """Real shape: a bare array of EventOut, paged by integer seq."""
         client = FakeGatewayClient()
-        client.queue_ok(
-            {
-                "events": [
-                    {
-                        "type": "message",
-                        "channel": "telegram",
-                        "conversation_id": "c",
-                        "message": {"id": "m1", "text": "hi", "chat_kind": "dm"},
-                    }
-                ],
-                "cursor": "c2",
-            }
+        client.queue(
+            Result.ok(
+                GatewayResponse(
+                    status_code=200,
+                    json_list=[{
+                        "id": "evt_1", "seq": 7, "type": "message.received",
+                        "data": {"message": {
+                            "id": "msg_1", "conversation_id": "conv_1",
+                            "channel": "slack", "direction": "inbound",
+                            "text": "hi", "chat_type": "channel",
+                        }},
+                    }],
+                )
+            )
         )
-        poller = GatewayPoller(client)
+        poller = GatewayPoller(client, replay=True)
         result = poller.poll()
         assert result.is_ok
         assert len(result.value) == 1
-        assert result.value[0].kind == "message"
-        assert poller.cursor == "c2"
-        assert client.requests[0].method == "GET"
-        assert client.requests[0].path == "/v1/events"
-        assert client.requests[0].params == {"cursor": ""}
+        assert poller.cursor == 7
 
-    def test_poll_sends_current_cursor(self) -> None:
+    def test_poll_sends_after_seq_not_cursor(self) -> None:
         client = FakeGatewayClient()
-        client.queue_ok({"events": [], "cursor": "c3"})
-        poller = GatewayPoller(client, cursor="c1")
-        poller.poll()
-        assert client.requests[0].params == {"cursor": "c1"}
+        client.queue(Result.ok(GatewayResponse(status_code=200, json_list=[])))
+        GatewayPoller(client, replay=True, cursor="12").poll()
+        assert client.requests[-1].params == {"after_seq": "12", "limit": "100"}
 
     def test_poll_propagates_error(self) -> None:
         client = FakeGatewayClient()
         client.queue_status(401, "unauthorized")
-        poller = GatewayPoller(client)
+        poller = GatewayPoller(client, replay=True)
         result = poller.poll()
         assert not result.is_ok
         assert result.error is not None

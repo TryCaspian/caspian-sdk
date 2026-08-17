@@ -45,7 +45,11 @@ class _Client:
         from caspian.core.ports import Result
 
         self.seen.append(request)
-        return Result.ok(GatewayResponse(status_code=200, json_list=self.rows))
+        # The real endpoint filters by after_seq; a fake that ignores it would
+        # hide exactly the replay bug these tests exist to catch.
+        after = int(request.params.get("after_seq", "0") or 0)
+        rows = [r for r in self.rows if int(r.get("seq", 0)) > after]
+        return Result.ok(GatewayResponse(status_code=200, json_list=rows))
 
 
 class TestEventShape:
@@ -76,7 +80,7 @@ class TestEventShape:
 class TestPollerContract:
     def test_uses_after_seq_and_limit_not_cursor(self) -> None:
         c = _Client([REAL_EVENT])
-        GatewayPoller(c).fetch_raw()
+        GatewayPoller(c, replay=True).fetch_raw()
         params = c.seen[0].params
         assert "after_seq" in params, f"real endpoint pages by after_seq: {params}"
         assert "limit" in params
@@ -84,7 +88,7 @@ class TestPollerContract:
 
     def test_array_response_is_not_dropped(self) -> None:
         c = _Client([REAL_EVENT])
-        poller = GatewayPoller(c)
+        poller = GatewayPoller(c, replay=True)
         raw = poller.fetch_raw()
         assert raw.is_ok
         body = json.loads(raw.value.body)
@@ -92,7 +96,7 @@ class TestPollerContract:
 
     def test_cursor_advances_to_highest_seq(self) -> None:
         c = _Client([REAL_EVENT])
-        poller = GatewayPoller(c)
+        poller = GatewayPoller(c, replay=True)
         poller.fetch_raw()
         assert poller.cursor == 24210
         poller.fetch_raw()
@@ -143,3 +147,56 @@ class TestTypingUsesMessageEndpoint:
 
         caps = GatewayAdapter().capabilities()
         assert "delete" not in caps
+
+
+class TestNoHistoryReplayOnStart:
+    """A restart must not re-answer every message ever received.
+
+    Regression: the poller began at after_seq=0, so restarting the bot replayed
+    the whole history. Users saw the bot reply on a channel they had not pinged
+    and answer stale questions.
+    """
+
+    def test_fresh_poller_skips_existing_history(self) -> None:
+        c = _Client([REAL_EVENT])
+        poller = GatewayPoller(c)
+        raw = poller.fetch_raw()
+        assert raw.is_ok
+        assert json.loads(raw.value.body)["events"] == [], "history must not be replayed"
+        assert poller.cursor == 24210, "but the cursor must move past it"
+
+    def test_replay_is_opt_in(self) -> None:
+        c = _Client([REAL_EVENT])
+        raw = GatewayPoller(c, replay=True).fetch_raw()
+        assert len(json.loads(raw.value.body)["events"]) == 1
+
+    def test_explicit_cursor_is_respected(self) -> None:
+        c = _Client([REAL_EVENT])
+        raw = GatewayPoller(c, cursor="24000").fetch_raw()
+        assert len(json.loads(raw.value.body)["events"]) == 1
+
+
+class TestTypingIsSentBeforeTheHandler:
+    """The indicator exists to show WHILE the agent thinks."""
+
+    def test_typing_dispatches_before_handler_output(self) -> None:
+        from caspian import Caspian
+        from caspian.interpreters.transport import RecordingTransport
+
+        rec = RecordingTransport()
+        cx = Caspian(transport=rec)
+        cx.channels.add("telegram", via="self-host", bot_token="1:A")
+
+        @cx.on_message({"channel": "telegram"})
+        def handler(thread, msg, ctx):  # noqa: ANN001
+            # Whatever the handler did must land AFTER the indicator.
+            thread.post("done")
+
+        update = json.dumps({"update_id": 1, "message": {
+            "message_id": 1, "from": {"id": 1},
+            "chat": {"id": 5, "type": "private"}, "text": "hi"}}).encode()
+        cx.handle("telegram", update)
+
+        order = [s.raw.get("url", "").rsplit("/", 1)[-1] for s in rec.dispatched]
+        assert order, "nothing was dispatched"
+        assert "sendChatAction" in order[0], f"typing must be first, got {order}"

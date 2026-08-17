@@ -275,13 +275,47 @@ class DedupCache:
             self._seen.discard(oldest)
 
 
+def _as_seq(value: object) -> int:
+    """Coerce a cursor ("", "24000", 24000, None) to an int seq."""
+    try:
+        return int(str(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 class GatewayPoller:
     """Poll ``GET /v1/events`` and yield kernel Events, tracking the cursor."""
 
-    def __init__(self, client: GatewayClient, cursor: str = "") -> None:
+    def __init__(
+        self, client: GatewayClient, cursor: str = "", *, replay: bool = False
+    ) -> None:
         self._client = client
         self._parser = GatewayEventParser()
-        self.cursor = cursor
+        # The gateway pages by an integer seq. Accept "" / str / int and keep
+        # one numeric type internally so comparisons cannot blow up.
+        self.cursor = _as_seq(cursor)
+        # With no cursor we must NOT start from seq 0: that re-reads the whole
+        # history and answers every past message again on each restart. Default
+        # to "only what arrives from now on"; pass replay=True to backfill.
+        self._need_seek = not cursor and not replay
+
+    def _seek_to_latest(self) -> None:
+        """Move the cursor to the newest seq without processing anything."""
+        result = self._client.send(
+            GatewayRequest(
+                method="GET",
+                path="/v1/events",
+                params={"after_seq": "0", "limit": "1000"},
+            )
+        )
+        self._need_seek = False
+        if not result.is_ok:
+            return
+        for row in result.value.json_list:
+            if isinstance(row, dict):
+                seq = row.get("seq")
+                if isinstance(seq, int) and seq > self.cursor:
+                    self.cursor = seq
 
     def fetch_raw(self) -> Result:
         """GET /v1/events and return the batch as RawInbound (unparsed).
@@ -291,10 +325,13 @@ class GatewayPoller:
         batch envelope the parser understands and advance the cursor to the
         highest seq we have seen, so the next poll only asks for newer rows.
         """
+        if self._need_seek:
+            self._seek_to_latest()
+
         request = GatewayRequest(
             method="GET",
             path="/v1/events",
-            params={"after_seq": str(self.cursor or "0"), "limit": "100"},
+            params={"after_seq": str(self.cursor), "limit": "100"},
         )
         result = self._client.send(request)
         if not result.is_ok:
@@ -311,26 +348,18 @@ class GatewayPoller:
         for row in rows:
             if isinstance(row, dict):
                 seq = row.get("seq")
-                if isinstance(seq, int) and seq > (self.cursor or 0):
+                if isinstance(seq, int) and seq > self.cursor:
                     self.cursor = seq
 
         return Result.ok(RawInbound(body=json.dumps({"events": rows}).encode()))
 
     def poll(self) -> Result:
-        """Issue ``GET /v1/events`` and parse the response into Events.
+        """Issue ``GET /v1/events`` and parse the batch into Events.
 
-        On success returns ``Result.ok(list[Event])`` and advances
-        ``self.cursor`` from the response. On error the client's Result is
-        propagated unchanged.
+        Shares fetch_raw's contract (after_seq + limit, array body) so there is
+        one definition of how this endpoint works, not two that can drift.
         """
-        request = GatewayRequest(
-            method="GET", path="/v1/events", params={"cursor": self.cursor}
-        )
-        result = self._client.send(request)
-        if not result.is_ok:
-            return result
-        body = result.value.json_body
-        next_cursor = body.get("cursor")
-        if isinstance(next_cursor, str):
-            self.cursor = next_cursor
-        return self._parser.parse_payload(body)
+        raw = self.fetch_raw()
+        if not raw.is_ok:
+            return raw
+        return self._parser.parse(raw.value)
