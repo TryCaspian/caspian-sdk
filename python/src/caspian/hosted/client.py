@@ -44,6 +44,10 @@ class GatewayResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     status_code: int
     json_body: dict[str, Any] = Field(default_factory=dict)
+    # Several gateway endpoints (/v1/events, /v1/channels, /v1/connections)
+    # answer with a JSON *array*. Keeping it here means a list response is no
+    # longer silently discarded as an empty object.
+    json_list: list[Any] = Field(default_factory=list)
     text_body: str = ""
 
 
@@ -113,13 +117,18 @@ class HttpGatewayClient:
             return Result.ok(GatewayResponse(status_code=resp.status_code, text_body=resp.text))
 
         body: dict[str, Any] = {}
+        rows: list[Any] = []
         try:
             parsed = resp.json()
             if isinstance(parsed, dict):
                 body = parsed
+            elif isinstance(parsed, list):
+                rows = parsed
         except ValueError:
             body = {}
-        return Result.ok(GatewayResponse(status_code=resp.status_code, json_body=body))
+        return Result.ok(
+            GatewayResponse(status_code=resp.status_code, json_body=body, json_list=rows)
+        )
 
 
 def _parse_retry_after(value: str) -> float:

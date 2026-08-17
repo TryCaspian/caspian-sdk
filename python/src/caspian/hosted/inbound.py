@@ -73,7 +73,49 @@ class GatewayEventParser:
             return Result.ok(events)
         return Result.ok(self._parse_one(payload))
 
+    # Gateway event types -> the kernel-facing kind this parser already handles.
+    _TYPE_MAP = {
+        "message.received": "message",
+        "message.backfilled": "message",
+        "message.edited": "edited",
+        "interaction.received": "action",
+        "reaction.received": "reaction",
+    }
+
+    def _normalise(self, obj: dict[str, Any]) -> dict[str, Any]:
+        """Flatten a gateway EventOut into the shape _parse_one expects.
+
+        The gateway sends {id, seq, type: "message.received", data: {message: {...}}};
+        this parser works in {channel, conversation_id, type: "message", message: {...}}.
+        Anything already in the flat shape is returned untouched.
+        """
+        raw_type = str(obj.get("type", ""))
+        data = obj.get("data")
+        if "." not in raw_type or not isinstance(data, dict):
+            return obj
+
+        kind = self._TYPE_MAP.get(raw_type, "")
+        if not kind:
+            return {}  # message.sent, message.otp, ... are not inbound work
+
+        inner = data.get("message") or data.get("interaction") or data.get("reaction") or {}
+        if not isinstance(inner, dict):
+            return {}
+        # Never react to our own outbound copy; that is how loops start.
+        if inner.get("direction") == "outbound":
+            return {}
+
+        return {
+            "type": kind,
+            "channel": str(inner.get("channel", "")),
+            "conversation_id": str(inner.get("conversation_id", "")),
+            kind if kind != "edited" else "edited": inner,
+        }
+
     def _parse_one(self, obj: dict[str, Any]) -> list[Event]:
+        obj = self._normalise(obj)
+        if not obj:
+            return []
         channel = str(obj.get("channel", ""))
         conversation_id = str(obj.get("conversation_id", ""))
         thread_id = ThreadId(f"{channel}:{conversation_id}")
@@ -242,22 +284,37 @@ class GatewayPoller:
         self.cursor = cursor
 
     def fetch_raw(self) -> Result:
-        """GET /v1/events and return the body as RawInbound (unparsed).
+        """GET /v1/events and return the batch as RawInbound (unparsed).
 
-        The facade feeds this into handle('gateway', ...) so poll and webhook
-        share ProcessInterpreter.handle_webhook. Cursor advances on success.
+        The gateway answers with a JSON array of EventOut objects and pages by
+        ``after_seq``/``limit`` (not a cursor token). We wrap the array in the
+        batch envelope the parser understands and advance the cursor to the
+        highest seq we have seen, so the next poll only asks for newer rows.
         """
         request = GatewayRequest(
-            method="GET", path="/v1/events", params={"cursor": self.cursor}
+            method="GET",
+            path="/v1/events",
+            params={"after_seq": str(self.cursor or "0"), "limit": "100"},
         )
         result = self._client.send(request)
         if not result.is_ok:
             return result
-        body = result.value.json_body
-        next_cursor = body.get("cursor")
-        if isinstance(next_cursor, str):
-            self.cursor = next_cursor
-        return Result.ok(RawInbound(body=json.dumps(body).encode()))
+
+        response = result.value
+        rows = response.json_list
+        if not rows and isinstance(response.json_body, dict):
+            # Tolerate an enveloped shape too, so a future gateway change or a
+            # test double that returns {"events": [...]} keeps working.
+            maybe = response.json_body.get("events")
+            rows = maybe if isinstance(maybe, list) else []
+
+        for row in rows:
+            if isinstance(row, dict):
+                seq = row.get("seq")
+                if isinstance(seq, int) and seq > (self.cursor or 0):
+                    self.cursor = seq
+
+        return Result.ok(RawInbound(body=json.dumps({"events": rows}).encode()))
 
     def poll(self) -> Result:
         """Issue ``GET /v1/events`` and parse the response into Events.
