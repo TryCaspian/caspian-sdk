@@ -1607,3 +1607,98 @@ def test_on_interaction_accepts_async_handler():
         client.close()
 
     assert values == ["reorder_123"]
+
+
+def test_on_connection_state_change_no_callbacks_on_success():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    polls = 0
+    transitions = []
+
+    def events(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 3:
+            raise KeyboardInterrupt
+        return []
+
+    client.events = events
+
+    @client.on_connection_state_change
+    def handle_state(state, detail):
+        transitions.append(state)
+
+    try:
+        client.listen(from_seq=0, poll_interval=0.01)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.close()
+
+    assert polls >= 3
+    assert len(transitions) == 0
+
+
+def test_on_connection_state_change_emits_once_on_consecutive_failures_and_recovery():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    polls = 0
+    transitions = []
+
+    def events(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls in (1, 2, 3):
+            raise RuntimeError(f"Gateway 502 #{polls}")
+        if polls in (4, 5):
+            if polls == 5:
+                raise KeyboardInterrupt
+            return []
+        return []
+
+    client.events = events
+
+    @client.on_connection_state_change
+    def handle_state(state, detail):
+        transitions.append((state, detail))
+
+    try:
+        client.listen(from_seq=0, poll_interval=0.01, max_backoff=0.02)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.close()
+
+    assert len(transitions) == 2
+    assert transitions[0][0] == "reconnecting"
+    assert transitions[0][1]["attempt"] == 1
+    assert transitions[0][1]["backoff_seconds"] == 0.01
+    assert transitions[0][1]["error"] is not None
+    assert transitions[1][0] == "connected"
+    assert transitions[1][1]["attempt"] == 3
+
+
+def test_on_connection_state_change_survives_handler_exception():
+    client = _client(lambda request: httpx.Response(200, json={}))
+    polls = 0
+
+    def events(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls == 1:
+            raise RuntimeError("Gateway 504")
+        raise KeyboardInterrupt
+
+    client.events = events
+
+    @client.on_connection_state_change
+    def handle_state(state, detail):
+        raise ValueError("handler boom")
+
+    try:
+        client.listen(from_seq=0, poll_interval=0.01, max_backoff=0.02)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.close()
+
+    assert polls >= 2
+

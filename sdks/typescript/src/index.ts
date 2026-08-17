@@ -10,6 +10,9 @@ export type {
   ClientOptions,
   Connection,
   ConcurrencyStrategy,
+  ConnectionState,
+  ConnectionStateDetail,
+  ConnectionStateHandler,
   ConnectOptions,
   Conversation,
   Customer,
@@ -23,4 +26,5 @@ export type {
   WebhookResult,
   WhatsappOnboarding,
 } from "./types.js";
+
 

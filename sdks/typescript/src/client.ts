@@ -8,6 +8,9 @@ import type {
   ClientOptions,
   Connection,
   ConcurrencyStrategy,
+  ConnectionState,
+  ConnectionStateDetail,
+  ConnectionStateHandler,
   ConnectOptions,
   Conversation,
   Customer,
@@ -173,6 +176,7 @@ export class Reaction {
 export type MessageHandler = (message: Message) => void | Promise<void>;
 export type InteractionHandler = (interaction: Interaction) => void | Promise<void>;
 export type ReactionHandler = (reaction: Reaction) => void | Promise<void>;
+export type { ConnectionStateHandler } from "./types.js";
 
 class MessageScheduler {
   private readonly queues = new Map<string, EventRecord[]>();
@@ -465,6 +469,7 @@ export class CommClient {
   private readonly handlers: MessageHandler[] = [];
   private readonly interactionHandlers: InteractionHandler[] = [];
   private readonly reactionHandlers: ReactionHandler[] = [];
+  private readonly connectionStateHandlers: ConnectionStateHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
   private readonly webhookDedup = new WebhookDedup();
@@ -1177,6 +1182,29 @@ export class CommClient {
     return handler;
   }
 
+  /**
+   * Register a handler for connection lifecycle transitions during `listen()`.
+   * Fires with `"reconnecting"` when a poll fails (with error and backoff detail),
+   * and `"connected"` when polling recovers successfully.
+   */
+  onConnectionStateChange(handler: ConnectionStateHandler): ConnectionStateHandler {
+    this.connectionStateHandlers.push(handler);
+    return handler;
+  }
+
+  private async dispatchConnectionState(
+    state: ConnectionState,
+    detail?: ConnectionStateDetail,
+  ): Promise<void> {
+    for (const handler of this.connectionStateHandlers) {
+      try {
+        await handler(state, detail);
+      } catch (err) {
+        logger.error("onConnectionStateChange handler failed; continuing", err);
+      }
+    }
+  }
+
   private buildMessage(data: any): Message {
     const m = data.message;
     return new Message(
@@ -1388,16 +1416,32 @@ export class CommClient {
     try {
       let seq = opts.fromSeq ?? (await this.latestSeq(opts.signal));
       let backoff = pollMs;
+      let currentState: ConnectionState = "connected";
+      let failedAttempts = 0;
       while (!opts.signal?.aborted) {
         let batch: EventRecord[];
         try {
           batch = await this.events({ afterSeq: seq });
         } catch (err) {
           if (opts.signal?.aborted) return;
+          failedAttempts += 1;
           logger.warn(`gateway poll failed; retrying in ${(backoff / 1000).toFixed(1)}s`, err);
+          if (currentState !== "reconnecting") {
+            currentState = "reconnecting";
+            await this.dispatchConnectionState("reconnecting", {
+              error: err,
+              backoffMs: backoff,
+              attempt: failedAttempts,
+            });
+          }
           await sleep(backoff, opts.signal);
           backoff = Math.min(backoff * 2, maxBackoffMs);
           continue;
+        }
+        if (currentState === "reconnecting") {
+          currentState = "connected";
+          await this.dispatchConnectionState("connected", { attempt: failedAttempts });
+          failedAttempts = 0;
         }
         backoff = pollMs;
         if (!batch.length) {

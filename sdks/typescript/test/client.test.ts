@@ -1266,5 +1266,106 @@ describe("CommClient", () => {
       expect(seen).toHaveLength(3);
     });
   });
+
+  describe("onConnectionStateChange", () => {
+    it("does not emit callbacks on normal successful polling", async () => {
+      let pollCount = 0;
+      const ac = new AbortController();
+      const eventsSeen: string[] = [];
+
+      const { client } = makeClient({
+        "GET /v1/events": () => {
+          pollCount += 1;
+          if (pollCount >= 3) ac.abort();
+          return json([]);
+        },
+      });
+
+      client.onConnectionStateChange((state) => {
+        eventsSeen.push(state);
+      });
+
+      await client.listen({
+        fromSeq: 0,
+        pollInterval: 0.01,
+        signal: ac.signal,
+      });
+
+      expect(pollCount).toBeGreaterThanOrEqual(3);
+      expect(eventsSeen).toHaveLength(0);
+    });
+
+    it("emits reconnecting once on consecutive failures and connected once upon recovery", async () => {
+      let pollCount = 0;
+      const ac = new AbortController();
+      const eventsSeen: Array<{ state: string; detail?: any }> = [];
+
+      const { client } = makeClient({
+        "GET /v1/events": () => {
+          pollCount += 1;
+          if (pollCount === 1 || pollCount === 2 || pollCount === 3) {
+            return json({ detail: `Failure ${pollCount}` }, 502);
+          }
+          if (pollCount === 4 || pollCount === 5) {
+            if (pollCount === 5) ac.abort();
+            return json([]);
+          }
+          return json([]);
+        },
+      });
+
+      client.onConnectionStateChange((state, detail) => {
+        eventsSeen.push({ state, detail });
+      });
+
+      await client.listen({
+        fromSeq: 0,
+        pollInterval: 0.01,
+        maxBackoff: 0.02,
+        signal: ac.signal,
+      });
+
+      expect(pollCount).toBeGreaterThanOrEqual(5);
+      expect(eventsSeen).toHaveLength(2);
+
+      expect(eventsSeen[0].state).toBe("reconnecting");
+      expect(eventsSeen[0].detail.attempt).toBe(1);
+      expect(eventsSeen[0].detail.backoffMs).toBe(10);
+      expect(eventsSeen[0].detail.error).toBeDefined();
+
+      expect(eventsSeen[1].state).toBe("connected");
+      expect(eventsSeen[1].detail.attempt).toBe(3);
+    });
+
+    it("continues loop even if onConnectionStateChange handler throws", async () => {
+      let pollCount = 0;
+      const ac = new AbortController();
+
+      const { client } = makeClient({
+        "GET /v1/events": () => {
+          pollCount += 1;
+          if (pollCount === 1) {
+            return json({ detail: "Gateway Timeout" }, 504);
+          }
+          ac.abort();
+          return json([]);
+        },
+      });
+
+      client.onConnectionStateChange(() => {
+        throw new Error("handler explosion");
+      });
+
+      await client.listen({
+        fromSeq: 0,
+        pollInterval: 0.01,
+        maxBackoff: 0.02,
+        signal: ac.signal,
+      });
+
+      expect(pollCount).toBeGreaterThanOrEqual(2);
+    });
+  });
 });
+
 
