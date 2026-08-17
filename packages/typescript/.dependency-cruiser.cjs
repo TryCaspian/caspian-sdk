@@ -10,6 +10,14 @@ module.exports = {
       to: { path: "^src/(adapters|provision|facade|tools|interpreters)" },
     },
     {
+      name: "facade-no-adapters",
+      comment:
+        "The B facade must not name a platform. Adapters are the only channel-aware code.",
+      severity: "error",
+      from: { path: "^src/facade" },
+      to: { path: "^src/adapters" },
+    },
+    {
       name: "core-no-node-builtins",
       comment:
         "A-core is decidable without a network, clock, filesystem, or node: imports.",

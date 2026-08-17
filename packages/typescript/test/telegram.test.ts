@@ -1,12 +1,21 @@
 import { expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
-import { decodeCommand, decodeEvent } from "../src/core/index.ts"
+import * as Schema from "effect/Schema"
+import {
+  Connection,
+  ConnectionId,
+  decodeCommand,
+  decodeEvent,
+} from "../src/core/index.ts"
 import {
   decodeThreadId,
   encodeThreadId,
+  executeTurn,
   overlapKey,
   parseTelegramUpdate,
   planTurn,
+  telegramLayer,
+  type TelegramCall,
 } from "../src/adapters/telegram.ts"
 
 const vectorsUrl = new URL(
@@ -149,7 +158,10 @@ test("golden Telegram execute vectors", async () => {
       eventResult.right,
       commands.filter((item) => item !== undefined),
     )
-    expect(calls, String(vector.name)).toEqual(vector.expected_calls)
+    expect(Array.isArray(vector.expected_calls), String(vector.name)).toBe(true)
+    expect(JSON.parse(JSON.stringify(calls)), String(vector.name)).toEqual(
+      vector.expected_calls,
+    )
   }
 })
 
@@ -169,4 +181,43 @@ test("Host commands are skipped so the adapter does not call Telegram", () => {
   )
   expect(planTurn(event, [host])).toEqual([])
 })
+
+test("executeTurn acks an Action then executes Post via AdapterPort", async () => {
+  const calls: TelegramCall[] = []
+  const events = parseTelegramUpdate({
+    update_id: 3,
+    callback_query: {
+      id: "cb1",
+      from: { id: 42 },
+      message: { message_id: 10, chat: { id: 123, type: "private" } },
+      data: "done",
+    },
+  })
+  const event = events[0]
+  expect(event?.kind).toBe("action")
+  if (event === undefined) {
+    return
+  }
+  const post = Effect.runSync(
+    decodeCommand({
+      tag: "Post",
+      thread_id: "telegram:123",
+      text: "ok",
+      actions: [],
+    }),
+  )
+  const conn = Schema.decodeUnknownSync(Connection)({
+    id: Schema.decodeUnknownSync(ConnectionId)("conn-1"),
+    channel: "telegram",
+    config: {},
+  })
+  await Effect.runPromise(
+    executeTurn(event, [post], conn).pipe(Effect.provide(telegramLayer(calls))),
+  )
+  expect(calls.map((call) => call.method)).toEqual([
+    "answerCallbackQuery",
+    "sendMessage",
+  ])
+})
+
 

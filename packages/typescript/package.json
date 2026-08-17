@@ -5,7 +5,8 @@
   "type": "module",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./telegram": "./src/adapters/telegram.ts"
   },
   "files": [
     "src",
