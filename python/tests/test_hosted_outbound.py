@@ -31,51 +31,62 @@ def _gw(cmd: object) -> dict[str, object]:
 
 
 class TestDelete:
-    def test_maps_to_message_delete(self) -> None:
-        raw = _gw(Delete(thread_id=ThreadId("telegram:c"), message_id="m1"))
-        assert raw["native"] == "delete"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/messages/m1/delete"
+    """Delete has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = Delete(thread_id=ThreadId("telegram:c"), message_id="m1")
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "Delete"
 
 
 class TestPin:
-    def test_maps_to_message_pin(self) -> None:
-        raw = _gw(Pin(thread_id=ThreadId("telegram:c"), message_id="m1"))
-        assert raw["native"] == "pin"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/messages/m1/pin"
+    """Pin has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = Pin(thread_id=ThreadId("telegram:c"), message_id="m1")
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "Pin"
 
 
 class TestUnpin:
-    def test_maps_to_message_unpin(self) -> None:
-        raw = _gw(Unpin(thread_id=ThreadId("telegram:c"), message_id="m1"))
-        assert raw["native"] == "unpin"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/messages/m1/unpin"
+    """Unpin has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = Unpin(thread_id=ThreadId("telegram:c"), message_id="m1")
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "Unpin"
 
 
 class TestForward:
-    def test_maps_to_message_forward(self) -> None:
-        raw = _gw(
-            Forward(
-                from_thread_id=ThreadId("telegram:src"),
-                to_thread_id=ThreadId("telegram:dst"),
-                message_id="m1",
-            )
+    """Forward has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = Forward(
+            from_thread_id=ThreadId("telegram:src"),
+            to_thread_id=ThreadId("telegram:dst"),
+            message_id="m1",
         )
-        assert raw["native"] == "forward"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/messages/m1/forward"
-        assert raw["gateway"]["json_body"]["to"] == "dst"
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "Forward"
 
 
 class TestMarkRead:
-    def test_maps_to_conversation_read(self) -> None:
-        raw = _gw(MarkRead(thread_id=ThreadId("telegram:c"), message_id="m1"))
-        assert raw["native"] == "markRead"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/conversations/c/read"
-        assert raw["gateway"]["json_body"]["message_id"] == "m1"
+    """MarkRead has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = MarkRead(thread_id=ThreadId("telegram:c"), message_id="m1")
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "MarkRead"
 
 
 class TestScheduleSend:
@@ -118,23 +129,20 @@ class TestSendBlocks:
 
 
 class TestOpenModal:
-    def test_maps_to_interaction_modal(self) -> None:
-        raw = _gw(
-            OpenModal(
-                thread_id=ThreadId("telegram:c"),
-                trigger_id="t1",
-                blocks=(Block(type="input", content={"id": "name"}),),
-                title="My Modal",
-                callback_id="cb1",
-            )
+    """OpenModal has no gateway endpoint; hosted mode must refuse it clearly."""
+
+    def test_unsupported_in_hosted_mode(self) -> None:
+        cmd = OpenModal(
+            thread_id=ThreadId("telegram:c"),
+            trigger_id="t1",
+            blocks=(Block(type="input", content={"id": "name"}),),
+            title="My Modal",
+            callback_id="cb1",
         )
-        assert raw["native"] == "openModal"
-        assert raw["gateway"]["method"] == "POST"
-        assert raw["gateway"]["path"] == "/v1/interactions/t1/modal"
-        body = raw["gateway"]["json_body"]
-        assert body["blocks"][0]["type"] == "input"
-        assert body["title"] == "My Modal"
-        assert body["callback_id"] == "cb1"
+        result = GatewayOutbound().execute(cmd, _conn())
+        assert not result.is_ok
+        assert "not available in hosted mode" in result.error.reason
+        assert result.error.command_tag == "OpenModal"
 
 
 class TestListHistory:

@@ -13,7 +13,7 @@ from typing import Any
 from caspian.adapters import REGISTRY, get_adapter
 from caspian.core.ports import Connection
 from caspian.core.types import ConnectionId
-from caspian.provision import ChannelConnection, Channels, Via
+from caspian.provision import ChannelConnection, Channels, ProvisionError, Via
 
 
 class ChannelManager:
@@ -54,7 +54,15 @@ class ChannelManager:
         if record.via == Via.HOSTED and self._gateway_client is not None:
             from caspian.hosted.provisioning import HostedProvisioning
 
-            HostedProvisioning(self._gateway_client).add_connection(channel, options)
+            provisioned = HostedProvisioning(self._gateway_client).add_connection(
+                channel, options
+            )
+            # Swallowing this made a failed connect look successful: the local
+            # record still said "added" while the gateway had nothing.
+            if not provisioned.is_ok:
+                raise ProvisionError(
+                    f"Gateway refused to connect {channel!r}: {provisioned.error}"
+                )
 
         # Hosted-only channels have no local adapter; that is expected.
         self._adapters[channel] = get_adapter(channel) if channel in REGISTRY else None

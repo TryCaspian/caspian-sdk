@@ -156,39 +156,58 @@ class GatewayOutbound:
                     )
                 )
 
-            case Delete(message_id=mid):
-                return Result.ok(
-                    _gateway_sent("delete", "POST", f"/v1/messages/{mid}/delete", {})
-                )
-
-            case Pin(message_id=mid):
-                return Result.ok(
-                    _gateway_sent("pin", "POST", f"/v1/messages/{mid}/pin", {})
-                )
-
-            case Unpin(message_id=mid):
-                return Result.ok(
-                    _gateway_sent("unpin", "POST", f"/v1/messages/{mid}/unpin", {})
-                )
-
-            case Forward(to_thread_id=to_tid, message_id=mid):
-                return Result.ok(
-                    _gateway_sent(
-                        "forward",
-                        "POST",
-                        f"/v1/messages/{mid}/forward",
-                        {"to": conversation_id(to_tid)},
+            case Delete():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "Delete is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="Delete",
                     )
                 )
 
-            case MarkRead(thread_id=tid, message_id=mid):
-                cid = conversation_id(tid)
-                return Result.ok(
-                    _gateway_sent(
-                        "markRead",
-                        "POST",
-                        f"/v1/conversations/{cid}/read",
-                        {"message_id": mid},
+            case Pin():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "Pin is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="Pin",
+                    )
+                )
+
+            case Unpin():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "Unpin is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="Unpin",
+                    )
+                )
+
+            case Forward():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "Forward is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="Forward",
+                    )
+                )
+
+            case MarkRead():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "MarkRead is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="MarkRead",
                     )
                 )
 
@@ -218,19 +237,14 @@ class GatewayOutbound:
                     )
                 )
 
-            case OpenModal(
-                trigger_id=trigger_id, blocks=blocks, title=title, callback_id=callback_id
-            ):
-                return Result.ok(
-                    _gateway_sent(
-                        "openModal",
-                        "POST",
-                        f"/v1/interactions/{trigger_id}/modal",
-                        {
-                            "blocks": [b.model_dump() for b in blocks],
-                            "title": title,
-                            "callback_id": callback_id,
-                        },
+            case OpenModal():
+                return Result.err(
+                    AdapterError(
+                        reason=(
+                            "OpenModal is not available in hosted mode: the gateway "
+                            "exposes no endpoint for it. Use self-host for this."
+                        ),
+                        command_tag="OpenModal",
                     )
                 )
 

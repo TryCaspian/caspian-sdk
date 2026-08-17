@@ -173,8 +173,14 @@ class Caspian:
         )
         return runner.run_forever(max_iterations=max_iterations)
 
-    def run(self, *, max_iterations: int | None = None) -> list[Result]:
-        """Hosted poll loop: GET /v1/events → handle('gateway', ...)."""
+    def run(
+        self, *, max_iterations: int | None = None, interval: float = 1.0
+    ) -> list[Result]:
+        """Hosted poll loop: GET /v1/events → handle('gateway', ...).
+
+        Waits `interval` seconds between polls. Without it this spins as fast as
+        the network allows, which hammers the gateway for no benefit.
+        """
         if self._gateway_client is None:
             return [
                 Result.err(
@@ -196,6 +202,10 @@ class Caspian:
             iterations += 1
             if max_iterations is not None and iterations >= max_iterations:
                 break
+            if interval > 0:
+                import time
+
+                time.sleep(interval)
         return collected
 
     def _interpreter_for(self, channel: str) -> ProcessInterpreter:
