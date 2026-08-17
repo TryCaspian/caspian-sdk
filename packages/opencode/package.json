@@ -1,6 +1,6 @@
 {
   "name": "caspian-opencode-plugin",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "OpenCode plugin — bidirectional Caspian messaging (email, Telegram, Discord) with a reliability-critical path",
   "type": "module",
   "license": "Apache-2.0",
@@ -33,6 +33,7 @@
     "src/commands",
     "bin",
     "opencode.commands.json",
+    "docs",
     "README.md",
     "RELIABILITY.md",
     "LICENSE"

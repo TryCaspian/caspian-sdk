@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     teams_token_url: str = "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
     teams_openid_config_url: str = "https://login.botframework.com/v1/.well-known/openidconfiguration"
 
+    linear_client_id: str = ""
+    linear_client_secret: str = ""
+    linear_webhook_secret: str = ""
+    linear_base_url: str = "https://api.linear.app"
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
@@ -139,11 +144,14 @@ class Settings(BaseSettings):
     x_webhook_secret: str = ""  # overrides x_api_secret for CRC/signature if set
     x_base_url: str = "https://api.x.com"
     x_dm_poll_interval: float = 10.0  # seconds between DM polls per connection
+    zulip_webhook_base: str = ""
+
     # Bluesky deployment settings. Connected accounts provide their own
     # identifier and app password; these settings configure the shared API
     # endpoint and optional webhook verification secret.
     bluesky_base_url: str = "https://bsky.social"
     bluesky_webhook_secret: str = ""
+    bluesky_poll_interval: float = 5.0
     # Stripe (pay-as-you-go credit; live keys live in SSM SecureString, resolved
     # at startup — only the parameter NAMES sit in .env).
     stripe_secret_key: str = ""

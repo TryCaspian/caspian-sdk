@@ -32,6 +32,7 @@ from ..schemas import (
     AgentCreate,
     AgentOut,
     BackfillCreate,
+    BlueskyConnectionCreate,
     ChannelConnectionCreate,
     ConnectionBrandingUpdate,
     ConnectionOut,
@@ -39,9 +40,11 @@ from ..schemas import (
     CustomerCreate,
     CustomerOut,
     DiscordConnectionCreate,
+    EditCreate,
     EmailConnectionCreate,
     EventOut,
     InitiateCreate,
+    LinearConnectionCreate,
     MessageCreate,
     MessageOut,
     PhoneConnectionCreate,
@@ -57,7 +60,7 @@ from ..schemas import (
     WebhookConfig,
     WebhookOut,
     XConnectionCreate,
-    BlueskyConnectionCreate
+    ZulipConnectionCreate,
 )
 from ..serialize import (
     agent_out,
@@ -366,6 +369,34 @@ def _create_connection(request, session, project, body, channel: str) -> dict:
             if existing.status == "pending_oauth":
                 out["authorize_url"] = read_credentials(existing).get("authorize_url")
             return out
+        has_bot_token = bool(getattr(body, "slack_bot_token", None))
+        has_app_token = bool(getattr(body, "slack_app_token", None))
+        if has_bot_token != has_app_token:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide both slack_bot_token and slack_app_token, or neither",
+            )
+        if has_bot_token and has_app_token:
+            prov = provider.socket_mode_provision(body.slack_bot_token, body.slack_app_token)
+            creds = dict(prov["credentials"])
+            if getattr(body, "display_name", None):
+                creds["display_name"] = body.display_name
+            connection = Connection(
+                id=new_id("conn"),
+                project_id=project.id,
+                customer_id=customer.id,
+                agent_id=agent.id,
+                channel=channel,
+                capabilities=_resolve_manifest(provider, getattr(body, "capabilities", None)),
+                status="active",
+                provider=provider.name,
+                provider_resource_id=prov["provider_resource_id"],
+                address=prov["address"],
+                provider_credentials=encrypt_credentials(creds),
+            )
+            session.add(connection)
+            session.commit()
+            return connection_out(connection)
         # bring-your-own app credentials (developer creates their own Slack app)
         app_creds = {
             k: getattr(body, k)
@@ -642,6 +673,26 @@ def create_bluesky_connection(
         body,
         channel="bluesky",
     )
+
+@router.post("/connections/linear", response_model=ConnectionOut, status_code=201)
+def create_linear_connection(
+    body: LinearConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="linear")
+
+
+@router.post("/connections/zulip", response_model=ConnectionOut, status_code=201)
+def create_zulip_connection(
+    body: ZulipConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="zulip")
+
 
 @router.post("/connections/x/install", response_model=ConnectionOut, status_code=201)
 def install_x(
@@ -1021,7 +1072,8 @@ def set_webhook(
     """Register a URL to receive all events by push (in addition to polling)."""
     assert_public_url(body.url)  # SSRF guard: no internal/loopback/link-local targets
     project.webhook_url = body.url
-    project.webhook_secret = body.secret
+    if body.secret is not None:
+        project.webhook_secret = body.secret
     session.commit()
     return {"url": project.webhook_url, "configured": True}
 
@@ -1374,6 +1426,28 @@ def reply_to_message(
     enqueue(session, "send_reply", {"message_id": reply.id, "blocks": body.blocks})
     session.commit()
     return message_out(reply)
+
+
+@router.post("/messages/{outbound_message_id}/edit", response_model=MessageOut, status_code=200)
+def edit_message(
+    outbound_message_id: str,
+    body: EditCreate,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    target = session.get(Message, outbound_message_id)
+    if target is None or target.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if target.direction != "outbound" or not target.provider_message_id:
+        raise HTTPException(
+            status_code=400, detail="Can only edit an outbound message that was sent"
+        )
+    connection = session.get(Connection, target.connection_id)
+    _require_granted(connection, Capability.EDIT_OUTBOUND)
+    target.text = body.text
+    enqueue(session, "edit_message", {"message_id": target.id, "text": body.text})
+    session.commit()
+    return message_out(target)
 
 
 @router.post("/test-emails", response_model=TestEmailOut, status_code=202)

@@ -221,6 +221,7 @@ class DiscordProvider:
             Capability.INTERACTIONS,
             Capability.REACTIONS,
             Capability.MEDIA,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
@@ -265,6 +266,29 @@ class DiscordProvider:
             f"/channels/{channel_id}/messages/{message_id}/reactions/{quote(emoji)}/@me",
             headers={"Authorization": f"Bot {token}"},
         )
+        r.raise_for_status()
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        creds = credentials or {}
+        channel_id, message_id = split_composite_id(provider_message_id)
+        if creds.get("webhook_url"):
+            r = httpx.patch(
+                f"{creds['webhook_url']}/messages/{message_id}",
+                json={"content": text},
+                timeout=30.0,
+            )
+        else:
+            token = self._token(credentials)
+            r = self._client.patch(
+                f"/channels/{channel_id}/messages/{message_id}",
+                json={"content": text},
+                headers={"Authorization": f"Bot {token}"},
+            )
         r.raise_for_status()
 
     def typing(self, provider_thread_id: str, credentials=None) -> None:

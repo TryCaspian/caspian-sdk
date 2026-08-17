@@ -1,5 +1,6 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { AccountRequiredError, CommError, InsufficientCreditError } from "./errors.js";
+import { AccountRequiredError, CommError, InsufficientCreditError, WebhookVerificationError } from "./errors.js";
 import type {
   Agent,
   AutopayOptions,
@@ -12,11 +13,13 @@ import type {
   Customer,
   Domain,
   EventRecord,
+  HandleWebhookOptions,
   ListenOptions,
   LoginOptions,
   Media,
   SpendLimitsOptions,
   WhatsappOnboarding,
+  WebhookResult,
 } from "./types.js";
 
 const logger = {
@@ -46,6 +49,8 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+const EDIT_CHANNELS = new Set(["telegram", "discord", "slack"]);
+
 /** An inbound message delivered to an onMessage handler. */
 export class Message {
   constructor(
@@ -62,6 +67,13 @@ export class Message {
     private readonly client: CommClient,
     /** File attachments received with the message (empty when none). */
     readonly media: Media[] = [],
+    /**
+     * Shape of the conversation this arrived in, as reported by the channel:
+     * "dm" for one-to-one, "channel"/"group" for multi-party. `null` on channels
+     * with no such distinction (email) or that don't report one. Use it to answer
+     * direct messages while ignoring unrelated group chatter.
+     */
+    readonly chatType: string | null = null,
   ) {}
 
   /**
@@ -95,6 +107,19 @@ export class Message {
    */
   typing(): Promise<Record<string, unknown>> {
     return this.client.typing(this.id);
+  }
+
+  /**
+   * Stream a response with live edits on channels that support it.
+   *
+   * On Telegram, Discord and Slack the first chunk posts the message and
+   * subsequent chunks edit it in place (throttled). On channels without edit
+   * support all chunks buffer and a single reply fires on close.
+   *
+   * If no non-empty text was appended, close sends nothing.
+   */
+  stream(throttleMs = 500): StreamResponse {
+    return new StreamResponse(this.client, this.id, this.channel, throttleMs);
   }
 }
 
@@ -289,6 +314,145 @@ class MessageScheduler {
 }
 
 /**
+ * Accumulates streamed chunks and delivers them as a single message.
+ *
+ * On channels that support outbound editing (Telegram, Discord, Slack) the
+ * first non-empty append posts the message and subsequent appends edit it in
+ * place, throttled to avoid API rate limits. On all other channels the text
+ * buffers silently and a single reply fires on close.
+ *
+ * If no non-empty text was appended, close sends nothing.
+ */
+export class StreamResponse {
+  private buffer = "";
+  private outboundId: string | null = null;
+  private lastEdit = 0;
+  private lastSentText = "";
+  private replyAttempted = false;
+  private pending: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly client: CommClient,
+    private readonly messageId: string,
+    readonly channel: string,
+    private readonly throttleMs = 500,
+  ) {}
+
+  get text(): string {
+    return this.buffer;
+  }
+
+  get supportsEdit(): boolean {
+    return EDIT_CHANNELS.has(this.channel);
+  }
+
+  append(chunk: string): Promise<void> {
+    this.buffer += chunk;
+    this.pending = this.pending.then(() => this.sendIfNeeded());
+    return this.pending;
+  }
+
+  close(): Promise<void> {
+    this.pending = this.pending.then(() => this.flush());
+    return this.pending;
+  }
+
+  private async sendIfNeeded(): Promise<void> {
+    if (!this.supportsEdit || !this.buffer) return;
+    const now = Date.now();
+    if (this.outboundId === null) {
+      if (this.replyAttempted) return;
+      this.replyAttempted = true;
+      const result = await this.client.reply(this.messageId, this.buffer);
+      this.outboundId = (result as Record<string, unknown>).id as string ?? null;
+      if (this.outboundId === null) {
+        throw new Error("reply() succeeded but returned no message id; cannot continue streaming edits");
+      }
+      this.lastEdit = now;
+      this.lastSentText = this.buffer;
+    } else if (now - this.lastEdit >= this.throttleMs && this.buffer !== this.lastSentText) {
+      await this.editWithRetry(this.buffer);
+      this.lastEdit = now;
+      this.lastSentText = this.buffer;
+    }
+  }
+
+  private async editWithRetry(text: string): Promise<void> {
+    const delays = [200, 400, 600, 800, 1000];
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      try {
+        await this.client.edit(this.outboundId!, text);
+        return;
+      } catch (err) {
+        if (
+          err instanceof CommError &&
+          err.statusCode === 400 &&
+          err.detail === "Can only edit an outbound message that was sent"
+        ) {
+          if (attempt < delays.length - 1) {
+            await sleep(delays[attempt]);
+            continue;
+          }
+        }
+        throw err;
+      }
+    }
+  }
+
+  private async flush(): Promise<void> {
+    if (!this.buffer) return;
+    if (this.outboundId === null) {
+      if (this.replyAttempted) return;
+      await this.client.reply(this.messageId, this.buffer);
+    } else if (this.buffer !== this.lastSentText) {
+      const remaining = this.throttleMs - (Date.now() - this.lastEdit);
+      if (remaining > 0) await sleep(remaining);
+      await this.editWithRetry(this.buffer);
+    }
+  }
+}
+
+/**
+ * In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+ *
+ * Webhook providers retry delivery when they don't get a timely 200. On
+ * serverless platforms the same container often handles the retry, so an
+ * in-memory set of recently-seen event IDs suppresses the duplicate. Bounded
+ * to `maxSize` entries and `ttlMs` to avoid unbounded memory growth.
+ */
+class WebhookDedup {
+  private readonly entries = new Map<string, number>();
+
+  constructor(
+    private readonly maxSize = 1024,
+    private readonly ttlMs = 300_000,
+  ) {}
+
+  private evict(): void {
+    const cutoff = Date.now() - this.ttlMs;
+    for (const [id, ts] of this.entries) {
+      if (ts < cutoff) this.entries.delete(id);
+    }
+    // Over capacity: drop oldest (Map iterates in insertion order).
+    while (this.entries.size > this.maxSize) {
+      const oldest = this.entries.keys().next().value!;
+      this.entries.delete(oldest);
+    }
+  }
+
+  /** Return true if `id` was already recorded and not expired. */
+  seen(id: string): boolean {
+    this.evict();
+    return this.entries.has(id);
+  }
+
+  /** Mark `id` as processed. */
+  record(id: string): void {
+    this.entries.set(id, Date.now());
+  }
+}
+
+/**
  * One identity for your AI agent across every channel — behind a single
  * onMessage handler. Reads CASPIAN_API_KEY / CASPIAN_BASE_URL from the environment or
  * ./.env when not passed explicitly.
@@ -303,6 +467,7 @@ export class CommClient {
   private readonly reactionHandlers: ReactionHandler[] = [];
   private ackMessage?: string;
   private lastCreditWarning = 0;
+  private readonly webhookDedup = new WebhookDedup();
 
   constructor(options: ClientOptions = {}) {
     const apiKey = config(options.apiKey, "CASPIAN_API_KEY");
@@ -474,6 +639,32 @@ export class CommClient {
   }
 
   /**
+   * Connect a Zulip outgoing-webhook bot (bring-your-own). In your Zulip org, add
+   * an *Outgoing webhook* bot and set its Endpoint URL to
+   * `<gateway>/internal/providers/zulip/webhooks/<botEmail>`. Pass the bot's
+   * `botEmail`, its `botApiKey`, and your org's `serverUrl` (e.g.
+   * `https://your-org.zulipchat.com`). Optional `botToken` (the outgoing-webhook
+   * token) verifies inbound. The same onMessage handler receives @-mentions in
+   * channels and direct messages.
+   */
+  connectZulip(
+    opts: ConnectOptions & {
+      botEmail: string;
+      botApiKey: string;
+      serverUrl: string;
+      botToken?: string;
+    },
+  ): Promise<Connection> {
+    const { botEmail, botApiKey, serverUrl, botToken, ...rest } = opts;
+    return this.connect("zulip", rest, {
+      bot_email: botEmail,
+      bot_api_key: botApiKey,
+      server_url: serverUrl,
+      bot_token: botToken ?? null,
+    });
+  }
+
+  /**
    * Connect a Bluesky account. Pass the handle or DID as `identifier` and an app
    * password (bsky.app -> Settings -> Privacy and security -> App passwords) as
    * `appPassword` — never the account's real password. The gateway polls Bluesky
@@ -488,6 +679,25 @@ export class CommClient {
       app_password: appPassword,
     });
   }
+
+  /** Connect Linear issue tracking. */
+  connectLinear(
+    opts: ConnectOptions & {
+      organizationId: string;
+      apiKey?: string;
+      webhookSecret?: string;
+      provider?: string;
+    },
+  ): Promise<Connection> {
+    const { organizationId, apiKey, webhookSecret, provider, ...rest } = opts;
+    return this.connect("linear", rest, {
+      organization_id: organizationId,
+      api_key: apiKey ?? null,
+      webhook_secret: webhookSecret ?? null,
+      provider: provider ?? null,
+    });
+  }
+
 
   /**
    * Register a custom subdomain (e.g. agents.example.com). Returns the DNS
@@ -780,7 +990,16 @@ export class CommClient {
     return this.request("POST", `/v1/messages/${messageId}/typing`);
   }
 
-  /** Receive events by push instead of (or alongside) polling. */
+  /** Edit a message the agent previously sent (used by streaming). */
+  edit(outboundMessageId: string, text: string): Promise<Record<string, unknown>> {
+    return this.request("POST", `/v1/messages/${outboundMessageId}/edit`, { json: { text } });
+  }
+
+  /**
+   * Receive events by push instead of (or alongside) polling.
+   * Omitting `secret` updates the URL alone and preserves any previously
+   * configured signing secret.
+   */
   setWebhook(url: string, secret?: string): Promise<Record<string, unknown>> {
     return this.request("PUT", "/v1/webhook", { json: { url, secret: secret ?? null } });
   }
@@ -973,6 +1192,7 @@ export class CommClient {
       m.html ?? null,
       this,
       m.media ?? [],
+      m.chat_type ?? null,
     );
   }
 
@@ -1019,16 +1239,35 @@ export class CommClient {
   }
 
   private async dispatchEvent(event: EventRecord): Promise<void> {
+    if (
+      event.type !== "message.received" &&
+      event.type !== "interaction.received" &&
+      event.type !== "reaction.received"
+    ) {
+      return;
+    }
+    // `data` is optional in the event schema; a record without a usable
+    // payload is logged and skipped so it can never stop the listener.
+    const data = event.data;
+    if (!isRecord(data)) {
+      logger.warn(`skipping malformed ${event.type} event (seq ${event.seq}): no event data`);
+      return;
+    }
     if (event.type === "interaction.received") {
-      await this.dispatchInteraction(event.data);
+      await this.dispatchInteraction(data);
       return;
     }
     if (event.type === "reaction.received") {
-      await this.dispatchReaction(event.data);
+      await this.dispatchReaction(data);
       return;
     }
-    if (event.type !== "message.received") return;
-    const message = this.buildMessage(event.data);
+    if (!isRecord(data.message)) {
+      logger.warn(
+        `skipping malformed message.received event (seq ${event.seq}): no message payload`,
+      );
+      return;
+    }
+    const message = this.buildMessage(data);
     if (this.handlers.length) {
       // Show a "thinking…" indicator up front; best-effort, never blocks dispatch.
       try {
@@ -1191,4 +1430,71 @@ export class CommClient {
     }
     return 0;
   }
+
+  /**
+   * Process a single gateway webhook delivery (serverless mode).
+   *
+   * Use this instead of `listen()` when running on Lambda, Cloudflare Workers,
+   * Vercel, or any request-scoped serverless runtime. Verifies the signature,
+   * dispatches to registered handlers, and returns — no loop, no long-lived connection.
+   */
+  async handleWebhook(opts: HandleWebhookOptions): Promise<WebhookResult> {
+    const { body, headers, secret } = opts;
+    const lower: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      if (v !== undefined) {
+        lower[k.toLowerCase()] = Array.isArray(v) ? v[0] : (v as string);
+      }
+    }
+    const signature = lower["x-caspian-signature"] ?? "";
+    if (!signature) {
+      throw new WebhookVerificationError("missing x-caspian-signature header");
+    }
+
+    const raw = typeof body === "string" ? Buffer.from(body, "utf-8") : body;
+    const hmacHex = createHmac("sha256", secret).update(raw).digest("hex");
+    const expected = `sha256=${hmacHex}`;
+
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+      throw new WebhookVerificationError("webhook signature mismatch");
+    }
+
+    const jsonStr = typeof body === "string" ? body : Buffer.from(body).toString("utf-8");
+    const payload = JSON.parse(jsonStr);
+    const events: EventRecord[] = Array.isArray(payload) ? payload : [payload];
+
+    const seenIds = new Set<string>();
+    let result: WebhookResult = { status: "ignored" };
+
+    for (const event of events) {
+      const eventId = String(event.id ?? event.seq ?? "");
+      const eventType = event.type;
+
+      // Intra-invocation idempotency: skip duplicates within the same payload.
+      if (eventId && seenIds.has(eventId)) continue;
+
+      // Cross-invocation dedup: skip events already processed by a previous
+      // invocation on this warm container.
+      if (eventId && this.webhookDedup.seen(eventId)) continue;
+
+      if (eventId) seenIds.add(eventId);
+
+      await this.dispatchEvent(event);
+
+      // Record after successful dispatch so retries of genuinely failed
+      // processing are not suppressed.
+      if (eventId) this.webhookDedup.record(eventId);
+
+      result = {
+        status: "ok",
+        eventId: eventId || null,
+        eventType,
+      };
+    }
+
+    return result;
+  }
 }
+

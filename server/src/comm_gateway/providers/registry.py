@@ -162,6 +162,16 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             handle=settings.macmini_imessage_handle,
             webhook_secret=settings.macmini_webhook_secret,
         )
+    if name == "fake-zulip":
+        from .fakes.fake_zulip import FakeZulipProvider
+
+        return FakeZulipProvider()
+    if name == "zulip":
+        from .zulip import ZulipProvider
+
+        return ZulipProvider(
+            webhook_base=settings.zulip_webhook_base,
+        )
     if name == "fake-bluesky":
         from .fakes.fake_social import FakeBlueskyProvider
 
@@ -268,6 +278,19 @@ def _build_one(name: str, settings: Settings) -> ChannelProvider:
             user_id=settings.x_user_id,
             webhook_secret=settings.x_webhook_secret,
             base_url=settings.x_base_url,
+        )
+    if name == "fake-linear":
+        from .fakes.fake_linear import FakeLinearProvider
+
+        return FakeLinearProvider()
+    if name == "linear":
+        from .linear import LinearProvider
+
+        return LinearProvider(
+            client_id=settings.linear_client_id,
+            client_secret=settings.linear_client_secret,
+            webhook_secret=settings.linear_webhook_secret,
+            base_url=settings.linear_base_url,
         )
     # Plugin providers: third-party or private channel packages can register
     # their own builders under the "caspian.providers" entry-point group, so a

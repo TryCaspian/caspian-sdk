@@ -109,13 +109,21 @@ def parse_event(data: dict) -> list[InboundMessage]:
                 },
             )
         ]
-    if event_type != "message" or event.get("bot_id") or event.get("subtype"):
+    # "message" covers DMs + channel messages (Events API / message.* scopes).
+    # "app_mention" covers an @-mention in a channel where the app isn't
+    # subscribed to message.channels — same shape (channel/ts/user/text), so
+    # treat it as a message. bot_id/subtype (edits, joins, our own posts) skip.
+    if event_type not in ("message", "app_mention") or event.get("bot_id") or event.get("subtype"):
         return []
     channel = event["channel"]
     ts = event["ts"]
     return [
         InboundMessage(
-            external_event_id=data.get("event_id") or f"{channel}:{ts}",
+            # Dedup by channel:ts (unique per message). A channel @-mention can
+            # arrive as BOTH a "message" and an "app_mention" event (different
+            # event_ids, same ts) when the app subscribes to both — keying on ts
+            # collapses them so the agent replies once, not twice.
+            external_event_id=f"{channel}:{ts}",
             provider_inbox_id=_inbox_id(data),
             provider_message_id=f"{channel}:{ts}",
             provider_thread_id=channel,
@@ -176,6 +184,7 @@ class SlackProvider:
             Capability.INTERACTIONS,
             Capability.REACTIONS,
             Capability.MEDIA,
+            Capability.EDIT_OUTBOUND,
         }
     )
 
@@ -310,6 +319,38 @@ class SlackProvider:
             "address": f"slack:{team.get('name') or team.get('id')}",
         }
 
+    def socket_mode_provision(self, bot_token: str, app_token: str) -> dict:
+        """Validate a bring-your-own Socket Mode app and return connection fields.
+
+        No OAuth: the developer pastes an existing app's bot token (``xoxb-``) and
+        app-level token (``xapp-``, scope ``connections:write``). Inbound arrives
+        over a WebSocket the gateway holds (see ``listeners`` Socket Mode client),
+        so nothing changes on the Slack side. We ``auth.test`` the bot token to
+        confirm it and derive the workspace identity used for routing.
+        """
+        if not bot_token.startswith("xoxb-"):
+            raise WebhookVerificationError("slack bot_token must be an xoxb- bot token")
+        if not app_token.startswith("xapp-"):
+            raise WebhookVerificationError(
+                "slack app_token must be an xapp- app-level token (scope connections:write)"
+            )
+        r = self._client.post("/auth.test", headers={"Authorization": f"Bearer {bot_token}"})
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise WebhookVerificationError(f"slack auth.test failed: {data.get('error')}")
+        team_id = data.get("team_id", "")
+        # Inbound routes by api_app_id:team_id (see _inbox_id). App-level tokens are
+        # formatted xapp-<ver>-<APP_ID>-<secret>, so the app id is right there —
+        # derive it so provider_resource_id matches what socket events carry.
+        parts = app_token.split("-")
+        app_id = parts[2] if len(parts) > 2 else ""
+        return {
+            "credentials": {"bot_token": bot_token, "app_token": app_token},
+            "provider_resource_id": f"{app_id}:{team_id}",
+            "address": f"slack:{data.get('team') or team_id}",
+        }
+
     def needs_refresh(self, credentials: Mapping[str, str] | None) -> bool:
         """True when a rotating access token is at/near expiry (120s buffer)."""
         creds = credentials or {}
@@ -420,6 +461,24 @@ class SlackProvider:
         # already_reacted is a success for our purposes (the reaction is present).
         if not data.get("ok") and data.get("error") != "already_reacted":
             raise RuntimeError(f"Slack reactions.add failed: {data.get('error')}")
+
+    def edit_message(
+        self,
+        provider_message_id: str,
+        text: str,
+        credentials: Mapping[str, str] | None = None,
+    ) -> None:
+        creds = credentials or {}
+        channel, ts = split_composite_id(provider_message_id)
+        r = self._client.post(
+            "/chat.update",
+            json={"channel": channel, "ts": ts, "text": text},
+            headers={"Authorization": f"Bearer {creds['bot_token']}"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Slack chat.update failed: {data.get('error')}")
 
     def _verify_signature(
         self, payload: bytes, headers: Mapping[str, str], data: dict, credentials

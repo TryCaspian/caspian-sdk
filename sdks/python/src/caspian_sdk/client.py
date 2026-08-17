@@ -15,16 +15,21 @@ Usage:
     client.listen()
 """
 
+import asyncio
+import hashlib
+import hmac
+import inspect
+import json as _json
 import logging
 import os
 import sys
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock, Timer
+from threading import Lock, Thread, Timer
 from typing import Literal
 
 import httpx
@@ -32,6 +37,14 @@ import httpx
 logger = logging.getLogger("caspian_sdk")
 
 ConcurrencyStrategy = Literal["queue", "debounce", "drop", "parallel"]
+
+_EDIT_CHANNELS = frozenset({"telegram", "discord", "slack"})
+_EDIT_BEFORE_SENT = "Can only edit an outbound message that was sent"
+
+
+async def _consume_awaitable(awaitable: Awaitable[None]) -> None:
+    """Adapt any awaitable to a coroutine for run_coroutine_threadsafe."""
+    await awaitable
 
 
 def _dotenv() -> dict[str, str]:
@@ -67,6 +80,19 @@ class CommError(Exception):
         super().__init__(f"{status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class WebhookVerificationError(Exception):
+    """Raised when an inbound webhook delivery fails signature verification."""
+
+
+@dataclass(frozen=True)
+class WebhookResult:
+    """Outcome of processing a single gateway webhook delivery."""
+
+    status: str  # "ok", "ignored", "error"
+    event_id: str | None = None
+    event_type: str | None = None
 
 
 class AccountRequiredError(CommError):
@@ -112,10 +138,11 @@ class InsufficientCreditError(CommError):
         if amount_cents is None:
             for option in self.payment_options:
                 body = (option.get("create") or {}).get("body") or {}
-                if body.get("amount_cents"):
-                    amount_cents = body["amount_cents"]
+                suggested = body.get("amount_cents")
+                if suggested is not None:
+                    amount_cents = suggested
                     break
-        return self._client.top_up(amount_cents or 2000)
+        return self._client.top_up(amount_cents if amount_cents is not None else 2000)
 
 
 @dataclass
@@ -136,6 +163,11 @@ class Message:
     # File attachments received with the message: each {"url"|"data", "mime_type",
     # "name", "size"}. Empty on channels/messages with no attachments.
     media: list[dict] = field(default_factory=list)
+    # Shape of the conversation this arrived in, as reported by the channel:
+    # "dm" for one-to-one, "channel"/"group" for multi-party. None on channels
+    # that have no such distinction (email) or that don't report one. Use it to
+    # answer direct messages while ignoring unrelated group chatter.
+    chat_type: str | None = None
 
     def reply(
         self,
@@ -156,6 +188,20 @@ class Message:
         no-op where the platform has none). Fired automatically before your
         handler runs; call again during long work to keep it alive."""
         self._client.typing(self.id)
+
+    def stream(self, throttle: float = 0.5) -> "StreamResponse":
+        """Stream a response with live edits on channels that support it.
+
+        Returns a context manager. Call ``s.append(chunk)`` inside the block to
+        accumulate text. On Telegram, Discord and Slack the first chunk posts
+        the message and subsequent chunks edit it in place (throttled to at most
+        one edit per ``throttle`` seconds). On channels without edit support
+        (email, SMS, WhatsApp, X, …) all chunks buffer and a single reply is
+        sent when the block exits.
+
+        If no non-empty text was appended, closing the stream sends nothing.
+        """
+        return StreamResponse(self._client, self.id, self.channel, throttle=throttle)
 
 
 @dataclass
@@ -242,7 +288,9 @@ class _MessageScheduler:
 
     def submit(self, event: dict) -> None:
         if event.get("type") != "message.received":
-            self._dispatch(event)
+            # Contain dispatch errors here too (the TypeScript scheduler routes
+            # these through safeDispatch) so one bad event can't stop listen().
+            self._safe_dispatch(event)
             return
         key = self._conversation_key(event)
         if self._strategy == "queue":
@@ -363,6 +411,133 @@ class _MessageScheduler:
         self._executor.shutdown(wait=True)
 
 
+class StreamResponse:
+    """Accumulates streamed chunks and delivers them as a single message.
+
+    On channels that support outbound editing (Telegram, Discord, Slack) the
+    first non-empty append posts the message and subsequent appends edit it in
+    place, throttled to avoid API rate limits. On all other channels the text
+    buffers silently and a single reply fires when the context manager exits.
+
+    If no non-empty text was appended, close sends nothing.
+    """
+
+    def __init__(
+        self,
+        client: "CommClient",
+        message_id: str,
+        channel: str,
+        throttle: float = 0.5,
+    ) -> None:
+        self._client = client
+        self._message_id = message_id
+        self._channel = channel
+        self._throttle = throttle
+        self._buffer = ""
+        self._outbound_id: str | None = None
+        self._last_edit = 0.0
+        self._last_sent_text = ""
+        self._reply_attempted = False
+
+    @property
+    def text(self) -> str:
+        return self._buffer
+
+    @property
+    def supports_edit(self) -> bool:
+        return self._channel in _EDIT_CHANNELS
+
+    def __enter__(self) -> "StreamResponse":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self._flush()
+        return False
+
+    def append(self, chunk: str) -> None:
+        self._buffer += chunk
+        if not self.supports_edit or not self._buffer:
+            return
+        now = time.monotonic()
+        if self._outbound_id is None:
+            if self._reply_attempted:
+                return
+            self._reply_attempted = True
+            result = self._client.reply(self._message_id, text=self._buffer)
+            self._outbound_id = result.get("id")
+            if self._outbound_id is None:
+                raise RuntimeError(
+                    "reply() succeeded but returned no message id; cannot continue streaming edits"
+                )
+            self._last_edit = now
+            self._last_sent_text = self._buffer
+        elif now - self._last_edit >= self._throttle:
+            self._edit_with_retry(self._buffer)
+            self._last_edit = now
+            self._last_sent_text = self._buffer
+
+    def _edit_with_retry(self, text: str) -> None:
+        delays = [0.2, 0.4, 0.6, 0.8, 1.0]
+        for attempt, delay in enumerate(delays, start=1):
+            try:
+                self._client.edit(self._outbound_id, text=text)
+                return
+            except CommError as exc:
+                if exc.status_code == 400 and exc.detail == _EDIT_BEFORE_SENT:
+                    if attempt < len(delays):
+                        time.sleep(delay)
+                        continue
+                raise
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        if self._outbound_id is None:
+            if self._reply_attempted:
+                return
+            self._client.reply(self._message_id, text=self._buffer)
+        elif self._buffer != self._last_sent_text:
+            remaining = self._throttle - (time.monotonic() - self._last_edit)
+            if remaining > 0:
+                time.sleep(remaining)
+            self._edit_with_retry(self._buffer)
+
+
+class _WebhookDedup:
+    """In-memory TTL cache for cross-invocation webhook dedup (warm containers).
+
+    Webhook providers (and the Caspian gateway) retry delivery when they don't
+    get a timely 200.  On serverless platforms the same container often handles
+    the retry, so an in-memory set of recently-seen event IDs is enough to
+    suppress the duplicate.  Bounded to *max_size* entries and *ttl_seconds* to
+    avoid unbounded memory growth.
+    """
+
+    def __init__(self, max_size: int = 1024, ttl_seconds: float = 300.0) -> None:
+        self._entries: dict[str, float] = {}  # event_id -> monotonic timestamp
+        self._max_size = max_size
+        self._ttl = ttl_seconds
+
+    def _evict(self) -> None:
+        now = time.monotonic()
+        expired = [k for k, t in self._entries.items() if now - t > self._ttl]
+        for k in expired:
+            del self._entries[k]
+        # If still over capacity after expiry, drop oldest entries.
+        while len(self._entries) > self._max_size:
+            oldest = min(self._entries, key=self._entries.get)  # type: ignore[arg-type]
+            del self._entries[oldest]
+
+    def seen(self, event_id: str) -> bool:
+        """Return True if *event_id* was already recorded (and not expired)."""
+        self._evict()
+        return event_id in self._entries
+
+    def record(self, event_id: str) -> None:
+        """Mark *event_id* as processed."""
+        self._entries[event_id] = time.monotonic()
+
+
 class CommClient:
     def __init__(
         self,
@@ -377,14 +552,28 @@ class CommClient:
         base_url = _config(base_url, "CASPIAN_BASE_URL", "https://api.trycaspianai.com")
         self._api_key = api_key
         self._http = http or httpx.Client(base_url=base_url, timeout=timeout)
-        self._handlers: list[Callable[[Message], None]] = []
-        self._interaction_handlers: list[Callable[[Interaction], None]] = []
-        self._reaction_handlers: list[Callable[[Reaction], None]] = []
+        self._handlers: list[Callable[[Message], Awaitable[None] | None]] = []
+        self._interaction_handlers: list[Callable[[Interaction], Awaitable[None] | None]] = []
+        self._reaction_handlers: list[Callable[[Reaction], Awaitable[None] | None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
+        self._webhook_dedup = _WebhookDedup()
+        # Shared background event loop for async handlers, created on first use.
+        self._handler_loop: asyncio.AbstractEventLoop | None = None
+        self._handler_loop_thread: Thread | None = None
+        self._handler_loop_lock = Lock()
 
     def close(self) -> None:
         self._http.close()
+        with self._handler_loop_lock:
+            loop, self._handler_loop = self._handler_loop, None
+            thread, self._handler_loop_thread = self._handler_loop_thread, None
+        if loop is not None:
+            loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5.0)
+            if not loop.is_running():
+                loop.close()
 
     def _request(
         self, method: str, path: str, *, json: dict | None = None, params: dict | None = None
@@ -518,6 +707,36 @@ class CommClient:
         """Connect a Telegram bot. Get a token from @BotFather; we do the rest."""
         return self._connect("telegram", customer_id, agent_id, bot_token=bot_token, **kwargs)
 
+    def connect_zulip(
+        self,
+        bot_email: str,
+        bot_api_key: str,
+        server_url: str,
+        bot_token: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Connect a Zulip outgoing-webhook bot (bring-your-own).
+
+        In your Zulip org, add an *Outgoing webhook* bot and set its Endpoint URL
+        to ``<gateway>/internal/providers/zulip/webhooks/<bot_email>``. Then pass
+        the bot's ``bot_email``, its ``bot_api_key``, and your org's
+        ``server_url`` (e.g. ``https://your-org.zulipchat.com``). Optional
+        ``bot_token`` (the outgoing-webhook token) verifies inbound. The same
+        on_message handler receives @-mentions in channels and direct messages.
+        """
+        return self._connect(
+            "zulip",
+            customer_id,
+            agent_id,
+            bot_email=bot_email,
+            bot_api_key=bot_api_key,
+            server_url=server_url,
+            bot_token=bot_token,
+            **kwargs,
+        )
+
     def add_domain(self, domain: str) -> dict:
         """Register a custom subdomain (e.g. agents.example.com). Returns the
         DNS records to add at the registrar; poll get_domain() until active."""
@@ -614,19 +833,32 @@ class CommClient:
         slack_client_id: str | None = None,
         slack_client_secret: str | None = None,
         slack_signing_secret: str | None = None,
+        bot_token: str | None = None,
+        app_token: str | None = None,
         customer_id=None,
         agent_id=None,
         **kwargs,
     ) -> dict:
-        """Start a Slack install. Bring your own Slack app (create one at
-        api.slack.com/apps and pass its client id/secret/signing secret) so the
-        bot carries your brand. Returns a connection with an `authorize_url`; the
-        workspace owner clicks it to approve, then the connection goes active."""
+        """Connect Slack, two ways:
+
+        - **Bring-your-own tokens (Socket Mode):** pass ``bot_token`` (``xoxb-``)
+          and ``app_token`` (``xapp-``, scope ``connections:write``) from an app
+          you already have. No OAuth, no public webhook, nothing changes on the
+          Slack side; the connection goes active immediately and the gateway
+          holds a socket for inbound.
+        - **OAuth (branded app):** pass ``slack_client_id`` /
+          ``slack_client_secret`` / ``slack_signing_secret`` (create the app at
+          api.slack.com/apps). Returns a connection with an ``authorize_url`` for
+          the workspace owner to approve.
+        """
+        socket = bool(bot_token and app_token)
         return self._connect(
-            "slack", customer_id, agent_id, wait=False,
+            "slack", customer_id, agent_id, wait=socket,
             slack_client_id=slack_client_id,
             slack_client_secret=slack_client_secret,
             slack_signing_secret=slack_signing_secret,
+            slack_bot_token=bot_token,
+            slack_app_token=app_token,
             **kwargs,
         )
 
@@ -750,7 +982,35 @@ class CommClient:
             app_password=app_password,
             **kwargs,
         )
+
+    def connect_linear(
+        self,
+        organization_id: str,
+        api_key: str | None = None,
+        webhook_secret: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        provider: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Connect Linear issue tracking.
+
+        Pass ``organization_id``, along with optional ``api_key`` (Personal API Key
+        or OAuth Token) and ``webhook_secret`` configured in Linear.
+        """
+        return self._connect(
+            "linear",
+            customer_id,
+            agent_id,
+            organization_id=organization_id,
+            api_key=api_key,
+            webhook_secret=webhook_secret,
+            provider=provider,
+            **kwargs,
+        )
+
     def connect_instagram(self, customer_id=None, agent_id=None, **kwargs) -> dict:
+
         """Start an Instagram DM install (OAuth). Returns an `authorize_url`."""
         return self._connect("instagram", customer_id, agent_id, wait=False, **kwargs)
 
@@ -760,6 +1020,11 @@ class CommClient:
 
     def get_connection(self, connection_id: str) -> dict:
         return self._request("GET", f"/v1/connections/{connection_id}")
+
+    def list_connections(self, channel: str | None = None) -> list[dict]:
+        params = {"channel": channel} if channel else None
+        return self._request("GET", "/v1/connections", params=params)
+
 
     def list_conversations(self, connection_id: str | None = None) -> list[dict]:
         params = {"connection_id": connection_id} if connection_id else None
@@ -807,8 +1072,18 @@ class CommClient:
         (Discord/Telegram; no-op where unsupported). Best-effort."""
         return self._request("POST", f"/v1/messages/{message_id}/typing")
 
+    def edit(self, outbound_message_id: str, text: str) -> dict:
+        """Edit a message the agent previously sent (used by streaming)."""
+        return self._request(
+            "POST", f"/v1/messages/{outbound_message_id}/edit", json={"text": text}
+        )
+
     def set_webhook(self, url: str, secret: str | None = None) -> dict:
-        """Receive events by push instead of (or alongside) polling."""
+        """Receive events by push instead of (or alongside) polling.
+
+        Omitting ``secret`` updates the URL alone and preserves any
+        previously configured signing secret.
+        """
         return self._request("PUT", "/v1/webhook", json={"url": url, "secret": secret})
 
     def get_webhook(self) -> dict:
@@ -960,39 +1235,99 @@ class CommClient:
 
     # Event handling
 
-    def on_message(self, handler: Callable[[Message], None]) -> Callable[[Message], None]:
+    def on_message(
+        self, handler: Callable[[Message], Awaitable[None] | None]
+    ) -> Callable[[Message], Awaitable[None] | None]:
+        """Register a handler for inbound messages. Plain ``def`` and
+        ``async def`` handlers are both supported; async handlers run on a
+        shared background event loop and are awaited to completion before
+        dispatch moves on, exactly like their sync counterparts."""
         self._handlers.append(handler)
         return handler
 
     def on_interaction(
-        self, handler: Callable[["Interaction"], None]
-    ) -> Callable[["Interaction"], None]:
+        self, handler: Callable[["Interaction"], Awaitable[None] | None]
+    ) -> Callable[["Interaction"], Awaitable[None] | None]:
         """Register a handler for button taps (interaction.received). The same
         handler answers taps from every channel that supports interactive
-        buttons (Slack, Discord, Telegram)."""
+        buttons (Slack, Discord, Telegram). Sync and ``async def`` handlers
+        are both supported."""
         self._interaction_handlers.append(handler)
         return handler
 
     def on_reaction(
-        self, handler: Callable[["Reaction"], None]
-    ) -> Callable[["Reaction"], None]:
-        """Register a handler for emoji reactions (reaction.received)."""
+        self, handler: Callable[["Reaction"], Awaitable[None] | None]
+    ) -> Callable[["Reaction"], Awaitable[None] | None]:
+        """Register a handler for emoji reactions (reaction.received). Sync
+        and ``async def`` handlers are both supported."""
         self._reaction_handlers.append(handler)
         return handler
+
+    def _call_handler(self, handler: Callable, argument) -> None:
+        """Invoke a handler, supporting both sync and ``async def`` callables.
+
+        An ``async def`` handler returns a coroutine when called; it is run on
+        a single long-lived background event loop (created on first use) and
+        awaited to completion before dispatch continues. Using one shared loop
+        rather than ``asyncio.run`` per message lets handlers keep async
+        resources (HTTP clients, connection pools) alive across messages, and
+        keeps dispatch working even when the caller's thread already runs its
+        own event loop. Blocking until the coroutine finishes means ordering,
+        error handling, and the overlap strategies treat sync and async
+        handlers identically; exceptions raised inside the coroutine propagate
+        to the caller just like a sync handler's would.
+        """
+        result = handler(argument)
+        if inspect.isawaitable(result):
+            future = asyncio.run_coroutine_threadsafe(
+                _consume_awaitable(result), self._ensure_handler_loop()
+            )
+            future.result()
+
+    def _ensure_handler_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the shared handler loop, starting it on a daemon thread the
+        first time an async handler runs. Thread-safe because the parallel and
+        debounce overlap strategies dispatch from executor threads."""
+        with self._handler_loop_lock:
+            if self._handler_loop is None:
+                loop = asyncio.new_event_loop()
+                thread = Thread(
+                    target=loop.run_forever, name="caspian-async-handlers", daemon=True
+                )
+                thread.start()
+                self._handler_loop = loop
+                self._handler_loop_thread = thread
+            return self._handler_loop
 
     def _dispatch_event(self, event: dict) -> None:
         """Run handlers for one event. A handler that raises is logged and
         swallowed so one bad message can never stop the listener."""
         event_type = event.get("type")
+        if event_type not in ("message.received", "interaction.received", "reaction.received"):
+            return
+        # ``data`` is optional in the event schema; a record without a usable
+        # payload is logged and skipped so it can never stop the listener.
+        data = event.get("data")
+        if not isinstance(data, dict):
+            logger.warning(
+                "skipping malformed %s event (seq %s): no event data",
+                event_type,
+                event.get("seq"),
+            )
+            return
         if event_type == "interaction.received":
-            self._dispatch_interaction(event["data"])
+            self._dispatch_interaction(data)
             return
         if event_type == "reaction.received":
-            self._dispatch_reaction(event["data"])
+            self._dispatch_reaction(data)
             return
-        if event_type != "message.received":
+        if not isinstance(data.get("message"), dict):
+            logger.warning(
+                "skipping malformed message.received event (seq %s): no message payload",
+                event.get("seq"),
+            )
             return
-        message = self._build_message(event["data"])
+        message = self._build_message(data)
         if self._handlers:
             # Show a 'thinking…' indicator up front so the human sees the agent is
             # working while the handler runs. Best-effort; never blocks dispatch.
@@ -1012,7 +1347,7 @@ class CommClient:
                     logger.exception("ack reply failed for message %s", message.id)
         for handler in self._handlers:
             try:
-                handler(message)
+                self._call_handler(handler, message)
             except AccountRequiredError as exc:
                 # Paid channel used before the developer signed in. Surface the
                 # one-time sign-in prompt loudly (e.g. in Claude Code).
@@ -1165,7 +1500,7 @@ class CommClient:
         )
         for handler in self._interaction_handlers:
             try:
-                handler(interaction)
+                self._call_handler(handler, interaction)
             except InsufficientCreditError as exc:
                 self._warn_out_of_credit(exc)
             except AccountRequiredError as exc:
@@ -1186,7 +1521,7 @@ class CommClient:
         )
         for handler in self._reaction_handlers:
             try:
-                handler(reaction)
+                self._call_handler(handler, reaction)
             except Exception:
                 logger.exception("on_reaction handler failed; continuing")
 
@@ -1204,5 +1539,88 @@ class CommClient:
             text=message.get("text"),
             html=message.get("html"),
             media=message.get("media") or [],
+            chat_type=message.get("chat_type"),
             _client=self,
         )
+
+    # Serverless webhook handler
+
+    def handle_webhook(
+        self,
+        body: bytes | str,
+        headers: dict[str, str],
+        secret: str,
+    ) -> WebhookResult:
+        """Process a single gateway webhook delivery (serverless mode).
+
+        Use this instead of ``listen()`` when running on Lambda, Cloudflare
+        Workers, Vercel, or any request-scoped serverless runtime. The gateway
+        pushes events to your webhook URL (configured via ``set_webhook``); this
+        method verifies the signature, dispatches to your registered handlers,
+        and returns — no loop, no long-lived connection.
+
+        Args:
+            body: The raw request body (bytes or string).
+            headers: The HTTP headers from the incoming request.
+            secret: The shared secret configured via ``set_webhook(url, secret)``.
+
+        Returns:
+            A ``WebhookResult`` with the dispatch outcome.
+
+        Raises:
+            WebhookVerificationError: If the signature is missing or invalid.
+        """
+        raw = body if isinstance(body, bytes) else body.encode("utf-8")
+
+        # -- Verify signature ---------------------------------------------------
+        lower = {k.lower(): v for k, v in headers.items()}
+        received = lower.get("x-caspian-signature", "")
+        if not received:
+            raise WebhookVerificationError("missing x-caspian-signature header")
+
+        expected = "sha256=" + hmac.new(
+            secret.encode("utf-8"), raw, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(received, expected):
+            raise WebhookVerificationError("webhook signature mismatch")
+
+        # -- Parse event --------------------------------------------------------
+        payload = _json.loads(raw)
+
+        # The gateway may push a single event object or a list of events.
+        events: list[dict] = payload if isinstance(payload, list) else [payload]
+
+        seen_ids: set[str] = set()
+        result = WebhookResult(status="ignored")
+
+        for event in events:
+            event_id = str(event.get("id") or event.get("seq") or "")
+            event_type = event.get("type")
+
+            # Intra-invocation idempotency: skip duplicate event ids within
+            # the same payload.
+            if event_id and event_id in seen_ids:
+                continue
+
+            # Cross-invocation dedup: skip events already processed by a
+            # previous invocation on this warm container.
+            if event_id and self._webhook_dedup.seen(event_id):
+                continue
+
+            if event_id:
+                seen_ids.add(event_id)
+
+            self._dispatch_event(event)
+
+            # Record after successful dispatch so retries of genuinely failed
+            # processing are not suppressed.
+            if event_id:
+                self._webhook_dedup.record(event_id)
+
+            result = WebhookResult(
+                status="ok",
+                event_id=event_id or None,
+                event_type=event_type,
+            )
+
+        return result
