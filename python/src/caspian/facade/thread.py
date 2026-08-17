@@ -75,6 +75,21 @@ class Thread:
             Post(thread_id=self.thread_id, text=text, actions=_to_buttons(actions))
         )
 
+    def send(self, text: str, *, actions: tuple[Any, ...] = ()) -> None:
+        """Send WITHOUT threading, even mid-conversation.
+
+        post() answers the message that triggered the turn; use this for an
+        unprompted message that should start its own thread.
+        """
+        self._commands.append(
+            Post(
+                thread_id=self.thread_id,
+                text=text,
+                actions=_to_buttons(actions),
+                standalone=True,
+            )
+        )
+
     def reply(self, reply_to: str, text: str, *, actions: tuple[Any, ...] = ()) -> None:
         """Enqueue a Reply command (threaded reply to a specific message)."""
         self._commands.append(

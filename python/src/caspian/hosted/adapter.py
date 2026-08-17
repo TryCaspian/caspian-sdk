@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from caspian.core.commands import Command, Typing
+from caspian.core.commands import Command, Post, Reply, Typing
 from caspian.core.ports import Connection, RawInbound, Result
 from caspian.core.types import Event, ThreadId
 from caspian.hosted.inbound import GatewayEventParser, GatewaySignatureVerifier
@@ -66,7 +66,30 @@ class GatewayAdapter:
     def execute(self, cmd: Command, conn: Connection) -> Result:
         if isinstance(cmd, Typing):
             return self._typing(cmd)
+        if isinstance(cmd, Post):
+            cmd = self._as_reply(cmd)
         return self._outbound.execute(cmd, conn)
+
+    def _as_reply(self, cmd: Post) -> Command:
+        """Turn a Post into a Reply to the message that triggered this turn.
+
+        A handler answering an inbound message means "reply to this", and on
+        email that is the difference between a threaded conversation and a
+        stray new message: only the reply path sets In-Reply-To/References and
+        the Re: subject. Posting into a conversation is still available for
+        genuinely unprompted messages (thread.send()).
+        """
+        if cmd.standalone:
+            return cmd  # the developer explicitly asked for a new thread
+        mid = self._last_inbound.get(str(cmd.thread_id), "")
+        if not mid:
+            return cmd  # nothing triggered this; a plain send is correct
+        return Reply(
+            thread_id=cmd.thread_id,
+            reply_to=mid,
+            text=cmd.text,
+            actions=cmd.actions,
+        )
 
     def _typing(self, cmd: Typing) -> Result:
         """POST /v1/messages/{message_id}/typing.

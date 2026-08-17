@@ -204,3 +204,68 @@ class TestTypingIsSentBeforeTheHandler:
         order = [s.raw.get("url", "").rsplit("/", 1)[-1] for s in rec.dispatched]
         assert order, "nothing was dispatched"
         assert "sendChatAction" in order[0], f"typing must be first, got {order}"
+
+
+class TestPostThreadsTheConversation:
+    """A handler answering an inbound message means "reply to this".
+
+    Regression: thread.post() mapped to a proactive send, which on email omits
+    In-Reply-To/References and the Re: subject, so Gmail showed a stray new
+    message instead of a threaded conversation.
+    """
+
+    def _adapter(self):
+        from caspian.hosted.adapter import GatewayAdapter
+
+        a = GatewayAdapter()
+        a.parse(RawInbound(body=json.dumps({"events": [REAL_EVENT]}).encode()))
+        return a
+
+    def _conn(self):
+        from caspian.core.ports import Connection
+        from caspian.core.types import ConnectionId
+
+        return Connection(id=ConnectionId("c"), channel="gateway", config={})
+
+    def test_post_becomes_a_reply_to_the_trigger(self) -> None:
+        from caspian.core.commands import Post
+        from caspian.core.types import ThreadId
+
+        r = self._adapter().execute(
+            Post(thread_id=ThreadId("discord:conv_1"), text="hi"), self._conn()
+        )
+        assert r.is_ok
+        assert r.value.raw["gateway"]["path"] == "/v1/messages/msg_1/reply"
+
+    def test_standalone_post_stays_a_plain_send(self) -> None:
+        from caspian.core.commands import Post
+        from caspian.core.types import ThreadId
+
+        r = self._adapter().execute(
+            Post(thread_id=ThreadId("discord:conv_1"), text="hi", standalone=True),
+            self._conn(),
+        )
+        assert r.is_ok
+        assert r.value.raw["gateway"]["path"] == "/v1/conversations/conv_1/messages"
+
+    def test_post_with_no_trigger_is_a_plain_send(self) -> None:
+        from caspian.core.commands import Post
+        from caspian.core.types import ThreadId
+        from caspian.hosted.adapter import GatewayAdapter
+
+        r = GatewayAdapter().execute(
+            Post(thread_id=ThreadId("discord:unknown"), text="hi"), self._conn()
+        )
+        assert r.is_ok
+        assert "conversations" in r.value.raw["gateway"]["path"]
+
+    def test_thread_send_is_explicitly_standalone(self) -> None:
+        from caspian.core.types import ThreadId
+        from caspian.facade.thread import Thread
+
+        t = Thread(thread_id=ThreadId("discord:conv_1"))
+        t.send("unprompted")
+        assert t.commands[0].standalone is True
+        t2 = Thread(thread_id=ThreadId("discord:conv_1"))
+        t2.post("answer")
+        assert t2.commands[0].standalone is False

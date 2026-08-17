@@ -10,13 +10,20 @@ from caspian.core.types import Attachment, Block, Button, ThreadId
 
 
 class Post(BaseModel):
-    """Send a message to a thread."""
+    """Send a message to a thread.
+
+    When the turn was triggered by an inbound message, a runner may deliver
+    this as a reply to that message so the conversation threads correctly
+    (this is what makes email keep its In-Reply-To chain). Set
+    ``standalone=True`` for a message that must start its own thread.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     tag: Literal["Post"] = "Post"
     thread_id: ThreadId
     text: str
     actions: tuple[Button, ...] = ()
+    standalone: bool = False
 
 
 class Reply(BaseModel):
