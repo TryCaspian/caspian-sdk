@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
-import { decodeEvent } from "../src/core/index.ts"
+import { decodeCommand, decodeEvent } from "../src/core/index.ts"
 import {
   decodeThreadId,
   encodeThreadId,
   overlapKey,
   parseTelegramUpdate,
+  planTurn,
 } from "../src/adapters/telegram.ts"
 
 const vectorsUrl = new URL(
@@ -106,3 +107,66 @@ test("encode/decode thread id and overlap key use chat", () => {
   }
   expect(overlapKey(event)).toBe("123")
 })
+
+const executeVectorsUrl = new URL(
+  "../../../vectors/telegram_execute_vectors.json",
+  import.meta.url,
+)
+
+test("golden Telegram execute vectors", async () => {
+  const file = Bun.file(executeVectorsUrl)
+  expect(await file.exists()).toBe(true)
+  const vectors: unknown = await file.json()
+  expect(Array.isArray(vectors)).toBe(true)
+  if (!Array.isArray(vectors)) {
+    return
+  }
+  for (const vector of vectors) {
+    expect(isRecord(vector)).toBe(true)
+    if (!isRecord(vector)) {
+      continue
+    }
+    const eventResult = Effect.runSync(Effect.either(decodeEvent(vector.event)))
+    expect(eventResult._tag, String(vector.name)).toBe("Right")
+    if (eventResult._tag !== "Right") {
+      continue
+    }
+    expect(Array.isArray(vector.commands), String(vector.name)).toBe(true)
+    if (!Array.isArray(vector.commands)) {
+      continue
+    }
+    const commands = vector.commands.map((item, index) => {
+      const decoded = Effect.runSync(Effect.either(decodeCommand(item)))
+      expect(decoded._tag, `${String(vector.name)} command ${index}`).toBe(
+        "Right",
+      )
+      return decoded._tag === "Right" ? decoded.right : undefined
+    })
+    if (commands.some((item) => item === undefined)) {
+      continue
+    }
+    const calls = planTurn(
+      eventResult.right,
+      commands.filter((item) => item !== undefined),
+    )
+    expect(calls, String(vector.name)).toEqual(vector.expected_calls)
+  }
+})
+
+test("Host commands are skipped so the adapter does not call Telegram", () => {
+  const event = Effect.runSync(
+    decodeEvent({
+      kind: "message",
+      thread_id: "telegram:123",
+      text: "hello",
+      chat_kind: "dm",
+      sender: "alice",
+      raw: {},
+    }),
+  )
+  const host = Effect.runSync(
+    decodeCommand({ tag: "Host", handler_id: "onMessage:0" }),
+  )
+  expect(planTurn(event, [host])).toEqual([])
+})
+
