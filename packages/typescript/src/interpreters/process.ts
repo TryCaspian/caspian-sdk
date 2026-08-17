@@ -25,11 +25,16 @@ export type ProcessOptions = {
   readonly host?: Layer.Layer<HostPort>
 }
 
-export type ProcessInterpreter = {
-  readonly handle: (request: Request) => Effect.Effect<Response>
+export type ProcessInbound = {
+  readonly secretHeader?: string
 }
 
-const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
+export type ProcessInterpreter = {
+  readonly handle: (
+    request: Request,
+    inbound?: ProcessInbound,
+  ) => Effect.Effect<Response>
+}
 
 const jsonOf = (request: Request): Effect.Effect<unknown> =>
   Effect.tryPromise({
@@ -46,21 +51,25 @@ export const makeProcessInterpreter = (
       channelName: options.channelName ?? "",
       ...(options.host === undefined ? {} : { host: options.host }),
     })
-    const secretHeader = options.secretHeader ?? TELEGRAM_SECRET_HEADER
 
     const runEvent = (event: Event) =>
       Effect.gen(function* () {
         const adapter = yield* AdapterPort
-        const before = yield* memory.commands
         yield* memory.run(event, adapter.overlapKey(event))
-        const after = yield* memory.commands
-        const delta = after.slice(before.length)
+        const delta = yield* memory.produced
         yield* executeTurn(event, delta, options.connection)
       }).pipe(Effect.provide(options.adapter))
 
-    const handle = (request: Request): Effect.Effect<Response> =>
+    const handle = (
+      request: Request,
+      inbound?: ProcessInbound,
+    ): Effect.Effect<Response> =>
       Effect.gen(function* () {
         if (options.secretToken !== undefined) {
+          const secretHeader = inbound?.secretHeader ?? options.secretHeader
+          if (secretHeader === undefined) {
+            return new Response(null, { status: 401 })
+          }
           const got = request.headers.get(secretHeader)
           if (got !== options.secretToken) {
             return new Response(null, { status: 401 })
@@ -68,7 +77,9 @@ export const makeProcessInterpreter = (
         }
         const raw = yield* jsonOf(request)
         const adapter = yield* AdapterPort
-        const events = yield* adapter.parse(raw)
+        const events = yield* adapter.parse(raw).pipe(
+          Effect.catchAll(() => Effect.succeed<ReadonlyArray<Event>>([])),
+        )
         yield* Effect.forEach(events, (event) => runEvent(event), {
           discard: true,
         }).pipe(Effect.catchAll(() => Effect.void))

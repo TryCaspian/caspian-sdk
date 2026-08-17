@@ -5,8 +5,11 @@ import * as Context from "effect/Context"
 import type * as Effect from "effect/Effect"
 import type { Command } from "./commands.ts"
 import type { Connection } from "./connection.ts"
-import type { AdapterError, CaspianError } from "./errors.ts"
+import type { AdapterError, CaspianError, DecodeError } from "./errors.ts"
 import type { Event } from "./events.ts"
+
+/** JSON body at the inbound edge. Decode in the adapter, not in the kernel. */
+export type RawInbound = unknown
 
 export type HostContext = {
   readonly skipped: ReadonlyArray<Event>
@@ -31,7 +34,10 @@ export class AdapterPort extends Context.Tag("caspian/AdapterPort")<
   AdapterPort,
   {
     readonly name: string
-    readonly parse: (raw: unknown) => Effect.Effect<ReadonlyArray<Event>>
+    /** Fail with DecodeError when this channel's inbound is malformed. Unknown Telegram update types still succeed as `[]`. */
+    readonly parse: (
+      raw: RawInbound,
+    ) => Effect.Effect<ReadonlyArray<Event>, DecodeError>
     readonly overlapKey: (event: Event) => string
     readonly ack: (
       event: Event,

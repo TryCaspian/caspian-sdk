@@ -4,6 +4,7 @@ import * as Either from "effect/Either"
 import * as Schema from "effect/Schema"
 import {
   App,
+  CaspianError,
   Command,
   Event,
   decodeApp,
@@ -151,4 +152,13 @@ test("rejects a non-positive overlap bound", () => {
 test("Event and App schemas are the vector round-trip codecs", () => {
   expect(Event.ast._tag).toBe("Union")
   expect(App.ast._tag).toBe("TypeLiteral")
+})
+
+test("CaspianError has no OverlapFull arm — queue-at-bound is a drop, not an error", () => {
+  const result = Schema.decodeUnknownEither(CaspianError)({
+    _tag: "OverlapFull",
+    threadId: "telegram:1",
+    bound: 16,
+  })
+  expect(Either.isLeft(result)).toBe(true)
 })
