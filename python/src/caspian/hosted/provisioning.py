@@ -130,7 +130,41 @@ class HostedProvisioning:
             )
         )
 
+    def list_connections(self) -> Result:
+        """GET /v1/connections. The body is a JSON array."""
+        result = self._send(GatewayRequest(method="GET", path="/v1/connections"))
+        if not result.is_ok:
+            return result
+        return Result.ok(result.value.json_list)
+
+    def find_active(self, channel: str) -> str:
+        """Id of an existing live connection for this channel, or ""."""
+        listed = self.list_connections()
+        if not listed.is_ok:
+            return ""
+        for row in listed.value:
+            if not isinstance(row, dict):
+                continue
+            if row.get("channel") == channel and row.get("status") in (
+                "active",
+                "pending_oauth",
+            ):
+                return str(row.get("id", ""))
+        return ""
+
     def add_connection(self, channel: str, options: dict[str, Any] | None = None) -> Result:
+        """Ensure this project has a connection for `channel`.
+
+        `channels.add()` is declarative ("my agent uses discord"), not a request
+        to create another connection each run. Creating unconditionally means a
+        restart fails once a connection exists, and channels connected by OAuth
+        cannot be created this way at all: their credentials live behind the
+        /install flow, so POST /v1/connections/{channel} rejects them.
+        """
+        existing = self.find_active(channel)
+        if existing:
+            return self.get_connection(existing)
+
         result = self._send(
             GatewayRequest(
                 method="POST",

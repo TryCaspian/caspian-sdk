@@ -67,6 +67,8 @@ class TestDevice:
 class TestConnections:
     def test_add_connection_posts_and_decodes_authorize_url(self) -> None:
         prov, client = _prov()
+        # add_connection reuses an existing connection, so it looks first.
+        client.queue_ok({})
         client.queue_ok(
             {
                 "id": "conn_1",
@@ -192,6 +194,7 @@ class TestOAuth:
 class TestErrorPropagation:
     def test_insufficient_credit_propagates(self) -> None:
         prov, client = _prov()
+        client.queue_ok({})  # the existing-connection lookup
         client.queue_status(402, "insufficient credit")
         result = prov.add_connection("discord")
         assert not result.is_ok
