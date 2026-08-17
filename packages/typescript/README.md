@@ -31,6 +31,11 @@ then `POST` → `cx.webhooks.telegram(req)`. The platform is ACKed 200 before
 the model; a wrong secret is 401. Tests inject a recording Layer — no live
 network in CI.
 
+Hosted inbound: `await cx.run({ adapter: hostedHttpLayer(), webhookSecret, ... })`
+then `POST` → `cx.webhooks.caspian(req)`. The body is a kernel Event envelope,
+signed with HMAC-SHA256 (`X-Caspian-Signature`). Execute goes to the Caspian
+outbox, not `api.telegram.org`.
+
 ```bash
 bun install
 bun run ci

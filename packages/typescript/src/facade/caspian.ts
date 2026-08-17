@@ -2,6 +2,11 @@ import * as Effect from "effect/Effect"
 import type { App, Overlap, Rule } from "../core/app.ts"
 import type { Predicate } from "../core/predicates.ts"
 import {
+  makeHostedInterpreter,
+  type HostedInterpreter,
+  type HostedOptions,
+} from "../interpreters/hosted.ts"
+import {
   makeMemoryInterpreter,
   type MemoryInterpreter,
 } from "../interpreters/memory.ts"
@@ -23,6 +28,7 @@ export class Caspian {
   readonly #rules: Rule[] = []
   readonly #handlers = new Map<string, BHandler>()
   #process: ProcessInterpreter | undefined
+  #hosted: HostedInterpreter | undefined
   #messageCount = 0
   #actionCount = 0
   #useCount = 0
@@ -113,6 +119,29 @@ export class Caspian {
     )
   }
 
+  run(
+    options: Omit<HostedOptions, "host" | "channelName"> & {
+      readonly channel?: string
+    },
+  ): Promise<void> {
+    return Effect.runPromise(
+      makeHostedInterpreter(this.program, {
+        channelName: options.channel ?? "",
+        connection: options.connection,
+        adapter: options.adapter,
+        webhookSecret: options.webhookSecret,
+        host: bHostLayer(this.#handlers),
+      }).pipe(
+        Effect.tap((hosted) =>
+          Effect.sync(() => {
+            this.#hosted = hosted
+          }),
+        ),
+        Effect.asVoid,
+      ),
+    )
+  }
+
   readonly webhooks = {
     telegram: (request: Request): Promise<Response> => {
       const process = this.#process
@@ -122,6 +151,17 @@ export class Caspian {
       return Effect.runPromise(
         process.handle(request, {
           secretHeader: "X-Telegram-Bot-Api-Secret-Token",
+        }),
+      )
+    },
+    caspian: (request: Request): Promise<Response> => {
+      const hosted = this.#hosted
+      if (hosted === undefined) {
+        return Promise.reject(new Error("run() before webhooks.caspian"))
+      }
+      return Effect.runPromise(
+        hosted.handle(request, {
+          signatureHeader: "X-Caspian-Signature",
         }),
       )
     },
