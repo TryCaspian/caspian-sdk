@@ -36,6 +36,21 @@ then `POST` → `cx.webhooks.caspian(req)`. The body is a kernel Event envelope,
 signed with HMAC-SHA256 (`X-Caspian-Signature`). Execute goes to the Caspian
 outbox, not `api.telegram.org`.
 
+`via` is required on `channels.add`. There is no omit-means-hosted:
+
+```ts
+await cx.channels.add("telegram", { via: "hosted" })
+await cx.channels.add("telegram", {
+  via: "self-host",
+  botToken: token,
+  webhookUrl: "https://myapp.example.com/api/webhooks/telegram",
+})
+```
+
+`"hosted" | "self-host"` only. Not `oauth`, not `credentials`. Self-host inbound
+without `webhookUrl` is an error; `inbound: false` is send-only. This mints a
+`Connection`. It does not call a live gateway yet.
+
 ```bash
 bun install
 bun run ci
