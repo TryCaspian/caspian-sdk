@@ -76,20 +76,15 @@ class GatewayAdapter:
         fail the reply that follows it.
         """
         from caspian.core.ports import Sent
+        from caspian.hosted.outbound import _gateway_sent
 
         mid = self._last_inbound.get(str(cmd.thread_id), "")
         if not mid:
             return Result.ok(Sent(raw={"noop": "typing (no inbound message id yet)"}))
+        # Build through the shared helper so the request shape can never drift
+        # from what GatewayTransport reads (it expects raw["gateway"]["path"]).
         return Result.ok(
-            Sent(
-                raw={
-                    "transport": "gateway",
-                    "native": "typing",
-                    "method": "POST",
-                    "path": f"/v1/messages/{mid}/typing",
-                    "json": {},
-                }
-            )
+            _gateway_sent("typing", "POST", f"/v1/messages/{mid}/typing", {})
         )
 
     def overlap_key(self, event: Event) -> str:

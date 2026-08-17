@@ -127,8 +127,12 @@ class TestTypingUsesMessageEndpoint:
         conn = Connection(id=ConnectionId("c"), channel="gateway", config={})
         r = a.execute(Typing(thread_id=ThreadId("discord:conv_1")), conn)
         assert r.is_ok
-        assert r.value.raw["path"] == "/v1/messages/msg_1/typing"
-        assert "conversations" not in r.value.raw["path"]
+        # GatewayTransport reads raw["gateway"]["path"]; asserting the flat key
+        # is how the first attempt at this fix passed while sending an empty path.
+        gw = r.value.raw["gateway"]
+        assert gw["path"] == "/v1/messages/msg_1/typing"
+        assert gw["method"] == "POST"
+        assert "conversations" not in gw["path"]
 
     def test_typing_without_a_known_message_is_a_noop_not_an_error(self) -> None:
         from caspian.core.commands import Typing
