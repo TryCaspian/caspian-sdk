@@ -97,3 +97,49 @@ class TestPollerContract:
         assert poller.cursor == 24210
         poller.fetch_raw()
         assert c.seen[1].params["after_seq"] == "24210", "must not re-read old rows"
+
+
+class TestTypingUsesMessageEndpoint:
+    """Typing hangs off a MESSAGE on the gateway, not a conversation.
+
+    Regression: the mapper posted to /v1/conversations/{cid}/typing, which 404s
+    (verified live), so the indicator never appeared in Slack or Discord even
+    though step() emitted the command.
+    """
+
+    def _adapter_after_inbound(self):
+        from caspian.hosted.adapter import GatewayAdapter
+
+        a = GatewayAdapter()
+        a.parse(RawInbound(body=json.dumps({"events": [REAL_EVENT]}).encode()))
+        return a
+
+    def test_typing_targets_the_inbound_message(self) -> None:
+        from caspian.core.commands import Typing
+        from caspian.core.ports import Connection
+        from caspian.core.types import ConnectionId, ThreadId
+
+        a = self._adapter_after_inbound()
+        conn = Connection(id=ConnectionId("c"), channel="gateway", config={})
+        r = a.execute(Typing(thread_id=ThreadId("discord:conv_1")), conn)
+        assert r.is_ok
+        assert r.value.raw["path"] == "/v1/messages/msg_1/typing"
+        assert "conversations" not in r.value.raw["path"]
+
+    def test_typing_without_a_known_message_is_a_noop_not_an_error(self) -> None:
+        from caspian.core.commands import Typing
+        from caspian.core.ports import Connection
+        from caspian.core.types import ConnectionId, ThreadId
+        from caspian.hosted.adapter import GatewayAdapter
+
+        conn = Connection(id=ConnectionId("c"), channel="gateway", config={})
+        r = GatewayAdapter().execute(Typing(thread_id=ThreadId("discord:nope")), conn)
+        assert r.is_ok, "a missing indicator must never fail the reply that follows"
+        assert "noop" in r.value.raw
+
+    def test_capabilities_do_not_claim_missing_endpoints(self) -> None:
+        """The gateway has no pin/unpin/forward/delete/modal routes."""
+        from caspian.hosted.adapter import GatewayAdapter
+
+        caps = GatewayAdapter().capabilities()
+        assert "delete" not in caps

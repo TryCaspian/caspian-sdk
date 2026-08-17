@@ -10,7 +10,10 @@ no second inbound implementation; webhook and poll paths both flow through here.
 
 from __future__ import annotations
 
-from caspian.core.commands import Command
+import json
+from typing import Any
+
+from caspian.core.commands import Command, Typing
 from caspian.core.ports import Connection, RawInbound, Result
 from caspian.core.types import Event, ThreadId
 from caspian.hosted.inbound import GatewayEventParser, GatewaySignatureVerifier
@@ -24,6 +27,10 @@ class GatewayAdapter:
         self._outbound = GatewayOutbound()
         self._parser = GatewayEventParser()
         self._verifier = GatewaySignatureVerifier(webhook_secret)
+        # thread id -> id of the most recent inbound message on it. The gateway
+        # keys typing off a MESSAGE ("show a typing hint in reply to this"),
+        # not off a conversation, so the id has to be remembered here.
+        self._last_inbound: dict[str, str] = {}
 
     @property
     def name(self) -> str:
@@ -33,10 +40,57 @@ class GatewayAdapter:
         return self._verifier.verify(raw)
 
     def parse(self, raw: RawInbound) -> Result:
-        return self._parser.parse(raw)
+        result = self._parser.parse(raw)
+        if result.is_ok:
+            self._remember_inbound(raw)
+        return result
+
+    def _remember_inbound(self, raw: RawInbound) -> None:
+        """Record the newest inbound message id per thread (best effort)."""
+        try:
+            payload: Any = json.loads(raw.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        rows = payload.get("events") if isinstance(payload, dict) else None
+        for row in rows if isinstance(rows, list) else [payload]:
+            if not isinstance(row, dict):
+                continue
+            message = ((row.get("data") or {}).get("message")) or {}
+            if not isinstance(message, dict) or message.get("direction") != "inbound":
+                continue
+            mid = str(message.get("id", ""))
+            thread = f"{message.get('channel', '')}:{message.get('conversation_id', '')}"
+            if mid:
+                self._last_inbound[thread] = mid
 
     def execute(self, cmd: Command, conn: Connection) -> Result:
+        if isinstance(cmd, Typing):
+            return self._typing(cmd)
         return self._outbound.execute(cmd, conn)
+
+    def _typing(self, cmd: Typing) -> Result:
+        """POST /v1/messages/{message_id}/typing.
+
+        Without a known message id there is nothing to hang the hint on, so this
+        is a no-op rather than an error: a missing typing indicator must never
+        fail the reply that follows it.
+        """
+        from caspian.core.ports import Sent
+
+        mid = self._last_inbound.get(str(cmd.thread_id), "")
+        if not mid:
+            return Result.ok(Sent(raw={"noop": "typing (no inbound message id yet)"}))
+        return Result.ok(
+            Sent(
+                raw={
+                    "transport": "gateway",
+                    "native": "typing",
+                    "method": "POST",
+                    "path": f"/v1/messages/{mid}/typing",
+                    "json": {},
+                }
+            )
+        )
 
     def overlap_key(self, event: Event) -> str:
         return str(event.thread_id)
@@ -55,7 +109,6 @@ class GatewayAdapter:
                 "buttons",
                 "blocks",
                 "edit",
-                "delete",
                 "react",
                 "typing",
                 "threading",
