@@ -1,0 +1,36 @@
+import type { Command, PostAction } from "../core/commands.ts"
+import type { ThreadId } from "../core/ids.ts"
+
+export type CommandSink = (command: Command) => void
+
+export type Thread = {
+  readonly id: ThreadId
+  post(
+    text: string,
+    options?: { readonly actions?: ReadonlyArray<PostAction> },
+  ): Promise<void>
+  typing(): Promise<void>
+  edit(messageId: string, text: string): Promise<void>
+  react(messageId: string, emoji: string): Promise<void>
+}
+
+export const makeThread = (id: ThreadId, sink: CommandSink): Thread => ({
+  id,
+  post: async (text, options) => {
+    sink({
+      tag: "Post",
+      thread_id: id,
+      text,
+      actions: options?.actions === undefined ? [] : [...options.actions],
+    })
+  },
+  typing: async () => {
+    sink({ tag: "Typing", thread_id: id })
+  },
+  edit: async (messageId, text) => {
+    sink({ tag: "Edit", thread_id: id, message_id: messageId, text })
+  },
+  react: async (messageId, emoji) => {
+    sink({ tag: "React", thread_id: id, message_id: messageId, emoji })
+  },
+})
