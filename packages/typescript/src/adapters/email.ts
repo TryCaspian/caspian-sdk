@@ -10,6 +10,7 @@ import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   asJsonObject,
   configString,
+  messageDefaults,
   encodePrefixed,
   isRecord,
   jsonObjectOf,
@@ -137,6 +138,7 @@ export const parseEmailUpdate = (
   return Effect.succeed([
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ address: fields.sender }),
       text: fields.body,
       chat_kind: "dm",

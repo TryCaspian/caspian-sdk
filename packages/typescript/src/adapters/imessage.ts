@@ -10,6 +10,7 @@ import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   asJsonObject,
   configString,
+  messageDefaults,
   encodePrefixed,
   firstHeader,
   hmacSha256Hex,
@@ -43,6 +44,7 @@ const parseRelay = (data: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ address }),
       text: typeof data.text === "string" ? data.text : "",
       chat_kind: "dm",
@@ -57,6 +59,7 @@ const parseSimple = (payload: Record<string, unknown>): ReadonlyArray<Event> => 
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: encodeThreadId({ address }),
       text: typeof payload.text === "string" ? payload.text : "",
       chat_kind: "dm",

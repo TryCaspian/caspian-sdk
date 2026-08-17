@@ -13,6 +13,7 @@ import { Command } from "../core/commands.ts"
 import type { Connection } from "../core/connection.ts"
 import { AdapterError } from "../core/errors.ts"
 import { Event } from "../core/events.ts"
+import type { JsonObject } from "../core/json.ts"
 import { decodeStrict } from "../core/parse.ts"
 import { AdapterPort, type HostPort, type ThreadStore } from "../core/ports.ts"
 import {
@@ -116,20 +117,23 @@ export const hostedLayer = (
         Effect.map((delivery) => [delivery.event] as const),
       ),
     overlapKey: (event) => String(event.thread_id),
-    ack: (event) =>
+    verify: () => true,
+    acknowledge: (event) =>
       Effect.sync(() => {
         if (event.kind === "action") {
           sink.push({ op: "ack", event })
         }
-        return { ok: true as const }
+        return { ok: true as const, message_id: "", raw: {} }
       }),
     execute: (command) =>
       Effect.sync(() => {
         if (!skipExecute(command)) {
           sink.push({ op: "execute", command })
         }
-        return { ok: true as const }
+        return { ok: true as const, message_id: "", raw: {} }
       }),
+    capabilities: () => ["receive", "send", "edit"],
+    format: (text) => text,
   })
 
 const postOutbox = (
@@ -138,7 +142,7 @@ const postOutbox = (
   outboxUrl: string,
   body: unknown,
   commandTag: string,
-): Effect.Effect<{ readonly ok: true }, AdapterError> => {
+): Effect.Effect<{ readonly ok: true; readonly message_id: string; readonly raw: JsonObject }, AdapterError> => {
   const apiKey = apiKeyOf(conn)
   if (apiKey.length === 0) {
     return Effect.fail(
@@ -161,7 +165,7 @@ const postOutbox = (
       if (!response.ok) {
         throw new Error(`outbox HTTP ${response.status}`)
       }
-      return { ok: true as const }
+      return { ok: true as const, message_id: "", raw: {} }
     },
     catch: (cause) =>
       new AdapterError({
@@ -182,9 +186,10 @@ export const hostedHttpLayer = (
         Effect.map((delivery) => [delivery.event] as const),
       ),
     overlapKey: (event) => String(event.thread_id),
-    ack: (event, conn) => {
+    verify: () => true,
+    acknowledge: (event, conn) => {
       if (event.kind !== "action") {
-        return Effect.succeed({ ok: true as const })
+        return Effect.succeed({ ok: true as const, message_id: "", raw: {} })
       }
       return postOutbox(
         fetchImpl,
@@ -196,7 +201,7 @@ export const hostedHttpLayer = (
     },
     execute: (command, conn) => {
       if (skipExecute(command)) {
-        return Effect.succeed({ ok: true as const })
+        return Effect.succeed({ ok: true as const, message_id: "", raw: {} })
       }
       return postOutbox(
         fetchImpl,
@@ -206,6 +211,8 @@ export const hostedHttpLayer = (
         command.tag,
       )
     },
+    capabilities: () => ["receive", "send", "edit"],
+    format: (text) => text,
   })
 
 export const makeHostedInterpreter = (

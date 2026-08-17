@@ -185,8 +185,12 @@ test("parse DecodeError still ACKs 200 so Telegram does not retry", async () => 
     name: "fail",
     parse: () => Effect.fail(new DecodeError({ reason: "bad inbound" })),
     overlapKey: (event) => String(event.thread_id),
-    ack: () => Effect.succeed({ ok: true as const }),
-    execute: () => Effect.succeed({ ok: true as const }),
+    verify: () => true,
+    acknowledge: () =>
+      Effect.succeed({ ok: true as const, message_id: "", raw: {} }),
+    execute: () => Effect.succeed({ ok: true as const, message_id: "", raw: {} }),
+    capabilities: () => ["receive"],
+    format: (text) => text,
   })
   const cx = new Caspian()
   await cx.listen({

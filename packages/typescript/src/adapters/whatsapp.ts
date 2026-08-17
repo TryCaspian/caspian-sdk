@@ -17,6 +17,8 @@ import {
   hmacSha256Hex,
   isRecord,
   jsonObjectOf,
+  messageDefaults,
+  reactionDefaults,
   suffixAfter,
   timingSafeEqualUtf8,
 } from "./util.ts"
@@ -48,6 +50,7 @@ const parseMessage = (msg: Record<string, unknown>): ReadonlyArray<Event> => {
     return [
       {
         kind: "reaction",
+        ...reactionDefaults,
         thread_id: threadId,
         emoji: typeof reaction.emoji === "string" ? reaction.emoji : "",
         sender: waId,
@@ -62,6 +65,7 @@ const parseMessage = (msg: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+        ...messageDefaults,
       thread_id: threadId,
       text,
       chat_kind: "dm",
@@ -93,6 +97,25 @@ export const parseWhatsAppUpdate = (
         if (isRecord(msg)) {
           events.push(...parseMessage(msg))
         }
+      }
+      for (const status of asList(value.statuses)) {
+        if (!isRecord(status)) {
+          continue
+        }
+        const state = status.status
+        if (state !== "read" && state !== "delivered") {
+          continue
+        }
+        const waId =
+          status.recipient_id !== undefined ? String(status.recipient_id) : ""
+        events.push({
+          kind: "receipt",
+          thread_id: encodeThreadId({ waId }),
+          status: state,
+          sender: waId,
+          message_id: status.id !== undefined ? String(status.id) : "",
+          raw: asJsonObject(status),
+        })
       }
     }
   }

@@ -20,7 +20,11 @@ import {
   idleOverlapState,
   type OverlapState,
 } from "../core/overlap.ts"
-import { HostPort, ThreadStore } from "../core/ports.ts"
+import {
+  HostPort,
+  type StreamSink,
+  ThreadStore,
+} from "../core/ports.ts"
 import type { Json } from "../core/json.ts"
 import {
   emptyStepState,
@@ -66,6 +70,7 @@ export type MemoryInterpreterOptions = {
   readonly channelName?: string
   readonly host?: Layer.Layer<HostPort, never, ThreadStore>
   readonly logBound?: number
+  readonly streamSink?: StreamSink
 }
 
 export type MemoryInterpreter = {
@@ -212,7 +217,12 @@ export const makeMemoryInterpreter = (
       Effect.gen(function* () {
         const host = yield* HostPort
         const result = yield* host
-          .run(rule.handler_id, event, { skipped })
+          .run(rule.handler_id, event, {
+            skipped,
+            ...(options.streamSink === undefined
+              ? {}
+              : { sink: options.streamSink }),
+          })
           .pipe(Effect.either)
         if (result._tag === "Left") {
           const error =

@@ -74,7 +74,7 @@ test("parse reaction message", () => {
   expect(event.emoji).toBe("👍")
 })
 
-test("status receipts are not kernel events", () => {
+test("status receipts become Receipt events", () => {
   const events = Effect.runSync(
     parseWhatsAppUpdate({
       entry: [
@@ -92,7 +92,14 @@ test("status receipts are not kernel events", () => {
       ],
     }),
   )
-  expect(events).toEqual([])
+  expect(events).toHaveLength(1)
+  expect(events[0]?.kind).toBe("receipt")
+  if (events[0]?.kind !== "receipt") {
+    return
+  }
+  expect(events[0].status).toBe("read")
+  expect(events[0].message_id).toBe("wamid.OUT")
+  expect(String(events[0].thread_id)).toBe("whatsapp:15551234567")
 })
 
 test("unknown returns empty", () => {

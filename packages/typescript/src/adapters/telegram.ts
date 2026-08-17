@@ -6,13 +6,19 @@ export {
 } from "./telegram/ids.ts"
 export { parseTelegramUpdate } from "./telegram/parse.ts"
 export {
+  asHttpJson,
   planAck,
   planCommand,
+  planPoll,
   planTurn,
   type TelegramCall,
 } from "./telegram/execute.ts"
 export { telegramHttpLayer, type TelegramFetch } from "./telegram/http.ts"
-export { telegramLayer } from "./telegram/layer.ts"
+export {
+  formatTelegram,
+  telegramLayer,
+  verifyTelegram,
+} from "./telegram/layer.ts"
 export { executeTurn } from "./turn.ts"
 
 import {
@@ -21,7 +27,8 @@ import {
   overlapKey,
 } from "./telegram/ids.ts"
 import { parseTelegramUpdate } from "./telegram/parse.ts"
-import { planAck, planCommand, planTurn } from "./telegram/execute.ts"
+import { planAck, planCommand, planPoll, planTurn } from "./telegram/execute.ts"
+import { formatTelegram, telegramCapabilities } from "./telegram/layer.ts"
 
 export const telegram = () => ({
   name: "telegram" as const,
@@ -32,12 +39,8 @@ export const telegram = () => ({
   planTurn,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => [
-    "receive",
-    "reply",
-    "send",
-    "buttons",
-  ],
-  format: (text: string): string => text,
+  planPoll,
+  capabilities: telegramCapabilities,
+  format: formatTelegram,
   openModal: undefined as never,
 })
