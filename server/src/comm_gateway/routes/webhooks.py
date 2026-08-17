@@ -34,7 +34,7 @@ def _ingest(request: Request, provider, inbound) -> Response:
     ack = getattr(provider, "webhook_ack_body", None)
     if ack is not None:
         return JSONResponse(ack)
-    return Response(status_code=204)
+    return Response(status_code=getattr(provider, "webhook_success_status", 204))
 
 
 def _provider_or_404(request: Request, provider_name: str):

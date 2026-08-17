@@ -53,6 +53,7 @@ from ..schemas import (
     SandboxProjectCreate,
     SandboxProjectOut,
     SlackConnectionCreate,
+    TeamsConnectionCreate,
     TelegramConnectionCreate,
     TestEmailCreate,
     TestEmailOut,
@@ -610,6 +611,16 @@ def create_telegram_connection(
     session: Session = Depends(get_session),
 ):
     return _create_connection(request, session, project, body, channel="telegram")
+
+
+@router.post("/connections/teams", response_model=ConnectionOut, status_code=201)
+def create_teams_connection(
+    body: TeamsConnectionCreate,
+    request: Request,
+    project: Project = Depends(get_project),
+    session: Session = Depends(get_session),
+):
+    return _create_connection(request, session, project, body, channel="teams")
 
 
 @router.post("/connections/phone", response_model=ConnectionOut, status_code=201)
