@@ -6,7 +6,17 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./telegram": "./src/adapters/telegram.ts"
+    "./telegram": "./src/adapters/telegram.ts",
+    "./discord": "./src/adapters/discord.ts",
+    "./slack": "./src/adapters/slack.ts",
+    "./voice": "./src/adapters/voice.ts",
+    "./email": "./src/adapters/email.ts",
+    "./sms": "./src/adapters/sms.ts",
+    "./whatsapp": "./src/adapters/whatsapp.ts",
+    "./messenger": "./src/adapters/messenger.ts",
+    "./imessage": "./src/adapters/imessage.ts",
+    "./x": "./src/adapters/x.ts",
+    "./linear": "./src/adapters/linear.ts"
   },
   "files": [
     "src",

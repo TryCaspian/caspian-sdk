@@ -26,6 +26,20 @@ already means “message events.”
 Telegram lives in `caspian/telegram`: `parseTelegramUpdate` turns an Update
 into Events; `planTurn` turns Commands into Bot API method bodies.
 
+The other channels are the same shape — import the pack, not the facade:
+
+```ts
+import { discord, discordHttpLayer } from "caspian/discord"
+import { slack, slackHttpLayer } from "caspian/slack"
+```
+
+Also: `caspian/voice`, `caspian/email`, `caspian/sms`, `caspian/whatsapp`,
+`caspian/messenger`, `caspian/imessage`, `caspian/x`, `caspian/linear`.
+Each pack parses platform bytes into kernel Events, plans Commands into
+platform calls, and owns overlap keys / thread ids. Unsupported kernel
+commands fail as `AdapterError`. WhatsApp delivery receipts are not kernel
+Events (no `Receipt` constructor) — parse returns `[]`.
+
 Self-host inbound: `await cx.listen({ adapter: telegramHttpLayer(), ... })`
 then `POST` → `cx.webhooks.telegram(req)`. The platform is ACKed 200 before
 the model; a wrong secret is 401. Tests inject a recording Layer — no live
