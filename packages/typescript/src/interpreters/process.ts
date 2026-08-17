@@ -7,6 +7,7 @@
 import * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
 import type { App } from "../core/app.ts"
+import type { Command } from "../core/commands.ts"
 import type { Connection } from "../core/connection.ts"
 import { DecodeError, type CaspianError } from "../core/errors.ts"
 import type { Event } from "../core/events.ts"
@@ -95,10 +96,34 @@ export const makeProcessInterpreter = (
               }).pipe(Effect.provide(options.adapter)),
           }
 
+    // Commands are sent as they are produced, not collected and flushed after
+    // the handler returns. The kernel emits the ack and the typing hint BEFORE
+    // the Host command, and both exist to be seen while the agent thinks: with
+    // a slow handler, batching shows the user nothing at all until it finishes.
+    let liveResults: HandleResult[] | undefined
+
+    const dispatchNow = (command: Command) =>
+      Effect.gen(function* () {
+        const adapter = yield* AdapterPort
+        return yield* asHandleResult(
+          adapter
+            .execute(command, options.connection)
+            .pipe(Effect.flatMap((sent) => maybeDispatch(options.transport, sent))),
+        )
+      }).pipe(Effect.provide(options.adapter))
+
     const memory: MemoryInterpreter = yield* makeMemoryInterpreter(app, {
       channelName: options.channelName ?? "",
       ...(options.host === undefined ? {} : { host: options.host }),
       ...(streamSink === undefined ? {} : { streamSink }),
+      onProduce: (commands) =>
+        Effect.gen(function* () {
+          if (liveResults === undefined) return // not inside handleRaw
+          for (const command of commands) {
+            if (command.tag === "Host") continue // not a wire command
+            liveResults.push(yield* dispatchNow(command))
+          }
+        }),
     })
 
     const runEvent = (event: Event) =>
@@ -136,20 +161,9 @@ export const makeProcessInterpreter = (
             ),
           )
           results.push(ack)
-          const producedBefore = yield* memory.produced
+          liveResults = results
           yield* runEvent(event).pipe(Effect.catchAll(() => Effect.void))
-          const producedAfter = yield* memory.produced
-          const delta = producedAfter.slice(producedBefore.length)
-          for (const command of delta) {
-            const executed = yield* asHandleResult(
-              adapter.execute(command, options.connection).pipe(
-                Effect.flatMap((sent) =>
-                  maybeDispatch(options.transport, sent),
-                ),
-              ),
-            )
-            results.push(executed)
-          }
+          liveResults = undefined
         }
         return results
       }).pipe(Effect.provide(options.adapter))

@@ -71,6 +71,17 @@ export type MemoryInterpreterOptions = {
   readonly host?: Layer.Layer<HostPort, never, ThreadStore>
   readonly logBound?: number
   readonly streamSink?: StreamSink
+  /**
+   * Called with each batch of commands the moment it is produced.
+   *
+   * The kernel emits an ack and a typing hint BEFORE the Host command that runs
+   * the handler. Both exist to be seen while the agent thinks, so a runner that
+   * waits for the handler to finish before sending anything makes them
+   * pointless, and a slow handler shows the user nothing at all.
+   */
+  readonly onProduce?: (
+    commands: ReadonlyArray<Command>,
+  ) => Effect.Effect<void>
 }
 
 export type MemoryInterpreter = {
@@ -192,6 +203,9 @@ export const makeMemoryInterpreter = (
       Effect.gen(function* () {
         yield* Ref.update(recorded, (current) => slide(current, commands))
         yield* Ref.update(produced, (current) => [...current, ...commands])
+        if (options.onProduce !== undefined) {
+          yield* options.onProduce(commands)
+        }
       })
 
     const bufferFor = (

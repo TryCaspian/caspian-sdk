@@ -69,3 +69,28 @@ describe("stream throttle", () => {
     expect(typeof cx.onMessage).toBe("function")
   })
 })
+
+describe("pre-handler dispatch", () => {
+  test("the ack is sent while the handler is still running", async () => {
+    const client = fakeGatewayClient()
+    client.queue({ rows: [] })
+    client.queue({ rows: [inbound(20, "slow question")] })
+    for (let i = 0; i < 6; i++) client.queue({ json: { id: `m${i}` } })
+
+    const cx = new Caspian()
+    let ackSeenDuringHandler = false
+
+    cx.onMessage({ ack: "On it, one moment…" }, async (thread) => {
+      // A slow model is the whole reason the ack exists. By the time the
+      // handler is running, the ack must already be on the wire.
+      ackSeenDuringHandler = client.requests.some(
+        (r) => (r.body as { text?: string } | undefined)?.text === "On it, one moment…",
+      )
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      await thread.post("the answer")
+    })
+
+    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+    expect(ackSeenDuringHandler).toBe(true)
+  })
+})
