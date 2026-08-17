@@ -217,6 +217,10 @@ class Rule(BaseModel):
     predicate: Predicate
     overlap: Overlap = Overlap()
     handler_id: str = ""
+    # Sent the moment a matching event arrives, before the handler runs. The
+    # point is channels with no typing indicator (email, SMS, X): without it a
+    # human waits on silence while the agent thinks. Empty means no ack.
+    ack: str = ""
 
 
 class App(BaseModel):

@@ -303,7 +303,14 @@ class Caspian:
         pred = self._apply_filters(pred, options)
 
         overlap = self._build_overlap(options)
-        self._rules.append(Rule(predicate=pred, overlap=overlap, handler_id=handler_id))
+        self._rules.append(
+            Rule(
+                predicate=pred,
+                overlap=overlap,
+                handler_id=handler_id,
+                ack=str(options.get("ack", "")),
+            )
+        )
 
     def _register_action_handler(self, options: dict[str, Any], fn: Handler) -> None:
         handler_id = f"handler_{uuid.uuid4().hex[:8]}"
@@ -313,7 +320,14 @@ class Caspian:
         pred = self._apply_filters(pred, options)
 
         overlap = self._build_overlap(options)
-        self._rules.append(Rule(predicate=pred, overlap=overlap, handler_id=handler_id))
+        self._rules.append(
+            Rule(
+                predicate=pred,
+                overlap=overlap,
+                handler_id=handler_id,
+                ack=str(options.get("ack", "")),
+            )
+        )
 
     def _apply_filters(self, pred: Predicate, options: dict[str, Any]) -> Predicate:
         if "channel" in options:

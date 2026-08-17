@@ -269,3 +269,61 @@ class TestPostThreadsTheConversation:
         t2 = Thread(thread_id=ThreadId("discord:conv_1"))
         t2.post("answer")
         assert t2.commands[0].standalone is False
+
+
+class TestInstantAck:
+    """An ack answers the silence on channels with no typing indicator.
+
+    Email, SMS and X have no 'thinking' signal, so without this a human waits on
+    nothing while the agent works. The old SDK spelled it listen(ack="...").
+    """
+
+    def _cx(self):
+        from caspian import Caspian
+        from caspian.interpreters.transport import RecordingTransport
+
+        rec = RecordingTransport()
+        cx = Caspian(transport=rec)
+        cx.channels.add("telegram", via="self-host", bot_token="1:A")
+        return cx, rec
+
+    def _update(self) -> bytes:
+        return json.dumps({"update_id": 1, "message": {
+            "message_id": 1, "from": {"id": 1},
+            "chat": {"id": 5, "type": "private"}, "text": "hi"}}).encode()
+
+    def test_ack_is_sent_before_the_handler_runs(self) -> None:
+        cx, rec = self._cx()
+        order: list[str] = []
+
+        @cx.on_message({"channel": "telegram", "ack": "On it, one moment…"})
+        def handler(thread, msg, ctx):  # noqa: ANN001
+            order.append("handler")
+            thread.post("the real answer")
+
+        cx.handle("telegram", self._update())
+        texts = [s.raw.get("json", {}).get("text") for s in rec.dispatched]
+        sent = [t for t in texts if t]
+        assert sent[0] == "On it, one moment…", f"ack must be first, got {sent}"
+        assert "the real answer" in sent
+        assert order == ["handler"]
+
+    def test_no_ack_by_default(self) -> None:
+        cx, rec = self._cx()
+
+        @cx.on_message({"channel": "telegram"})
+        def handler(thread, msg, ctx):  # noqa: ANN001
+            thread.post("answer")
+
+        cx.handle("telegram", self._update())
+        texts = [s.raw.get("json", {}).get("text") for s in rec.dispatched if s.raw.get("json")]
+        assert [t for t in texts if t] == ["answer"]
+
+    def test_ack_lives_on_the_rule_as_data(self) -> None:
+        cx, _ = self._cx()
+
+        @cx.on_message({"channel": "telegram", "ack": "hold on"})
+        def handler(thread, msg, ctx):  # noqa: ANN001
+            pass
+
+        assert cx.app.rules[0].ack == "hold on"

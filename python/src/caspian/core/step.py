@@ -7,7 +7,7 @@ No I/O, no clock, no randomness. This is what makes the bot testable.
 
 from __future__ import annotations
 
-from caspian.core.commands import Command, Host, Typing
+from caspian.core.commands import Command, Host, Post, Typing
 from caspian.core.overlap import (
     OverlapDecision,
     OverlapState,
@@ -91,10 +91,11 @@ def step(
                 return StepResult(commands=[], matched_rule=rule, dropped=False)
 
             case OverlapDecision.EXECUTE:
-                commands: list[Command] = [
-                    Typing(thread_id=thread_id),
-                    Host(handler_id=rule.handler_id),
-                ]
+                commands: list[Command] = []
+                if rule.ack:
+                    commands.append(Post(thread_id=thread_id, text=rule.ack))
+                commands.append(Typing(thread_id=thread_id))
+                commands.append(Host(handler_id=rule.handler_id))
                 return StepResult(
                     commands=commands,
                     matched_rule=rule,

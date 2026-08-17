@@ -104,15 +104,18 @@ class ProcessInterpreter:
     def _execute(self, event: Event, sr: StepResult) -> list[Result]:
         commands: list[Command] = []
         results_so_far: list[Result] = []
+        handler_ran = False
         for cmd in sr.commands:
-            if isinstance(cmd, Typing):
-                # Send the indicator NOW. Its whole purpose is to show while the
-                # handler thinks; batching it with the reply makes it invisible.
+            if not isinstance(cmd, Host) and not handler_ran:
+                # Anything the kernel emits before the handler (typing, an ack)
+                # exists to be seen WHILE the agent thinks. Batching it with the
+                # reply makes it pointless, so send it now.
                 results_so_far.append(
                     self._maybe_dispatch(self._adapter.execute(cmd, self._connection))
                 )
                 continue
             if isinstance(cmd, Host):
+                handler_ran = True
                 if self._host is not None:
                     sink = _Sink(self)
                     commands.extend(
