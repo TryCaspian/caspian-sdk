@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import * as Schema from "effect/Schema"
-import { telegramLayer, type TelegramCall } from "../src/adapters/telegram.ts"
+import {
+  telegramHttpLayer,
+  telegramLayer,
+  type TelegramCall,
+  type TelegramFetch,
+} from "../src/adapters/telegram.ts"
 import { Connection, ConnectionId } from "../src/core/index.ts"
 import { Caspian } from "../src/facade/caspian.ts"
 
@@ -126,4 +131,34 @@ test("webhooks.telegram before listen fails", async () => {
   await expect(
     cx.webhooks.telegram(telegramRequest(dmUpdate, "s3cret")),
   ).rejects.toThrow(/listen/)
+})
+
+test("http layer posts planned calls to api.telegram.org", async () => {
+  const posted: Array<{ url: string; body: unknown }> = []
+  const fetchImpl: TelegramFetch = async (url, init) => {
+    posted.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? "{}")),
+    })
+    return new Response(JSON.stringify({ ok: true }), { status: 200 })
+  }
+  const cx = new Caspian()
+  cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
+    await thread.post(`echo:${msg.text}`)
+  })
+  await cx.listen({
+    channel: "telegram",
+    secretToken: "s3cret",
+    connection: conn,
+    adapter: telegramHttpLayer(fetchImpl),
+  })
+  const response = await cx.webhooks.telegram(
+    telegramRequest(dmUpdate, "s3cret"),
+  )
+  expect(response.status).toBe(200)
+  const send = posted.find((item) => item.url.includes("sendMessage"))
+  expect(send?.url).toBe(
+    "https://api.telegram.org/botfake-token/sendMessage",
+  )
+  expect(send?.body).toEqual({ chat_id: "123", text: "echo:hello" })
 })
