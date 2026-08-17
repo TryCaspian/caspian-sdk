@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Schema from "effect/Schema"
 import { Event, HostPort } from "../src/core/index.ts"
+import { Caspian } from "../src/facade/caspian.ts"
 import { bHostLayer, type BHandler } from "../src/facade/host.ts"
 
 const syncEither = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -50,4 +51,56 @@ test("bHostLayer missing handler is HostError", () => {
     return
   }
   expect(result.left._tag).toBe("HostError")
+})
+
+test("onMessage desugars into program.rules", () => {
+  const cx = new Caspian()
+  cx.onMessage({ channel: "telegram", kind: "dm" }, async () => undefined)
+  expect(cx.program.rules).toHaveLength(1)
+  expect(cx.program.rules[0]?.handler_id).toBe("onMessage:0")
+  expect(cx.program.rules[0]?.overlap).toEqual({ policy: "queue", bound: 16 })
+})
+
+test("onMessage without options still creates a Rule", () => {
+  const cx = new Caspian()
+  cx.onMessage(async () => undefined)
+  expect(cx.program.rules[0]?.predicate).toEqual({ op: "kind", kind: "message" })
+})
+
+test("interpret feeds a DM and records Post", async () => {
+  const cx = new Caspian()
+  cx.onMessage({ channel: "telegram", kind: "dm" }, async (thread, msg) => {
+    await thread.post(`echo:${msg.text}`)
+  })
+  const mem = await cx.interpret({ channel: "telegram" })
+  const result = await Effect.runPromise(mem.run(dm))
+  expect(result.decision).toBe("execute")
+  const posts = await Effect.runPromise(mem.posts)
+  expect(posts).toHaveLength(1)
+  if (posts[0]?.tag === "Post") {
+    expect(posts[0].text).toBe("echo:hello")
+  }
+})
+
+test("channel filter does not run Host on the wrong channel", async () => {
+  const cx = new Caspian()
+  cx.onMessage({ channel: "discord" }, async (thread) => {
+    await thread.post("nope")
+  })
+  const mem = await cx.interpret({ channel: "telegram" })
+  const result = await Effect.runPromise(mem.run(dm))
+  expect(result.decision).toBe("unmatched")
+  const posts = await Effect.runPromise(mem.posts)
+  expect(posts).toHaveLength(0)
+})
+
+test("handler throw is HostError, not a throw from step", async () => {
+  const cx = new Caspian()
+  cx.onMessage(async () => {
+    throw new Error("boom")
+  })
+  const mem = await cx.interpret({ channel: "telegram" })
+  await Effect.runPromise(mem.run(dm))
+  const errors = await Effect.runPromise(mem.errors)
+  expect(errors[0]?.reason).toContain("boom")
 })

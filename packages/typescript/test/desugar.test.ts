@@ -45,7 +45,9 @@ test("golden desugar vectors replay options into App", async () => {
     if (Either.isLeft(expected)) {
       continue
     }
-    expect({ rules: [rule] }, String(vector.name)).toEqual(expected.right)
+    expect({ rules: [rule] }, String(vector.name)).toEqual({
+      rules: [...expected.right.rules],
+    })
   }
 })
 
