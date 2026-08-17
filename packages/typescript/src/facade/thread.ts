@@ -33,6 +33,11 @@ export type Thread = {
     text: string,
     options?: { readonly actions?: ReadonlyArray<PostAction> },
   ): Promise<void>
+  /** Send without threading onto the message that triggered this turn. */
+  send(
+    text: string,
+    options?: { readonly actions?: ReadonlyArray<PostAction> },
+  ): Promise<void>
   reply(
     replyTo: string,
     text: string,
@@ -108,6 +113,25 @@ export const makeThread = (
         thread_id: id,
         text,
         actions: actionsOf(options),
+        standalone: false,
+      })
+    },
+    /**
+     * Send WITHOUT threading, even mid-conversation.
+     *
+     * post() answers the message that triggered the turn; use this for an
+     * unprompted message that should start its own thread.
+     */
+    send: async (
+      text: string,
+      options?: { readonly actions?: ReadonlyArray<PostAction> },
+    ) => {
+      sink({
+        tag: "Post",
+        thread_id: id,
+        text,
+        actions: actionsOf(options),
+        standalone: true,
       })
     },
     reply: async (
@@ -278,6 +302,7 @@ const makeStream = (thread: Thread, minChars: number): Stream => {
           thread_id: thread.id,
           text,
           actions: [],
+          standalone: false,
         }),
       )
       if (messageId.length === 0) {

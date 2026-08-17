@@ -54,7 +54,13 @@ test("bound post_message enqueues Post on the thread and does not take chat_id",
   const result = await tools.post_message.execute({ text: "hi" })
   expect(result.tag).toBe("Post")
   expect(commands).toEqual([
-    { tag: "Post", thread_id: id, text: "hi", actions: [] },
+    {
+      tag: "Post",
+      thread_id: id,
+      text: "hi",
+      actions: [],
+      standalone: false,
+    },
   ])
 })
 
@@ -70,6 +76,7 @@ test("outbound post_message requires thread_id and does not bind a chat", async 
     thread_id: Schema.decodeUnknownSync(ThreadId)("telegram:9"),
     text: "ping",
     actions: [],
+    standalone: false,
   })
 })
 

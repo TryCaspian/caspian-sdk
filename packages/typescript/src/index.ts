@@ -18,3 +18,20 @@ export {
   hostedLayer,
 } from "./interpreters/hosted.ts"
 export type { HostedCall, HostedFetch } from "./interpreters/hosted.ts"
+
+/**
+ * Hosted mode against the real Caspian gateway.
+ *
+ * Prefer these over the older `hostedLayer`/`hostedHttpLayer` above, which post
+ * every command to /v1/outbox: an endpoint the gateway does not expose.
+ */
+export {
+  DEFAULT_BASE_URL,
+  fakeGatewayClient,
+  httpGatewayClient,
+} from "./hosted/client.ts"
+export type { GatewayClient, GatewayRequest, GatewayResponse } from "./hosted/client.ts"
+export { gatewayPoller, parseBatch, parseEvent } from "./hosted/inbound.ts"
+export type { Poller, PollerOptions } from "./hosted/inbound.ts"
+export { conversationOf, toRequest } from "./hosted/outbound.ts"
+export { gatewayAdapterLayer } from "./hosted/adapter.ts"

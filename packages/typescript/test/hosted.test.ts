@@ -235,6 +235,7 @@ test("http layer posts commands to the Caspian outbox", async () => {
       thread_id: "telegram:123",
       text: "echo:hello",
       actions: [],
+      standalone: false,
     },
   })
 })

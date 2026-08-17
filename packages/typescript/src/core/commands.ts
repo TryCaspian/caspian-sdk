@@ -23,6 +23,13 @@ export const Post = Schema.Struct({
   actions: Schema.optionalWith(Schema.Array(PostAction), {
     default: () => [],
   }),
+  /**
+   * When the turn was triggered by an inbound message, a runner may deliver
+   * this as a reply to that message so the conversation threads correctly
+   * (this is what keeps an email's In-Reply-To chain). Set true for a message
+   * that must start its own thread.
+   */
+  standalone: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 })
 export type Post = typeof Post.Type
 

@@ -25,6 +25,7 @@ test("thread methods enqueue Commands and do not fetch", async () => {
       thread_id: id,
       text: "hi",
       actions: [{ text: "ok", data: "ok" }],
+      standalone: false,
     },
     { tag: "Edit", thread_id: id, message_id: "m1", text: "later", actions: [] },
     { tag: "React", thread_id: id, message_id: "m1", emoji: "👍" },
@@ -100,6 +101,12 @@ test("thread.stream buffers and posts once when there is no live sink", async ()
   expect(commands).toEqual([])
   await out.close()
   expect(commands).toEqual([
-    { tag: "Post", thread_id: id, text: "hello world", actions: [] },
+    {
+      tag: "Post",
+      thread_id: id,
+      text: "hello world",
+      actions: [],
+      standalone: false,
+    },
   ])
 })

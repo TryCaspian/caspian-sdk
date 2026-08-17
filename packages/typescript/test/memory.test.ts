@@ -57,6 +57,7 @@ test("a fixture DM records Post with no network", () => {
       thread_id: event.thread_id,
       text: `echo:${event.kind === "message" ? event.text : ""}`,
       actions: [],
+      standalone: false,
     },
   ])
 
@@ -80,7 +81,15 @@ test("queue burst runs the first then the latest with skipped", () => {
         item.kind === "message" ? item.text : "",
       ),
     })
-    return [{ tag: "Post", thread_id: event.thread_id, text: "ok", actions: [] }]
+    return [
+      {
+        tag: "Post",
+        thread_id: event.thread_id,
+        text: "ok",
+        actions: [],
+        standalone: false,
+      },
+    ]
   })
 
   const results = sync(interp.runSequence([dm("one"), dm("two"), dm("three")]))
@@ -139,6 +148,7 @@ test("interpreter logs slide at logBound instead of growing unbounded", () => {
         thread_id: event.thread_id,
         text: "x",
         actions: [],
+        standalone: false,
       },
     ]),
   )
