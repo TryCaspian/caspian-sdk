@@ -1,7 +1,14 @@
 import * as Effect from "effect/Effect"
 import type { ChatKind, Event } from "../../core/events.ts"
 import { DecodeError } from "../../core/errors.ts"
-import { asJsonObject, isRecord, jsonObjectOf } from "../util.ts"
+import {
+  actionDefaults,
+  asJsonObject,
+  isRecord,
+  jsonObjectOf,
+  messageDefaults,
+  reactionDefaults,
+} from "../util.ts"
 import { encodeThreadId } from "./ids.ts"
 
 const chatKindOf = (event: Record<string, unknown>): ChatKind => {
@@ -24,6 +31,7 @@ const parseMessage = (event: Record<string, unknown>): ReadonlyArray<Event> => {
   return [
     {
       kind: "message",
+      ...messageDefaults,
       thread_id: encodeThreadId({ channel, threadTs }),
       text: typeof event.text === "string" ? event.text : "",
       chat_kind: chatKindOf(event),
@@ -39,6 +47,7 @@ const parseReaction = (event: Record<string, unknown>): ReadonlyArray<Event> => 
   return [
     {
       kind: "reaction",
+      ...reactionDefaults,
       thread_id: encodeThreadId({ channel }),
       emoji: typeof event.reaction === "string" ? event.reaction : "",
       sender: event.user !== undefined ? String(event.user) : "",
@@ -83,6 +92,7 @@ const parseBlockActions = (
   return [
     {
       kind: "action",
+      ...actionDefaults,
       thread_id: encodeThreadId({ channel, threadTs }),
       data,
       sender: user.id !== undefined ? String(user.id) : "",

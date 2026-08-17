@@ -16,6 +16,12 @@
       "text": "hello",
       "chat_kind": "dm",
       "sender": "user1",
+      "message_id": "",
+      "attachments": [],
+      "blocks": [],
+      "reply_to": "",
+      "topic_id": "",
+      "metadata": {},
       "raw": {}
     },
     "channel_name": "telegram",
@@ -41,6 +47,9 @@
       "thread_id": "telegram:456",
       "data": "done",
       "sender": "user2",
+      "message_id": "",
+      "interaction_id": "",
+      "metadata": {},
       "raw": {}
     },
     "channel_name": "telegram",
@@ -67,6 +76,12 @@
       "text": "hi",
       "chat_kind": "dm",
       "sender": "user3",
+      "message_id": "",
+      "attachments": [],
+      "blocks": [],
+      "reply_to": "",
+      "topic_id": "",
+      "metadata": {},
       "raw": {}
     },
     "channel_name": "telegram",
@@ -90,6 +105,9 @@
         "thread_id": "telegram:100",
         "data": "btn1",
         "sender": "u1",
+        "message_id": "",
+        "interaction_id": "",
+        "metadata": {},
         "raw": {}
       },
       {
@@ -97,6 +115,9 @@
         "thread_id": "telegram:100",
         "data": "btn2",
         "sender": "u1",
+        "message_id": "",
+        "interaction_id": "",
+        "metadata": {},
         "raw": {}
       }
     ],
@@ -124,6 +145,12 @@
         "text": "msg1",
         "chat_kind": "dm",
         "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
         "raw": {}
       },
       {
@@ -132,6 +159,12 @@
         "text": "msg2",
         "chat_kind": "dm",
         "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
         "raw": {}
       },
       {
@@ -140,6 +173,12 @@
         "text": "msg3",
         "chat_kind": "dm",
         "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
         "raw": {}
       }
     ],

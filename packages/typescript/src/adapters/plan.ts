@@ -37,10 +37,38 @@ export type SmtpCall = {
   }
 }
 
+export type HttpMultipartCall = {
+  readonly transport: "http_multipart"
+  readonly method: string
+  readonly url: string
+  readonly form?: { readonly [key: string]: string }
+  readonly headers?: { readonly [key: string]: string }
+  readonly native: string
+}
+
 export type TwimlCall = {
   readonly transport: "twiml"
   readonly native: string
   readonly twiml: string
 }
 
-export type PlannedCall = HttpJsonCall | HttpFormCall | SmtpCall | TwimlCall
+export type GatewayCall = {
+  readonly transport: "gateway"
+  readonly native: string
+  readonly path?: string
+  readonly json?: { readonly [key: string]: unknown }
+}
+
+export type NoopCall = {
+  readonly transport: "noop"
+  readonly native: string
+}
+
+export type PlannedCall =
+  | HttpJsonCall
+  | HttpFormCall
+  | HttpMultipartCall
+  | SmtpCall
+  | TwimlCall
+  | GatewayCall
+  | NoopCall

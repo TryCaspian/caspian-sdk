@@ -26,7 +26,7 @@ test("thread methods enqueue Commands and do not fetch", async () => {
       text: "hi",
       actions: [{ text: "ok", data: "ok" }],
     },
-    { tag: "Edit", thread_id: id, message_id: "m1", text: "later" },
+    { tag: "Edit", thread_id: id, message_id: "m1", text: "later", actions: [] },
     { tag: "React", thread_id: id, message_id: "m1", emoji: "👍" },
   ])
 })
@@ -46,5 +46,60 @@ test("thread.state.set enqueues SetState even without a store", async () => {
   expect(await thread.state.get("mood")).toBeUndefined()
   expect(commands).toEqual([
     { tag: "SetState", thread_id: id, key: "mood", value: "ok" },
+  ])
+})
+
+test("thread reply/media/pin/history enqueue the matching Commands", async () => {
+  const commands: Command[] = []
+  const thread = makeThread(id, (command) => {
+    commands.push(command)
+  })
+  await thread.reply("10", "ok")
+  await thread.sendBlocks([{ type: "section", content: { text: "hi" } }])
+  await thread.sendMedia({
+    type: "photo",
+    url: "https://example.com/a.jpg",
+    file_id: "",
+    filename: "",
+    mime_type: "",
+    size_bytes: 0,
+    caption: "",
+  })
+  await thread.delete("m1")
+  await thread.pin("m1")
+  await thread.unpin("m1")
+  await thread.markRead("m1")
+  await thread.initiate("hello")
+  await thread.schedule("later", 1700000000)
+  await thread.history({ limit: 5 })
+  await thread.subscribe()
+  expect(commands.map((command) => command.tag)).toEqual([
+    "Reply",
+    "SendBlocks",
+    "SendMedia",
+    "Delete",
+    "Pin",
+    "Unpin",
+    "MarkRead",
+    "Initiate",
+    "ScheduleSend",
+    "ListHistory",
+    "Subscribe",
+  ])
+})
+
+test("thread.stream buffers and posts once when there is no live sink", async () => {
+  const commands: Command[] = []
+  const thread = makeThread(id, (command) => {
+    commands.push(command)
+  })
+  const out = thread.stream()
+  expect(out.live).toBe(false)
+  await out.append("hello ")
+  await out.append("world")
+  expect(commands).toEqual([])
+  await out.close()
+  expect(commands).toEqual([
+    { tag: "Post", thread_id: id, text: "hello world", actions: [] },
   ])
 })

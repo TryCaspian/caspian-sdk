@@ -7,9 +7,21 @@ export const MatchAll = Schema.Struct({
 })
 export type MatchAll = typeof MatchAll.Type
 
+export const EventKind = Schema.Literal(
+  "message",
+  "action",
+  "reaction",
+  "receipt",
+  "member_join",
+  "member_leave",
+  "edited",
+  "deleted",
+)
+export type EventKind = typeof EventKind.Type
+
 export const MatchKind = Schema.Struct({
   op: Schema.Literal("kind"),
-  kind: Schema.Literal("message", "action", "reaction"),
+  kind: EventKind,
 })
 export type MatchKind = typeof MatchKind.Type
 
@@ -81,6 +93,11 @@ export const Predicate: Schema.Schema<Predicate> = Schema.Union(
 export const message = (): MatchKind => ({ op: "kind", kind: "message" })
 export const action = (): MatchKind => ({ op: "kind", kind: "action" })
 export const reaction = (): MatchKind => ({ op: "kind", kind: "reaction" })
+export const receipt = (): MatchKind => ({ op: "kind", kind: "receipt" })
+export const memberJoin = (): MatchKind => ({ op: "kind", kind: "member_join" })
+export const memberLeave = (): MatchKind => ({ op: "kind", kind: "member_leave" })
+export const edited = (): MatchKind => ({ op: "kind", kind: "edited" })
+export const deleted = (): MatchKind => ({ op: "kind", kind: "deleted" })
 export const channel = (...names: string[]): MatchChannel => ({
   op: "channel",
   channels: names,

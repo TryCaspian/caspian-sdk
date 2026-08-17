@@ -9,6 +9,7 @@ import type { HttpJsonCall, PlannedCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
 import {
   asJsonObject,
+  actionDefaults,
   buttonData,
   buttonText,
   configString,
@@ -17,6 +18,7 @@ import {
   hmacSha256Hex,
   isRecord,
   jsonObjectOf,
+  messageDefaults,
   suffixAfter,
   timingSafeEqualUtf8,
 } from "./util.ts"
@@ -48,6 +50,7 @@ const parseMessaging = (m: Record<string, unknown>): ReadonlyArray<Event> => {
     return [
       {
         kind: "action",
+          ...actionDefaults,
         thread_id: threadId,
         data: typeof pb.payload === "string" ? pb.payload : "",
         sender,
@@ -60,6 +63,7 @@ const parseMessaging = (m: Record<string, unknown>): ReadonlyArray<Event> => {
     return [
       {
         kind: "message",
+          ...messageDefaults,
         thread_id: threadId,
         text: typeof msg.text === "string" ? msg.text : "",
         chat_kind: "dm",
