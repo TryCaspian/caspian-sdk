@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect"
 import type { App, Overlap, Rule } from "../core/app.ts"
+import type { Connection } from "../core/connection.ts"
 import type { Predicate } from "../core/predicates.ts"
 import {
   makeHostedInterpreter,
@@ -15,6 +16,7 @@ import {
   type ProcessInterpreter,
   type ProcessOptions,
 } from "../interpreters/process.ts"
+import { addChannel } from "../provision/add.ts"
 import { desugarOnAction, desugarOnMessage } from "./desugar.ts"
 import {
   type ActionHandler,
@@ -29,6 +31,7 @@ export class Caspian {
   readonly #handlers = new Map<string, BHandler>()
   #process: ProcessInterpreter | undefined
   #hosted: HostedInterpreter | undefined
+  #connectionCount = 0
   #messageCount = 0
   #actionCount = 0
   #useCount = 0
@@ -164,6 +167,14 @@ export class Caspian {
           signatureHeader: "X-Caspian-Signature",
         }),
       )
+    },
+  }
+
+  readonly channels = {
+    add: (channel: string, options: unknown): Promise<Connection> => {
+      this.#connectionCount += 1
+      const id = `conn:${this.#connectionCount}`
+      return Effect.runPromise(addChannel(channel, options, id))
     },
   }
 }
