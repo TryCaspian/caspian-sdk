@@ -1475,6 +1475,49 @@ def test_handle_webhook_dedup_allows_different_events():
     client.close()
 
 
+def test_handle_webhook_records_dedup_only_after_successful_dispatch():
+    """A handler exception must surface as status="error" and must NOT be
+    recorded in the dedup cache, so the provider's retry of the same event
+    reaches the handler again instead of being silently swallowed."""
+    import hashlib
+    import hmac
+
+    client = _client(lambda req: httpx.Response(200, json={}))
+    seen = []
+    should_fail = True
+
+    @client.on_message
+    def handle(msg):
+        if should_fail:
+            raise RuntimeError("boom")
+        seen.append(msg)
+
+    secret = "whsec_retry_test"
+    evt = _message_event(1, "conv_1", "retry me")
+    evt["id"] = "evt_retry_1"
+    payload = json.dumps(evt).encode("utf-8")
+    sig = "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+
+    # First delivery: handler raises -> must report status="error" and must
+    # NOT be recorded as processed.
+    res1 = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res1.status == "error"
+    assert seen == []
+
+    # Provider retries the same event (same id, same payload). Because the
+    # first attempt was not recorded, the handler must run again.
+    should_fail = False
+    res2 = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res2.status == "ok"
+    assert len(seen) == 1
+
+    # A third delivery of the now-successfully-processed event is deduped.
+    res3 = client.handle_webhook(payload, {"x-caspian-signature": sig}, secret)
+    assert res3.status == "ignored"
+    assert len(seen) == 1
+    client.close()
+
+
 # --- async handlers ----------------------------------------------------------
 
 
