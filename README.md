@@ -95,6 +95,13 @@ client.listen()  # one loop, every channel
 > standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
 > or just use the SDK directly (below); nothing else about the flow changes.
 
+### Optional: local MCP (`caspian-mcp`)
+
+A **separate package** (not `caspian-sdk`) exposes `list_inbox`, `get_thread`, and `brief_status`: Caspian fetch → regex Sanitize → Safe Text + `mapping_id` + `redaction_report`. Mapping stays in the MCP process. `pip install caspian-sdk` does not pull MCP, cryptography, or spaCy.
+
+Stdio (Cursor) or private HTTP on `127.0.0.1` with `MCP_AUTH_TOKEN` (distinct from `CASPIAN_API_KEY`). Not a hosted vault. See [`sdks/mcp/README.md`](sdks/mcp/README.md).
+
+
 The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
 
 > **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).

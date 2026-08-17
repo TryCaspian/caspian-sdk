@@ -13,9 +13,10 @@ package = false
 [tool.uv.sources]
 caspian-cli = { workspace = true }
 caspian-sdk = { workspace = true }
+caspian-mcp = { workspace = true }
 
 [tool.uv.workspace]
-members = ["apps/cli", "sdks/python"]
+members = ["apps/cli", "sdks/python", "sdks/mcp"]
 
 [dependency-groups]
 dev = [
@@ -25,7 +26,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["apps/cli/tests", "sdks/python/tests"]
+testpaths = ["apps/cli/tests", "sdks/python/tests", "sdks/mcp/tests"]
 addopts = "-q"
 
 
