@@ -55,6 +55,10 @@ without `webhookUrl` is an error; `inbound: false` is send-only. This mints a
 surface as `thread.post` for models. Parameters come from Command schemas.
 Thread ids only — never a platform chat id. `Host` and `Call` are not tools.
 
+`thread.recent(n)` and `thread.state` are runner memory. Handlers ask; Memory
+(and Process/Hosted on top of it) stores inbound Events and `SetState`. A
+thread with no store returns `[]` / `undefined`.
+
 ```bash
 bun install
 bun run ci

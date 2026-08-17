@@ -20,7 +20,8 @@ import {
   idleOverlapState,
   type OverlapState,
 } from "../core/overlap.ts"
-import { HostPort } from "../core/ports.ts"
+import { HostPort, ThreadStore } from "../core/ports.ts"
+import type { Json } from "../core/json.ts"
 import {
   emptyStepState,
   step,
@@ -63,7 +64,7 @@ export const DEFAULT_INTERPRETER_LOG_BOUND = 1024
 
 export type MemoryInterpreterOptions = {
   readonly channelName?: string
-  readonly host?: Layer.Layer<HostPort>
+  readonly host?: Layer.Layer<HostPort, never, ThreadStore>
   readonly logBound?: number
 }
 
@@ -118,12 +119,16 @@ export const makeMemoryInterpreter = (
 ): Effect.Effect<MemoryInterpreter> =>
   Effect.gen(function* () {
     const handlers = yield* Ref.make(HashMap.empty<string, HostFn>())
-    const hostLayer = options.host ?? memoryHostLayer(handlers)
     const stepState = yield* Ref.make<StepState>(emptyStepState)
     const logBound = options.logBound ?? DEFAULT_INTERPRETER_LOG_BOUND
     const recorded = yield* Ref.make<ReadonlyArray<Command>>([])
     const produced = yield* Ref.make<ReadonlyArray<Command>>([])
     const hostErrors = yield* Ref.make<ReadonlyArray<HostError>>([])
+    const nextSeq = yield* Ref.make(0)
+    const history = yield* Ref.make(
+      HashMap.empty<string, ReadonlyArray<{ seq: number; event: Event }>>(),
+    )
+    const kv = yield* Ref.make(HashMap.empty<string, Json>())
     const buffers = yield* Ref.make(
       HashMap.empty<string, Queue.Queue<Event>>(),
     )
@@ -139,6 +144,44 @@ export const makeMemoryInterpreter = (
       const next = extra.length === 0 ? current : [...current, ...extra]
       return next.length <= logBound ? next : next.slice(next.length - logBound)
     }
+
+    const kvKey = (threadId: string, key: string) => `${threadId}\0${key}`
+
+    const threadStoreLayer = Layer.succeed(ThreadStore, {
+      recent: (threadId, limit, current) =>
+        Effect.gen(function* () {
+          const entries = Option.getOrElse(
+            HashMap.get(yield* Ref.get(history), String(threadId)),
+            (): ReadonlyArray<{ seq: number; event: Event }> => [],
+          )
+          const currentSeq =
+            entries.find((item) => item.event === current)?.seq ??
+            Number.POSITIVE_INFINITY
+          return entries
+            .filter((item) => item.seq < currentSeq)
+            .map((item) => item.event)
+            .slice(-limit)
+        }),
+      getState: (threadId, key) =>
+        Effect.map(
+          Ref.get(kv),
+          (map) =>
+            Option.getOrElse(
+              HashMap.get(map, kvKey(String(threadId), key)),
+              (): Json | undefined => undefined,
+            ),
+        ),
+      setState: (threadId, key, value) =>
+        Ref.update(
+          kv,
+          HashMap.set(kvKey(String(threadId), key), value),
+        ).pipe(Effect.asVoid),
+    })
+
+    const hostLayer = (
+      options.host ??
+      (memoryHostLayer(handlers) as Layer.Layer<HostPort, never, ThreadStore>)
+    ).pipe(Layer.provide(threadStoreLayer))
 
     const appendCommands = (commands: ReadonlyArray<Command>) =>
       Effect.gen(function* () {
@@ -197,6 +240,16 @@ export const makeMemoryInterpreter = (
         })
         yield* Ref.set(stepState, result.state)
         yield* appendCommands(result.commands)
+        const seq = (yield* Ref.get(nextSeq)) + 1
+        yield* Ref.set(nextSeq, seq)
+        yield* Ref.update(history, (map) => {
+          const key = String(event.thread_id)
+          const current = Option.getOrElse(
+            HashMap.get(map, key),
+            (): ReadonlyArray<{ seq: number; event: Event }> => [],
+          )
+          return HashMap.set(map, key, slide(current, [{ seq, event }]))
+        })
 
         if (result.matched_rule) {
           yield* Ref.update(

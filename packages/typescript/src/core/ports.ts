@@ -7,6 +7,8 @@ import type { Command } from "./commands.ts"
 import type { Connection } from "./connection.ts"
 import type { AdapterError, CaspianError, DecodeError } from "./errors.ts"
 import type { Event } from "./events.ts"
+import type { ThreadId } from "./ids.ts"
+import type { Json } from "./json.ts"
 
 /** JSON body at the inbound edge. Decode in the adapter, not in the kernel. */
 export type RawInbound = unknown
@@ -47,5 +49,25 @@ export class AdapterPort extends Context.Tag("caspian/AdapterPort")<
       command: Command,
       conn: Connection,
     ) => Effect.Effect<Sent, AdapterError>
+  }
+>() {}
+
+export class ThreadStore extends Context.Tag("caspian/ThreadStore")<
+  ThreadStore,
+  {
+    readonly recent: (
+      threadId: ThreadId,
+      limit: number,
+      current: Event,
+    ) => Effect.Effect<ReadonlyArray<Event>>
+    readonly getState: (
+      threadId: ThreadId,
+      key: string,
+    ) => Effect.Effect<Json | undefined>
+    readonly setState: (
+      threadId: ThreadId,
+      key: string,
+      value: Json,
+    ) => Effect.Effect<void>
   }
 >() {}

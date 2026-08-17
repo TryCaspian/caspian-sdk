@@ -14,7 +14,7 @@ import type { Connection } from "../core/connection.ts"
 import { AdapterError } from "../core/errors.ts"
 import { Event } from "../core/events.ts"
 import { decodeStrict } from "../core/parse.ts"
-import { AdapterPort, type HostPort } from "../core/ports.ts"
+import { AdapterPort, type HostPort, type ThreadStore } from "../core/ports.ts"
 import {
   makeMemoryInterpreter,
   type MemoryInterpreter,
@@ -34,7 +34,7 @@ export type HostedOptions = {
   readonly webhookSecret: string
   readonly connection: Connection
   readonly adapter: Layer.Layer<AdapterPort>
-  readonly host?: Layer.Layer<HostPort>
+  readonly host?: Layer.Layer<HostPort, never, ThreadStore>
 }
 
 export type HostedInbound = {
