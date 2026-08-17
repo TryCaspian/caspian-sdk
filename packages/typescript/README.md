@@ -21,8 +21,11 @@ cx.onMessage(
 `kind` here is the chat kind (`dm` / `group` / `channel`). The method name
 already means “message events.”
 
-`thread.post` enqueues a `Post` command. It does not call Telegram. Channel
-HTTP lands in adapters (later).
+`thread.post` enqueues a `Post` command. It does not call Telegram.
+
+Telegram lives in `caspian/telegram`: `parseTelegramUpdate` turns an Update
+into Events; `planTurn` turns Commands into Bot API method bodies. No live
+HTTP in this phase.
 
 ```bash
 bun install
