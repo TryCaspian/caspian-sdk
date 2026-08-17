@@ -318,8 +318,21 @@ export const makeMemoryInterpreter = (
             return
           }
           yield* appendCommands([
-            { tag: "Typing", thread_id: latest.thread_id },
-            { tag: "Host", handler_id: rule.handler_id },
+            // Same shape step() emits, ack included: a drained message must not
+            // silently lose the acknowledgement a fresh one would get.
+            ...(rule.ack === ""
+              ? []
+              : [
+                  {
+                    tag: "Post" as const,
+                    thread_id: latest.thread_id,
+                    text: rule.ack,
+                    actions: [],
+                    standalone: false,
+                  },
+                ]),
+            { tag: "Typing" as const, thread_id: latest.thread_id },
+            { tag: "Host" as const, handler_id: rule.handler_id },
           ])
           yield* interpretHost(rule, latest, skipped)
         }

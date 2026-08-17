@@ -94,8 +94,19 @@ export const step = (
         return {
           decision: "execute",
           commands: [
-            { tag: "Typing", thread_id: event.thread_id },
-            { tag: "Host", handler_id: rule.handler_id },
+            ...(rule.ack === ""
+              ? []
+              : [
+                  {
+                    tag: "Post" as const,
+                    thread_id: event.thread_id,
+                    text: rule.ack,
+                    actions: [],
+                    standalone: false,
+                  },
+                ]),
+            { tag: "Typing" as const, thread_id: event.thread_id },
+            { tag: "Host" as const, handler_id: rule.handler_id },
           ],
           matched_rule: rule,
           skipped_count: transition.skipped_count,

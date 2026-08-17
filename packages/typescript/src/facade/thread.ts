@@ -83,7 +83,12 @@ export type Thread = {
     readonly before?: string
   }): Promise<void>
   subscribe(): Promise<void>
-  stream(options?: { readonly minChars?: number }): Stream
+  stream(options?: {
+    readonly minChars?: number
+    /** Seconds between edits. Platforms rate-limit rapid edits, and a fast
+     *  model otherwise produces one per token. */
+    readonly throttle?: number
+  }): Stream
   recent(limit?: number): Promise<ReadonlyArray<Event>>
   readonly state: {
     get(key: string): Promise<Json | undefined>
@@ -250,8 +255,8 @@ export const makeThread = (
     subscribe: async () => {
       sink({ tag: "Subscribe", thread_id: id })
     },
-    stream: (options?: { readonly minChars?: number }) =>
-      makeStream(thread as Thread, options?.minChars ?? 24),
+    stream: (options?: { readonly minChars?: number; readonly throttle?: number }) =>
+      makeStream(thread as Thread, options?.minChars ?? 24, options?.throttle ?? 0.5),
     recent: async (limit = 20) => {
       if (memory === undefined || current === undefined) {
         return []
@@ -284,7 +289,12 @@ export const makeThread = (
   return withAliases
 }
 
-const makeStream = (thread: Thread, minChars: number): Stream => {
+const makeStream = (
+  thread: Thread,
+  minChars: number,
+  throttle = 0.5,
+): Stream => {
+  let lastFlush = 0
   let text = ""
   let sent = ""
   let messageId = ""
@@ -336,9 +346,17 @@ const makeStream = (thread: Thread, minChars: number): Stream => {
         return
       }
       text += chunk
-      if (stream.live && text.length - sent.length >= minChars) {
-        await flushLive()
+      if (!stream.live || text.length - sent.length < minChars) {
+        return
       }
+      if (throttle > 0) {
+        const now = Date.now() / 1000
+        if (now - lastFlush < throttle) {
+          return // close() still flushes the complete text
+        }
+        lastFlush = now
+      }
+      await flushLive()
     },
     close: async () => {
       if (closed) {

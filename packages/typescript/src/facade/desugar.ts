@@ -65,6 +65,7 @@ export const desugarOnMessage = (
     predicate: andAll(parts),
     overlap: overlapOf(value.overlap ?? "queue", value.bound),
     handler_id: handlerId,
+    ack: value.ack ?? "",
   }
 }
 
@@ -82,5 +83,6 @@ export const desugarOnAction = (
     predicate: andAll(parts),
     overlap: overlapOf(value.overlap ?? "drop", value.bound),
     handler_id: handlerId,
+    ack: value.ack ?? "",
   }
 }

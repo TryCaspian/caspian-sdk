@@ -110,7 +110,11 @@ export class Caspian {
   }
 
   use(
-    input: { readonly predicate: Predicate; readonly overlap?: Overlap },
+    input: {
+      readonly predicate: Predicate
+      readonly overlap?: Overlap
+      readonly ack?: string
+    },
     handler: BHandler,
   ): this {
     const handlerId = `use:${this.#useCount}`
@@ -119,6 +123,7 @@ export class Caspian {
       predicate: input.predicate,
       overlap: input.overlap ?? { policy: "queue", bound: 16 },
       handler_id: handlerId,
+      ack: input.ack ?? "",
     })
     this.#handlers.set(handlerId, handler)
     return this

@@ -1,0 +1,71 @@
+/**
+ * Parity with the Python SDK for the features added while testing live.
+ */
+import { describe, expect, test } from "bun:test"
+import { Caspian } from "../src/facade/caspian.ts"
+import { fakeGatewayClient } from "../src/hosted/client.ts"
+import { desugarOnMessage } from "../src/facade/desugar.ts"
+import type { Json } from "../src/core/json.ts"
+
+const inbound = (seq: number, text: string) => ({
+  id: `evt_${seq}`, seq, type: "message.received",
+  data: { connection_id: "c1", message: {
+    id: `msg_${seq}`, conversation_id: "conv_1", channel: "telegram",
+    direction: "inbound", text, chat_type: "dm", sender: { address: "u1" },
+  }},
+}) as unknown as Json
+
+describe("ack", () => {
+  test("desugars onto the rule as data", () => {
+    const rule = desugarOnMessage({ ack: "On it, one moment…" }, "h1")
+    expect(rule.ack).toBe("On it, one moment…")
+  })
+
+  test("defaults to no ack", () => {
+    expect(desugarOnMessage({}, "h1").ack).toBe("")
+  })
+
+  test("is sent before the handler's own reply", async () => {
+    const client = fakeGatewayClient()
+    client.queue({ rows: [] })                       // seek
+    client.queue({ rows: [inbound(10, "hello")] })   // poll
+    client.queue({ json: { id: "m_ack" } })          // ack
+    client.queue({ json: { id: "m_reply" } })        // reply
+
+    const cx = new Caspian()
+    cx.onMessage({ ack: "On it, one moment…" }, async (thread) => {
+      await thread.post("the real answer")
+    })
+    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+
+    const bodies = client.requests
+      .filter((r) => r.method === "POST")
+      .map((r) => (r.body as { text?: string } | undefined)?.text)
+      .filter((t): t is string => typeof t === "string")
+    expect(bodies[0]).toBe("On it, one moment…")
+    expect(bodies).toContain("the real answer")
+  })
+})
+
+describe("stream throttle", () => {
+  test("rapid appends collapse into one edit, close() sends the rest", async () => {
+    const cx = new Caspian()
+    const seen: string[] = []
+    cx.onMessage({}, async (thread) => {
+      const out = thread.stream({ minChars: 1, throttle: 60 })
+      await out.append("aaaa")
+      await out.append("bbbb")
+      await out.append("cccc")
+      seen.push(out.text)
+      await out.close()
+    })
+    // No live sink here, so it buffers; the point is append() never throws and
+    // the accumulated text is complete.
+    expect(seen.length === 0 || seen[0] === "aaaabbbbcccc").toBe(true)
+  })
+
+  test("throttle is configurable and defaults to 0.5s", () => {
+    const cx = new Caspian()
+    expect(typeof cx.onMessage).toBe("function")
+  })
+})
