@@ -299,23 +299,34 @@ class GatewayPoller:
         # to "only what arrives from now on"; pass replay=True to backfill.
         self._need_seek = not cursor and not replay
 
+    # The endpoint caps limit at 500 (Query(..., le=500)); asking for more is a
+    # 422, which would leave the cursor at 0 and replay history.
+    _MAX_LIMIT = 500
+
     def _seek_to_latest(self) -> None:
-        """Move the cursor to the newest seq without processing anything."""
-        result = self._client.send(
-            GatewayRequest(
-                method="GET",
-                path="/v1/events",
-                params={"after_seq": "0", "limit": "1000"},
-            )
-        )
+        """Move the cursor past all existing events without processing them.
+
+        Pages until a short read, so a project with more than _MAX_LIMIT events
+        still ends up at the true newest seq rather than part way through.
+        """
         self._need_seek = False
-        if not result.is_ok:
-            return
-        for row in result.value.json_list:
-            if isinstance(row, dict):
+        while True:
+            result = self._client.send(
+                GatewayRequest(
+                    method="GET",
+                    path="/v1/events",
+                    params={"after_seq": str(self.cursor), "limit": str(self._MAX_LIMIT)},
+                )
+            )
+            if not result.is_ok:
+                return  # leave the cursor where it is; better than replaying
+            rows = [r for r in result.value.json_list if isinstance(r, dict)]
+            for row in rows:
                 seq = row.get("seq")
                 if isinstance(seq, int) and seq > self.cursor:
                     self.cursor = seq
+            if len(rows) < self._MAX_LIMIT:
+                return
 
     def fetch_raw(self) -> Result:
         """GET /v1/events and return the batch as RawInbound (unparsed).
