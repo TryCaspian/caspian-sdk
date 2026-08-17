@@ -14,6 +14,21 @@ export interface EmailThreadContext {
   updatedAt: number;
 }
 
+// Bounds bySession/byConversation the same way dedupe.ts bounds its MEMORY
+// set: this process runs for the plugin's whole lifetime, so without a cap
+// these Maps grow by one entry per inbound message forever.
+const MAX_THREADS = 2000;
+
+function evictOldest<K, V>(map: Map<K, V>): void {
+  if (map.size <= MAX_THREADS) return;
+  const drop = map.size - MAX_THREADS;
+  let i = 0;
+  for (const key of map.keys()) {
+    map.delete(key);
+    if (++i >= drop) break;
+  }
+}
+
 export class ThreadContextStore {
   private readonly bySession = new Map<string, EmailThreadContext>();
   private readonly byConversation = new Map<string, EmailThreadContext>();
@@ -21,8 +36,10 @@ export class ThreadContextStore {
   remember(ctx: Omit<EmailThreadContext, "updatedAt">): EmailThreadContext {
     const next: EmailThreadContext = { ...ctx, updatedAt: Date.now() };
     this.bySession.set(ctx.openCodeSessionId, next);
+    evictOldest(this.bySession);
     if (ctx.conversationId) {
       this.byConversation.set(ctx.conversationId, next);
+      evictOldest(this.byConversation);
     }
     return next;
   }
