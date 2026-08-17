@@ -196,3 +196,17 @@ export interface HandleWebhookOptions {
   secret: string;
 }
 
+export type ConnectionState = "connected" | "reconnecting";
+
+export interface ConnectionStateDetail {
+  error?: unknown;
+  backoffMs?: number;
+  attempt?: number;
+}
+
+export type ConnectionStateHandler = (
+  state: ConnectionState,
+  detail?: ConnectionStateDetail,
+) => void | Promise<void>;
+
+

@@ -555,6 +555,7 @@ class CommClient:
         self._handlers: list[Callable[[Message], Awaitable[None] | None]] = []
         self._interaction_handlers: list[Callable[[Interaction], Awaitable[None] | None]] = []
         self._reaction_handlers: list[Callable[[Reaction], Awaitable[None] | None]] = []
+        self._connection_state_handlers: list[Callable[..., Awaitable[None] | None]] = []
         self._ack: str | None = None
         self._last_credit_warning: float = 0.0
         self._webhook_dedup = _WebhookDedup()
@@ -1263,7 +1264,28 @@ class CommClient:
         self._reaction_handlers.append(handler)
         return handler
 
-    def _call_handler(self, handler: Callable, argument) -> None:
+    def on_connection_state_change(
+        self, handler: Callable[..., Awaitable[None] | None]
+    ) -> Callable[..., Awaitable[None] | None]:
+        """Register a handler for connection lifecycle transitions during ``listen()``.
+        Fires with ``"reconnecting"`` when a poll fails (with error and backoff detail),
+        and ``"connected"`` when polling recovers successfully. Sync and ``async def``
+        handlers are both supported."""
+        self._connection_state_handlers.append(handler)
+        return handler
+
+    def _dispatch_connection_state(self, state: str, detail: dict | None = None) -> None:
+        for handler in self._connection_state_handlers:
+            try:
+                sig = inspect.signature(handler)
+                if len(sig.parameters) == 1:
+                    self._call_handler(handler, state)
+                else:
+                    self._call_handler(handler, state, detail)
+            except Exception:
+                logger.exception("on_connection_state_change handler failed; continuing")
+
+    def _call_handler(self, handler: Callable, *args) -> None:
         """Invoke a handler, supporting both sync and ``async def`` callables.
 
         An ``async def`` handler returns a coroutine when called; it is run on
@@ -1277,7 +1299,7 @@ class CommClient:
         handlers identically; exceptions raised inside the coroutine propagate
         to the caller just like a sync handler's would.
         """
-        result = handler(argument)
+        result = handler(*args)
         if inspect.isawaitable(result):
             future = asyncio.run_coroutine_threadsafe(
                 _consume_awaitable(result), self._ensure_handler_loop()
@@ -1449,18 +1471,37 @@ class CommClient:
         try:
             seq = self._latest_seq() if from_seq is None else from_seq
             backoff = poll_interval
+            current_state = "connected"
+            failed_attempts = 0
             while True:
                 try:
                     batch = self.events(after_seq=seq)
                 except KeyboardInterrupt:
                     raise
-                except Exception:
+                except Exception as err:
+                    failed_attempts += 1
                     logger.warning(
                         "gateway poll failed; retrying in %.1fs", backoff, exc_info=True
                     )
+                    if current_state != "reconnecting":
+                        current_state = "reconnecting"
+                        self._dispatch_connection_state(
+                            "reconnecting",
+                            {
+                                "error": err,
+                                "backoff_seconds": backoff,
+                                "attempt": failed_attempts,
+                            },
+                        )
                     time.sleep(backoff)
                     backoff = min(backoff * 2, max_backoff)
                     continue
+                if current_state == "reconnecting":
+                    current_state = "connected"
+                    self._dispatch_connection_state(
+                        "connected", {"attempt": failed_attempts}
+                    )
+                    failed_attempts = 0
                 backoff = poll_interval
                 if not batch:
                     time.sleep(poll_interval)
