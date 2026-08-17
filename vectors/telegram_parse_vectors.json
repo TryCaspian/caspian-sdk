@@ -1,0 +1,95 @@
+[
+  {
+    "name": "private text message becomes Message dm",
+    "update": {
+      "update_id": 1,
+      "message": {
+        "message_id": 10,
+        "from": { "id": 42, "username": "alice" },
+        "chat": { "id": 123, "type": "private" },
+        "text": "hello"
+      }
+    },
+    "expected": [
+      {
+        "kind": "message",
+        "thread_id": "telegram:123",
+        "text": "hello",
+        "chat_kind": "dm",
+        "sender": "alice"
+      }
+    ]
+  },
+  {
+    "name": "group message becomes Message group",
+    "update": {
+      "update_id": 2,
+      "message": {
+        "message_id": 11,
+        "from": { "id": 7 },
+        "chat": { "id": -1001, "type": "supergroup" },
+        "text": "hi"
+      }
+    },
+    "expected": [
+      {
+        "kind": "message",
+        "thread_id": "telegram:-1001",
+        "text": "hi",
+        "chat_kind": "group",
+        "sender": "7"
+      }
+    ]
+  },
+  {
+    "name": "callback_query becomes Action",
+    "update": {
+      "update_id": 3,
+      "callback_query": {
+        "id": "cb1",
+        "from": { "id": 42, "username": "alice" },
+        "message": {
+          "message_id": 10,
+          "chat": { "id": 123, "type": "private" }
+        },
+        "data": "done"
+      }
+    },
+    "expected": [
+      {
+        "kind": "action",
+        "thread_id": "telegram:123",
+        "data": "done",
+        "sender": "alice"
+      }
+    ]
+  },
+  {
+    "name": "message_reaction becomes Reaction",
+    "update": {
+      "update_id": 4,
+      "message_reaction": {
+        "chat": { "id": 123, "type": "private" },
+        "message_id": 10,
+        "user": { "id": 42, "username": "alice" },
+        "new_reaction": [{ "type": "emoji", "emoji": "👍" }]
+      }
+    },
+    "expected": [
+      {
+        "kind": "reaction",
+        "thread_id": "telegram:123",
+        "emoji": "👍",
+        "sender": "alice"
+      }
+    ]
+  },
+  {
+    "name": "unknown update type is empty",
+    "update": {
+      "update_id": 5,
+      "my_chat_member": { "chat": { "id": 1 } }
+    },
+    "expected": []
+  }
+]
