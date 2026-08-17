@@ -73,14 +73,14 @@ test("outbound post_message requires thread_id and does not bind a chat", async 
   })
 })
 
-test("send_dm enqueues Post to the named thread, not the bound thread", async () => {
+test("send_dm enqueues Initiate to the named thread, not the bound thread", async () => {
   const commands: Command[] = []
   const cx = new Caspian()
   const tools = cx.tools(threadWith(commands), { preset: "messenger" })
   await tools.send_dm.execute({ thread_id: "telegram:dm", text: "secret" })
   expect(commands).toEqual([
     {
-      tag: "Post",
+      tag: "Initiate",
       thread_id: Schema.decodeUnknownSync(ThreadId)("telegram:dm"),
       text: "secret",
       actions: [],

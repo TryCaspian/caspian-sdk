@@ -154,6 +154,116 @@ test("Event and App schemas are the vector round-trip codecs", () => {
   expect(App.ast._tag).toBe("TypeLiteral")
 })
 
+test("decodes Receipt, MemberJoin, Edited, and the extra Message fields", () => {
+  const receipt = runEither(
+    decodeEvent({
+      kind: "receipt",
+      thread_id: "whatsapp:1",
+      status: "read",
+      message_id: "wamid.1",
+    }),
+  )
+  expect(Either.isRight(receipt)).toBe(true)
+  if (Either.isLeft(receipt)) {
+    return
+  }
+  expect(receipt.right.kind).toBe("receipt")
+  if (receipt.right.kind === "receipt") {
+    expect(receipt.right.status).toBe("read")
+    expect(receipt.right.message_id).toBe("wamid.1")
+  }
+
+  const join = runEither(
+    decodeEvent({
+      kind: "member_join",
+      thread_id: "telegram:-100",
+      member: "42",
+    }),
+  )
+  expect(Either.isRight(join)).toBe(true)
+
+  const edited = runEither(
+    decodeEvent({
+      kind: "edited",
+      thread_id: "telegram:1",
+      message_id: "9",
+      text: "later",
+    }),
+  )
+  expect(Either.isRight(edited)).toBe(true)
+
+  const deleted = runEither(
+    decodeEvent({
+      kind: "deleted",
+      thread_id: "telegram:1",
+      message_id: "9",
+    }),
+  )
+  expect(Either.isRight(deleted)).toBe(true)
+
+  const message = runEither(
+    decodeEvent({
+      kind: "message",
+      thread_id: "telegram:1",
+      text: "hi",
+      chat_kind: "dm",
+      attachments: [{ type: "photo", file_id: "abc" }],
+      reply_to: "8",
+      topic_id: "3",
+      message_id: "10",
+    }),
+  )
+  expect(Either.isRight(message)).toBe(true)
+  if (Either.isLeft(message) || message.right.kind !== "message") {
+    return
+  }
+  expect(message.right.attachments[0]?.type).toBe("photo")
+  expect(message.right.reply_to).toBe("8")
+  expect(message.right.topic_id).toBe("3")
+})
+
+test("decodes Reply, SendMedia, Delete, Initiate, and OpenModal commands", () => {
+  const reply = runEither(
+    decodeCommand({
+      tag: "Reply",
+      thread_id: "telegram:1",
+      reply_to: "10",
+      text: "ok",
+    }),
+  )
+  expect(Either.isRight(reply)).toBe(true)
+
+  const media = runEither(
+    decodeCommand({
+      tag: "SendMedia",
+      thread_id: "telegram:1",
+      attachment: { type: "photo", url: "https://example.com/a.jpg" },
+      caption: "pic",
+    }),
+  )
+  expect(Either.isRight(media)).toBe(true)
+
+  const initiate = runEither(
+    decodeCommand({
+      tag: "Initiate",
+      thread_id: "telegram:1",
+      text: "hello",
+    }),
+  )
+  expect(Either.isRight(initiate)).toBe(true)
+
+  const modal = runEither(
+    decodeCommand({
+      tag: "OpenModal",
+      thread_id: "slack:C1",
+      trigger_id: "trig",
+      blocks: [{ type: "input", content: { label: "name" } }],
+      title: "Form",
+    }),
+  )
+  expect(Either.isRight(modal)).toBe(true)
+})
+
 test("CaspianError has no OverlapFull arm — queue-at-bound is a drop, not an error", () => {
   const result = Schema.decodeUnknownEither(CaspianError)({
     _tag: "OverlapFull",

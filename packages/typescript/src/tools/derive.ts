@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as JSONSchema from "effect/JSONSchema"
 import * as Schema from "effect/Schema"
-import { Command, Edit, Post, React, Typing } from "../core/commands.ts"
+import { Command, Edit, Initiate, Post, React, Typing } from "../core/commands.ts"
 import type { DecodeError } from "../core/errors.ts"
 import { decodeStrict } from "../core/parse.ts"
 import {
@@ -36,7 +36,7 @@ export type ToolsOptions = {
 
 const BoundPost = Post.pipe(Schema.omit("tag", "thread_id"))
 const OutboundPost = Post.pipe(Schema.omit("tag"))
-const SendDm = Post.pipe(Schema.omit("tag", "actions"))
+const SendDm = Initiate.pipe(Schema.omit("tag", "actions"))
 const BoundEdit = Edit.pipe(Schema.omit("tag", "thread_id"))
 const BoundReact = React.pipe(Schema.omit("tag", "thread_id"))
 const BoundTyping = Typing.pipe(Schema.omit("tag", "thread_id"))
@@ -87,7 +87,7 @@ export const deriveTools = (
     "send_dm",
     "Send a DM to a thread id (telegram:… / slack:…), never a chat id.",
     SendDm,
-    (args) => asCommand({ tag: "Post", actions: [], ...args }),
+    (args) => asCommand({ tag: "Initiate", actions: [], ...args }),
     thread,
   )
   if (preset === "outbound" || thread === undefined) {
