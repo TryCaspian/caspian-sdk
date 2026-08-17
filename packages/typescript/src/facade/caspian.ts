@@ -5,6 +5,11 @@ import {
   makeMemoryInterpreter,
   type MemoryInterpreter,
 } from "../interpreters/memory.ts"
+import {
+  makeProcessInterpreter,
+  type ProcessInterpreter,
+  type ProcessOptions,
+} from "../interpreters/process.ts"
 import { desugarOnAction, desugarOnMessage } from "./desugar.ts"
 import {
   type ActionHandler,
@@ -17,6 +22,7 @@ import type { OnActionOptions, OnMessageOptions } from "./options.ts"
 export class Caspian {
   readonly #rules: Rule[] = []
   readonly #handlers = new Map<string, BHandler>()
+  #process: ProcessInterpreter | undefined
   #messageCount = 0
   #actionCount = 0
   #useCount = 0
@@ -77,6 +83,44 @@ export class Caspian {
         host: bHostLayer(this.#handlers),
       }),
     )
+  }
+
+  listen(
+    options: Omit<ProcessOptions, "host" | "channelName"> & {
+      readonly channel?: string
+    },
+  ): Promise<void> {
+    return Effect.runPromise(
+      makeProcessInterpreter(this.program, {
+        channelName: options.channel ?? "",
+        connection: options.connection,
+        adapter: options.adapter,
+        host: bHostLayer(this.#handlers),
+        ...(options.secretToken === undefined
+          ? {}
+          : { secretToken: options.secretToken }),
+        ...(options.secretHeader === undefined
+          ? {}
+          : { secretHeader: options.secretHeader }),
+      }).pipe(
+        Effect.tap((process) =>
+          Effect.sync(() => {
+            this.#process = process
+          }),
+        ),
+        Effect.asVoid,
+      ),
+    )
+  }
+
+  readonly webhooks = {
+    telegram: (request: Request): Promise<Response> => {
+      const process = this.#process
+      if (process === undefined) {
+        return Promise.reject(new Error("listen() before webhooks.telegram"))
+      }
+      return Effect.runPromise(process.handle(request))
+    },
   }
 }
 
