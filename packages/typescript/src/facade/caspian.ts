@@ -8,6 +8,9 @@ import {
   type HostedInterpreter,
   type HostedOptions,
 } from "../interpreters/hosted.ts"
+import { httpGatewayClient, type GatewayClient } from "../hosted/client.ts"
+import { gatewayAdapterLayer } from "../hosted/adapter.ts"
+import { gatewayPoller } from "../hosted/inbound.ts"
 import {
   makeMemoryInterpreter,
   type MemoryInterpreter,
@@ -182,6 +185,59 @@ export class Caspian {
           }),
         ),
         Effect.asVoid,
+      ),
+    )
+  }
+
+  /**
+   * Hosted inbound against the real gateway: poll /v1/events and drive the same
+   * pipeline every other path uses.
+   *
+   * `run()` above is the webhook half (the gateway POSTs to you). This is the
+   * poll half, and it is what works today without registering a push URL. Both
+   * end up in ProcessInterpreter.handleRaw, so there is one inbound pipeline.
+   */
+  runGateway(options: {
+    readonly apiKey: string
+    readonly baseUrl?: string
+    readonly intervalMs?: number
+    readonly maxIterations?: number
+    readonly client?: GatewayClient
+    /** Re-read history from seq 0. Off by default so a restart does not
+     *  re-answer every message the project has ever received. */
+    readonly replay?: boolean
+  }): Promise<ReadonlyArray<HandleResult>> {
+    const client =
+      options.client ?? httpGatewayClient(options.apiKey, options.baseUrl)
+    const poller = gatewayPoller(
+      client,
+      options.replay === true ? { replay: true } : {},
+    )
+    const interval = options.intervalMs ?? 1000
+    const maxIterations = options.maxIterations
+    const program = this.program
+    const host = bHostLayer(this.#handlers)
+
+    return Effect.runPromise(
+      makeProcessInterpreter(program, {
+        channelName: "gateway",
+        connection: { id: "gateway" as Connection["id"], channel: "gateway", via: "hosted", config: {} },
+        adapter: gatewayAdapterLayer(client),
+        host,
+      }).pipe(
+        Effect.flatMap((process) =>
+          Effect.gen(function* () {
+            const collected: HandleResult[] = []
+            for (let i = 0; maxIterations === undefined || i < maxIterations; i++) {
+              const body = yield* poller.fetchRaw()
+              const results = yield* process.handleRaw(body, {})
+              collected.push(...results)
+              if (maxIterations !== undefined && i + 1 >= maxIterations) break
+              if (interval > 0) yield* Effect.sleep(`${interval} millis`)
+            }
+            return collected as ReadonlyArray<HandleResult>
+          }),
+        ),
       ),
     )
   }
