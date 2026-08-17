@@ -1,0 +1,192 @@
+[
+  {
+    "name": "message matches on_message handler, produces Typing + Host",
+    "app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "message"},
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "h1"
+        }
+      ]
+    },
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "user1",
+      "message_id": "",
+      "attachments": [],
+      "blocks": [],
+      "reply_to": "",
+      "topic_id": "",
+      "metadata": {},
+      "raw": {}
+    },
+    "channel_name": "telegram",
+    "expected_commands": [
+      {"tag": "Typing", "thread_id": "telegram:123"},
+      {"tag": "Host", "handler_id": "h1"}
+    ],
+    "expected_dropped": false
+  },
+  {
+    "name": "action matches on_action handler",
+    "app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "action"},
+          "overlap": {"policy": "drop", "bound": 16},
+          "handler_id": "h2"
+        }
+      ]
+    },
+    "event": {
+      "kind": "action",
+      "thread_id": "telegram:456",
+      "data": "done",
+      "sender": "user2",
+      "message_id": "",
+      "interaction_id": "",
+      "metadata": {},
+      "raw": {}
+    },
+    "channel_name": "telegram",
+    "expected_commands": [
+      {"tag": "Typing", "thread_id": "telegram:456"},
+      {"tag": "Host", "handler_id": "h2"}
+    ],
+    "expected_dropped": false
+  },
+  {
+    "name": "channel filter excludes non-matching channel",
+    "app": {
+      "rules": [
+        {
+          "predicate": {"op": "and", "left": {"op": "kind", "kind": "message"}, "right": {"op": "channel", "channels": ["discord"]}},
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "h3"
+        }
+      ]
+    },
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:789",
+      "text": "hi",
+      "chat_kind": "dm",
+      "sender": "user3",
+      "message_id": "",
+      "attachments": [],
+      "blocks": [],
+      "reply_to": "",
+      "topic_id": "",
+      "metadata": {},
+      "raw": {}
+    },
+    "channel_name": "telegram",
+    "expected_commands": [],
+    "expected_dropped": false
+  },
+  {
+    "name": "drop policy drops second event while busy",
+    "app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "action"},
+          "overlap": {"policy": "drop", "bound": 16},
+          "handler_id": "h4"
+        }
+      ]
+    },
+    "events": [
+      {
+        "kind": "action",
+        "thread_id": "telegram:100",
+        "data": "btn1",
+        "sender": "u1",
+        "message_id": "",
+        "interaction_id": "",
+        "metadata": {},
+        "raw": {}
+      },
+      {
+        "kind": "action",
+        "thread_id": "telegram:100",
+        "data": "btn2",
+        "sender": "u1",
+        "message_id": "",
+        "interaction_id": "",
+        "metadata": {},
+        "raw": {}
+      }
+    ],
+    "channel_name": "telegram",
+    "expected_results": [
+      {"commands_count": 2, "dropped": false},
+      {"commands_count": 0, "dropped": true}
+    ]
+  },
+  {
+    "name": "queue policy enqueues while busy",
+    "app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "message"},
+          "overlap": {"policy": "queue", "bound": 3},
+          "handler_id": "h5"
+        }
+      ]
+    },
+    "events": [
+      {
+        "kind": "message",
+        "thread_id": "telegram:200",
+        "text": "msg1",
+        "chat_kind": "dm",
+        "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
+        "raw": {}
+      },
+      {
+        "kind": "message",
+        "thread_id": "telegram:200",
+        "text": "msg2",
+        "chat_kind": "dm",
+        "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
+        "raw": {}
+      },
+      {
+        "kind": "message",
+        "thread_id": "telegram:200",
+        "text": "msg3",
+        "chat_kind": "dm",
+        "sender": "u1",
+        "message_id": "",
+        "attachments": [],
+        "blocks": [],
+        "reply_to": "",
+        "topic_id": "",
+        "metadata": {},
+        "raw": {}
+      }
+    ],
+    "channel_name": "telegram",
+    "expected_results": [
+      {"commands_count": 2, "dropped": false},
+      {"commands_count": 0, "dropped": false},
+      {"commands_count": 0, "dropped": false}
+    ]
+  }
+]
