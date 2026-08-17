@@ -10,7 +10,7 @@ import { executeTurn } from "../adapters/turn.ts"
 import type { App } from "../core/app.ts"
 import type { Connection } from "../core/connection.ts"
 import type { Event } from "../core/events.ts"
-import { AdapterPort, type HostPort } from "../core/ports.ts"
+import { AdapterPort, type HostPort, type ThreadStore } from "../core/ports.ts"
 import {
   makeMemoryInterpreter,
   type MemoryInterpreter,
@@ -22,7 +22,7 @@ export type ProcessOptions = {
   readonly secretHeader?: string
   readonly connection: Connection
   readonly adapter: Layer.Layer<AdapterPort>
-  readonly host?: Layer.Layer<HostPort>
+  readonly host?: Layer.Layer<HostPort, never, ThreadStore>
 }
 
 export type ProcessInbound = {

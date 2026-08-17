@@ -30,3 +30,21 @@ test("thread methods enqueue Commands and do not fetch", async () => {
     { tag: "React", thread_id: id, message_id: "m1", emoji: "👍" },
   ])
 })
+
+test("thread.recent is empty when the runner has no store", async () => {
+  const thread = makeThread(id, () => undefined)
+  expect(await thread.recent()).toEqual([])
+  expect(await thread.recent(5)).toEqual([])
+})
+
+test("thread.state.set enqueues SetState even without a store", async () => {
+  const commands: Command[] = []
+  const thread = makeThread(id, (command) => {
+    commands.push(command)
+  })
+  await thread.state.set("mood", "ok")
+  expect(await thread.state.get("mood")).toBeUndefined()
+  expect(commands).toEqual([
+    { tag: "SetState", thread_id: id, key: "mood", value: "ok" },
+  ])
+})

@@ -1,11 +1,16 @@
 import { expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import { Event, HostPort } from "../src/core/index.ts"
 import { Caspian } from "../src/facade/caspian.ts"
 import { Caspian as PublicCaspian } from "../src/index.ts"
-import { bHostLayer, type BHandler } from "../src/facade/host.ts"
+import {
+  bHostLayer,
+  emptyThreadStoreLayer,
+  type BHandler,
+} from "../src/facade/host.ts"
 
 const syncEither = <A, E>(effect: Effect.Effect<A, E>) =>
   Effect.runSync(Effect.either(effect))
@@ -31,7 +36,9 @@ test("bHostLayer runs a handler and returns Post", async () => {
   ])
   const effect = HostPort.pipe(
     Effect.flatMap((port) => port.run("onMessage:0", dm, { skipped: [] })),
-    Effect.provide(bHostLayer(handlers)),
+    Effect.provide(
+      bHostLayer(handlers).pipe(Layer.provide(emptyThreadStoreLayer)),
+    ),
   )
   const commands = await Effect.runPromise(effect)
   expect(commands).toHaveLength(1)
@@ -44,7 +51,9 @@ test("bHostLayer runs a handler and returns Post", async () => {
 test("bHostLayer missing handler is HostError", () => {
   const effect = HostPort.pipe(
     Effect.flatMap((port) => port.run("missing", dm, { skipped: [] })),
-    Effect.provide(bHostLayer(new Map())),
+    Effect.provide(
+      bHostLayer(new Map()).pipe(Layer.provide(emptyThreadStoreLayer)),
+    ),
   )
   const result = syncEither(effect)
   expect(Either.isLeft(result)).toBe(true)
@@ -108,4 +117,73 @@ test("handler throw is HostError, not a throw from step", async () => {
 
 test("package root exports Caspian", () => {
   expect(new PublicCaspian().program.rules).toEqual([])
+})
+
+test("thread.recent is prior events on that thread, not the current one", async () => {
+  const seen: Array<ReadonlyArray<string>> = []
+  const cx = new Caspian()
+  cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
+    const history = await thread.recent(20)
+    seen.push(history.map((item) => (item.kind === "message" ? item.text : "")))
+    await thread.post(`echo:${msg.text}`)
+  })
+  const mem = await cx.interpret({ channel: "telegram" })
+  const first = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:1",
+    text: "one",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  const second = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:1",
+    text: "two",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  const other = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:9",
+    text: "other",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  await Effect.runPromise(mem.runSequence([first, other, second]))
+  expect(seen).toEqual([[], [], ["one"]])
+})
+
+test("thread.state persists across turns on the runner", async () => {
+  const cx = new Caspian()
+  cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
+    if (msg.text === "save") {
+      await thread.state.set("n", 1)
+      expect(await thread.state.get("n")).toBe(1)
+      return
+    }
+    expect(await thread.state.get("n")).toBe(1)
+  })
+  const mem = await cx.interpret({ channel: "telegram" })
+  const save = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:1",
+    text: "save",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  const load = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:1",
+    text: "load",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  await Effect.runPromise(mem.runSequence([save, load]))
+  const commands = await Effect.runPromise(mem.commands)
+  expect(commands.some((command) => command.tag === "SetState")).toBe(true)
 })
