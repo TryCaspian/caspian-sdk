@@ -103,18 +103,24 @@ class ProcessInterpreter:
 
     def _execute(self, event: Event, sr: StepResult) -> list[Result]:
         commands: list[Command] = []
+        results_so_far: list[Result] = []
         for cmd in sr.commands:
             if isinstance(cmd, Host):
                 if self._host is not None:
+                    sink = _Sink(self)
                     commands.extend(
                         self._host.run(
-                            cmd.handler_id, event, skipped_count=sr.skipped_count
+                            cmd.handler_id,
+                            event,
+                            skipped_count=sr.skipped_count,
+                            sink=sink,
                         )
                     )
+                    results_so_far.extend(sink.results)
             else:
                 commands.append(cmd)
 
-        results: list[Result] = []
+        results: list[Result] = results_so_far
         for cmd in commands:
             results.append(self._maybe_dispatch(self._adapter.execute(cmd, self._connection)))
         return results
@@ -148,3 +154,34 @@ class ProcessInterpreter:
         if isinstance(sent, Sent) and sent.raw.get("transport"):
             return self._transport.dispatch(sent)
         return exec_result
+
+
+class _Sink:
+    """StreamSink over a live ProcessInterpreter: send one Command right now.
+
+    This is the only path that performs an effect while a handler is still
+    running. It exists so a long reply can be streamed (post, then edit) rather
+    than appearing all at once when the handler returns.
+    """
+
+    def __init__(self, runner: ProcessInterpreter) -> None:
+        self._runner = runner
+        self.results: list[Result] = []
+        caps = set()
+        cap_fn = getattr(runner._adapter, "capabilities", None)
+        if callable(cap_fn):
+            try:
+                caps = set(cap_fn())
+            except Exception:  # a capability probe must never break a handler
+                caps = set()
+        self.can_stream = runner._transport is not None and "edit" in caps
+
+    def emit(self, command: Command) -> str:
+        result = self._runner._maybe_dispatch(
+            self._runner._adapter.execute(command, self._runner._connection)
+        )
+        self.results.append(result)
+        if not result.is_ok:
+            return ""
+        sent = result.value
+        return getattr(sent, "message_id", "") or ""

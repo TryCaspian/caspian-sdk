@@ -51,14 +51,23 @@ class Thread:
     This is NOT an HTTP client. It builds intent as data.
     """
 
-    def __init__(self, thread_id: ThreadId) -> None:
+    def __init__(self, thread_id: ThreadId, *, sink: Any = None) -> None:
         self.thread_id = thread_id
         self._commands: list[Command] = []
+        self._sink = sink
 
     @property
     def commands(self) -> list[Command]:
         """Commands accumulated during this turn."""
         return list(self._commands)
+
+    def stream(self, *, min_chars: int = 24) -> Stream:
+        """Open a streaming reply. See Stream.
+
+        Sends chunks as they arrive when the channel supports editing a sent
+        message; otherwise buffers and sends once on close.
+        """
+        return Stream(self, min_chars=min_chars)
 
     def post(self, text: str, *, actions: tuple[Any, ...] = ()) -> None:
         """Enqueue a Post command."""
@@ -173,3 +182,88 @@ class Thread:
     def set_state(self, key: str, value: Any) -> None:  # noqa: ANN401
         """Enqueue a SetState command."""
         self._commands.append(SetState(thread_id=self.thread_id, key=key, value=value))
+
+
+class Stream:
+    """A reply that is sent while it is still being written.
+
+    Posts the first chunk, then edits that same message as more text arrives,
+    which is how a bot appears to "type out" a long answer. Falls back to a
+    single Post at the end when the runtime or channel cannot edit, so handler
+    code never has to branch on it.
+
+    Use it as a context manager so the final flush always happens::
+
+        with thread.stream() as out:
+            for chunk in llm:
+                out.append(chunk)
+    """
+
+    def __init__(self, thread: Thread, *, min_chars: int = 24) -> None:
+        self._thread = thread
+        self._sink = thread._sink
+        self._min_chars = min_chars
+        self._text = ""
+        self._sent = ""
+        self._message_id = ""
+        self._closed = False
+
+    @property
+    def text(self) -> str:
+        """Everything appended so far."""
+        return self._text
+
+    @property
+    def live(self) -> bool:
+        """True when chunks are being sent as they arrive rather than buffered."""
+        return bool(self._sink is not None and getattr(self._sink, "can_stream", False))
+
+    def append(self, chunk: str) -> None:
+        """Add text. Flushes once enough has accumulated to be worth a call."""
+        if self._closed or not chunk:
+            return
+        self._text += chunk
+        if self.live and len(self._text) - len(self._sent) >= self._min_chars:
+            self._flush()
+
+    def close(self) -> None:
+        """Send whatever is left. Safe to call twice."""
+        if self._closed:
+            return
+        self._closed = True
+        if not self._text:
+            return
+        if self.live:
+            self._flush()
+        else:
+            # Buffered mode: one Post with the whole answer.
+            self._thread.post(self._text)
+
+    def _flush(self) -> None:
+        if self._text == self._sent:
+            return
+        if not self._message_id:
+            self._message_id = self._sink.emit(
+                Post(thread_id=self._thread.thread_id, text=self._text)
+            )
+            # No id back means we cannot target an edit; buffer from here on.
+            if not self._message_id:
+                self._sink = None
+                self._sent = self._text
+                return
+        else:
+            self._sink.emit(
+                Edit(
+                    thread_id=self._thread.thread_id,
+                    message_id=self._message_id,
+                    text=self._text,
+                )
+            )
+        self._sent = self._text
+
+    def __enter__(self) -> Stream:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        self.close()
+        return False

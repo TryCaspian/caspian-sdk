@@ -42,10 +42,17 @@ class TestChannelManager:
         with pytest.raises(ProvisionError):
             cx.channels.add("telegram", via="self-host")
 
-    def test_add_unknown_channel_raises(self) -> None:
+    def test_unknown_channel_is_hosted_only_not_an_error(self) -> None:
+        """The gateway speaks channels this SDK has no adapter for (bluesky,
+        zulip, gmeet). Hosted must accept them; only self-host needs an adapter."""
         cx = Caspian(dispatch=False)
-        with pytest.raises(KeyError, match="No adapter"):
-            cx.channels.add("myspace")
+        record = cx.channels.add("myspace")  # hosted default
+        assert record.inbound_owner == "gateway"
+
+    def test_self_host_unknown_channel_raises(self) -> None:
+        cx = Caspian(dispatch=False)
+        with pytest.raises(KeyError, match="cannot be self-hosted"):
+            cx.channels.add("myspace", via="self-host", bot_token="t")
 
     def test_adapter_and_connection_resolved(self) -> None:
         cx = Caspian(dispatch=False)

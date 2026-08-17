@@ -33,22 +33,31 @@ class ChannelManager:
     def add(self, channel: str, **options: Any) -> ChannelConnection:
         """Add a channel. `via` defaults to hosted; self-host requires the secret.
 
-        Raises KeyError (clear message) if no adapter exists for the channel.
+        A local adapter is required only for `via="self-host"`, because that is
+        the mode where this process speaks the platform's own protocol. In
+        hosted mode the gateway owns the protocol and inbound arrives as a
+        gateway event, so any channel the gateway supports works here even
+        without a local adapter (bluesky, zulip, gmeet, rcs, ...).
+
+        Raises KeyError if self-host is requested for a channel with no adapter.
         Raises provision.ProvisionError if a required token is missing.
         """
-        if channel not in REGISTRY:
+        record = self._provision.add(channel, **options)
+
+        if record.via == Via.SELF_HOST and channel not in REGISTRY:
             raise KeyError(
-                f"No adapter for channel {channel!r}. "
-                f"Known channels: {', '.join(sorted(REGISTRY))}"
+                f"No adapter for channel {channel!r}, so it cannot be self-hosted. "
+                f"Self-host supports: {', '.join(sorted(REGISTRY))}. "
+                f"Use via='hosted' to let the gateway handle {channel!r}."
             )
 
-        record = self._provision.add(channel, **options)
         if record.via == Via.HOSTED and self._gateway_client is not None:
             from caspian.hosted.provisioning import HostedProvisioning
 
             HostedProvisioning(self._gateway_client).add_connection(channel, options)
 
-        self._adapters[channel] = get_adapter(channel)
+        # Hosted-only channels have no local adapter; that is expected.
+        self._adapters[channel] = get_adapter(channel) if channel in REGISTRY else None
         self._connections[channel] = Connection(
             id=ConnectionId(f"{channel}:{len(self._connections)}"),
             channel=channel,
@@ -60,7 +69,18 @@ class ChannelManager:
     def adapter_for(self, channel: str) -> Any:
         if channel not in self._adapters:
             raise KeyError(f"Channel {channel!r} was not added; call channels.add() first")
-        return self._adapters[channel]
+        adapter = self._adapters[channel]
+        if adapter is None:
+            raise KeyError(
+                f"Channel {channel!r} is hosted-only (no local adapter). Its inbound "
+                f"arrives as a gateway event: call cx.handle('gateway', body, headers) "
+                f"or cx.run(), not cx.handle({channel!r}, ...)."
+            )
+        return adapter
+
+    def self_hostable(self, channel: str) -> bool:
+        """True if this channel can run without the gateway (a local adapter exists)."""
+        return channel in REGISTRY
 
     def connection_for(self, channel: str) -> Connection:
         if channel not in self._connections:

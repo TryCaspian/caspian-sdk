@@ -101,11 +101,35 @@ class TransportPort(Protocol):
     def send(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Result: ...
 
 
+class StreamSink(Protocol):
+    """Port: send one Command *during* a handler and report the message id it made.
+
+    Normally a handler runs to completion and its Commands are sent afterwards.
+    Streaming a long answer needs the opposite: post the first chunk, then edit
+    that message as more text arrives. This port is that escape hatch, and it is
+    the only place where an effect happens mid-handler. Core stays pure: it just
+    declares the shape.
+
+    `can_stream` is False when the runtime cannot support it (no transport, or a
+    channel that cannot edit a sent message); callers must then buffer and send
+    once at the end instead.
+    """
+
+    can_stream: bool
+
+    def emit(self, command: Command) -> str: ...
+
+
 class HostPort(Protocol):
     """Port: the customer's agent. Returns Commands; never talks to a platform."""
 
     def run(
-        self, handler_id: str, event: Event, *, skipped_count: int = 0
+        self,
+        handler_id: str,
+        event: Event,
+        *,
+        skipped_count: int = 0,
+        sink: StreamSink | None = None,
     ) -> list[Command]: ...
 
 

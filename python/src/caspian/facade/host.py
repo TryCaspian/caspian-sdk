@@ -31,12 +31,17 @@ class FacadeHost:
         self._handlers = handlers
 
     def run(
-        self, handler_id: str, event: Event, *, skipped_count: int = 0
+        self,
+        handler_id: str,
+        event: Event,
+        *,
+        skipped_count: int = 0,
+        sink: Any = None,
     ) -> list[Command]:
         handler = self._handlers.get(handler_id)
         if handler is None:
             return []
-        thread = Thread(thread_id=event.thread_id)
+        thread = Thread(thread_id=event.thread_id, sink=sink)
         result = handler(thread, event, HandlerContext(skipped=skipped_count))
         if inspect.iscoroutine(result):
             import asyncio

@@ -319,3 +319,44 @@ class TestReliabilityGates:
         with open(process.__file__) as fh:
             source = fh.read()
         assert "caspian.facade" not in source
+
+
+class TestHostedOnlyChannels:
+    """A channel the gateway supports must be usable even with no local adapter.
+
+    Regression: channels.add() used to require a REGISTRY entry for every
+    channel, which made bluesky/zulip/gmeet/rcs unreachable in hosted mode even
+    though the gateway speaks them and no local adapter is ever used there.
+    """
+
+    def test_hosted_channel_without_adapter_is_allowed(self) -> None:
+        from caspian.facade.channels import ChannelManager
+
+        cm = ChannelManager()
+        for channel in ("bluesky", "zulip", "gmeet", "rcs", "instagram"):
+            record = cm.add(channel)  # hosted is the default
+            assert record.channel == channel
+            assert record.inbound_owner == "gateway"
+        assert cm.self_hostable("bluesky") is False
+        assert cm.self_hostable("telegram") is True
+
+    def test_self_host_without_adapter_fails_loudly(self) -> None:
+        import pytest
+
+        from caspian.facade.channels import ChannelManager
+
+        cm = ChannelManager()
+        with pytest.raises(KeyError) as exc:
+            cm.add("bluesky", via="self-host", bot_token="t")
+        assert "cannot be self-hosted" in str(exc.value)
+
+    def test_hosted_only_channel_points_at_the_gateway_pipeline(self) -> None:
+        import pytest
+
+        from caspian.facade.channels import ChannelManager
+
+        cm = ChannelManager()
+        cm.add("bluesky")
+        with pytest.raises(KeyError) as exc:
+            cm.adapter_for("bluesky")
+        assert "hosted-only" in str(exc.value)
