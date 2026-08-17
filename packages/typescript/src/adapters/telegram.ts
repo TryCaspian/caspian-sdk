@@ -1,3 +1,4 @@
+export { planAck, planCommand, planTurn, type TelegramCall } from "./telegram/execute.ts"
 export {
   decodeThreadId,
   encodeThreadId,
