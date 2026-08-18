@@ -1,4 +1,10 @@
-"""Tests for tools — derived from Command types."""
+"""Tools derived from Command types.
+
+Which tools exist depends on whether a thread is bound, not only on the preset.
+The rule is that a model is never handed a tool that cannot work, and never
+asked for a value that would be ignored. These semantics match the TypeScript
+SDK exactly; docs are written once for both.
+"""
 
 from __future__ import annotations
 
@@ -7,32 +13,74 @@ from caspian.facade.thread import Thread
 from caspian.tools import ToolSet
 
 
-class TestToolSet:
-    def test_definitions_messenger_preset(self) -> None:
-        tools = ToolSet(preset="messenger")
-        defs = tools.definitions
-        names = [d.name for d in defs]
-        assert "post_message" in names
-        assert "edit_message" in names
-        assert "add_reaction" in names
-        assert "start_typing" in names
-        assert "send_dm" not in names
+class TestBoundToAThread:
+    """A conversation is in hand, so tools are scoped to it."""
 
-    def test_definitions_outbound_preset(self) -> None:
-        tools = ToolSet(preset="outbound")
-        defs = tools.definitions
-        names = [d.name for d in defs]
-        assert "send_dm" in names
+    def _tools(self) -> ToolSet:
+        return ToolSet(thread=Thread(thread_id=ThreadId("tg:1")), preset="messenger")
 
-    def test_execute_post_message(self) -> None:
-        thread = Thread(thread_id=ThreadId("tg:1"))
-        tools = ToolSet(thread=thread)
+    def test_offers_the_conversation_tools(self) -> None:
+        names = {d.name for d in self._tools().definitions}
+        assert names == {
+            "post_message",
+            "edit_message",
+            "add_reaction",
+            "start_typing",
+            "send_dm",
+        }
+
+    def test_thread_id_is_not_asked_for(self) -> None:
+        """The thread is known, and execute() overrides whatever is sent.
+
+        Leaving thread_id in the schema asks the model for a value that is then
+        discarded: wasted tokens, and an invitation to invent ids.
+        """
+        edit = next(d for d in self._tools().definitions if d.name == "edit_message")
+        assert "thread_id" not in edit.parameters["properties"]
+        assert "thread_id" not in edit.parameters["required"]
+
+    def test_send_dm_keeps_its_thread_id(self) -> None:
+        """Sending a DM names a different conversation by definition."""
+        dm = next(d for d in self._tools().definitions if d.name == "send_dm")
+        assert "thread_id" in dm.parameters["properties"]
+
+
+class TestNoThread:
+    """No conversation in hand, so only tools that name their own target."""
+
+    def test_only_offers_tools_that_can_work(self) -> None:
+        names = {d.name for d in ToolSet().definitions}
+        assert names == {"post_message", "send_dm"}
+
+    def test_editing_is_withheld_rather_than_offered_broken(self) -> None:
+        """edit/react/typing need a thread. Emitting them would build commands
+        with an empty thread_id that fail later, at the adapter."""
+        names = {d.name for d in ToolSet().definitions}
+        assert "edit_message" not in names
+        assert "add_reaction" not in names
+        assert "start_typing" not in names
+
+    def test_messenger_collapses_to_outbound_without_a_thread(self) -> None:
+        assert (
+            {d.name for d in ToolSet(preset="messenger").definitions}
+            == {d.name for d in ToolSet(preset="outbound").definitions}
+        )
+
+    def test_thread_id_must_be_supplied(self) -> None:
+        post = next(d for d in ToolSet().definitions if d.name == "post_message")
+        assert "thread_id" in post.parameters["properties"]
+
+
+class TestExecute:
+    def test_bound_thread_is_used(self) -> None:
+        tools = ToolSet(thread=Thread(thread_id=ThreadId("tg:1")))
         commands = tools.execute("post_message", {"text": "hello"})
         assert len(commands) == 1
         assert commands[0].tag == "Post"  # type: ignore[union-attr]
         assert commands[0].text == "hello"  # type: ignore[union-attr]
+        assert commands[0].thread_id == "tg:1"  # type: ignore[union-attr]
 
-    def test_execute_uses_thread_id(self) -> None:
+    def test_unbound_takes_the_thread_id_from_the_model(self) -> None:
         tools = ToolSet()
         commands = tools.execute("post_message", {"text": "hi", "thread_id": "slack:C1"})
         assert len(commands) == 1
@@ -44,6 +92,7 @@ def test_facade_exposes_tools_like_typescript() -> None:
     from caspian import Caspian
 
     cx = Caspian()
-    names = {t.name for t in cx.tools().definitions}
-    assert "post_message" in names
-    assert cx.tools(preset="outbound").definitions != cx.tools().definitions
+    assert {t.name for t in cx.tools().definitions} == {"post_message", "send_dm"}
+    bound = cx.tools(Thread(thread_id=ThreadId("tg:1")))
+    assert len(bound.definitions) == 5
+    assert bound.bound is True
