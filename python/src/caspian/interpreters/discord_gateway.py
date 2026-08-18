@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 from collections.abc import Callable
 from typing import Any
@@ -29,6 +30,11 @@ from typing import Any
 from caspian.core.ports import RawInbound, Result
 
 Sink = Callable[[RawInbound], list[Result]]
+
+# A held-open socket that says nothing is impossible to operate: "connected" and
+# "silently retrying forever" look identical. Enable with
+# logging.basicConfig(level=logging.INFO).
+log = logging.getLogger("caspian.discord")
 
 # GUILD_MESSAGES (1<<9) | GUILD_MESSAGE_REACTIONS (1<<10) | DIRECT_MESSAGES
 # (1<<12) | DIRECT_MESSAGE_REACTIONS (1<<13) | MESSAGE_CONTENT (1<<15).
@@ -138,7 +144,7 @@ class DiscordGatewayRunner:
                 self._seq = frame["s"]
             op = frame.get("op")
             if op == _OP_DISPATCH:
-                self._dispatch(frame)
+                await self._dispatch(frame)
                 if self._max_events is not None and self._events_seen >= self._max_events:
                     self._stop = True
                     return
@@ -149,18 +155,29 @@ class DiscordGatewayRunner:
                 self._resume_url = None
                 return
 
-    def _dispatch(self, frame: dict[str, Any]) -> None:
+    async def _dispatch(self, frame: dict[str, Any]) -> None:
         name = frame.get("t")
         data = frame.get("d") or {}
         if name == "READY":
             self._session_id = data.get("session_id")
             self._resume_url = data.get("resume_gateway_url")
+            user = data.get("user") or {}
+            log.info(
+                "connected as %s (%s), %d guild(s)",
+                user.get("username", "?"),
+                user.get("id", "?"),
+                len(data.get("guilds") or []),
+            )
             return
         if name not in _FORWARDED:
             return
         self._events_seen += 1
         # The adapter parses the inner payload, not the gateway envelope.
-        self._results.extend(self._sink(RawInbound(body=json.dumps(data).encode())))
+        raw = RawInbound(body=json.dumps(data).encode())
+        # The sink is synchronous and runs the user's handler, which is free to
+        # block (an LLM call, a sync SDK). On the event loop that stalls the
+        # heartbeat and kills the connection, so it goes to a worker thread.
+        self._results.extend(await asyncio.to_thread(self._sink, raw))
 
     async def _run_once(self) -> None:
         url = await self._gateway_url()
@@ -194,9 +211,10 @@ class DiscordGatewayRunner:
             try:
                 await self._run_once()
                 backoff = 1.0
-            except Exception:  # noqa: BLE001 - any drop is a reconnect, never fatal
+            except Exception as exc:  # noqa: BLE001 - any drop is a reconnect, never fatal
                 if self._stop:
                     break
+                log.warning("gateway dropped (%s); reconnecting in %.0fs", exc, backoff)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)
         return self._results

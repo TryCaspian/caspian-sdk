@@ -164,6 +164,35 @@ async def test_invalid_session_clears_state_so_next_connect_identifies() -> None
 
 
 @pytest.mark.asyncio
+async def test_sink_runs_off_the_event_loop() -> None:
+    """A blocking handler must not run on the loop.
+
+    Real handlers call synchronous LLM SDKs. asyncio.Runner.run_sync raises
+    outright if a loop is already running, and anything merely slow starves the
+    heartbeat until Discord drops the connection. Both mean the sink belongs on
+    a worker thread.
+    """
+    import asyncio
+    import threading
+
+    loop_thread = threading.get_ident()
+    ran_on: list[int] = []
+
+    def blocking_sink(raw: RawInbound) -> list[Result]:
+        ran_on.append(threading.get_ident())
+        # Mimics Runner.run_sync: explodes if a loop is running on this thread.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return []
+        raise RuntimeError("handler ran on the event loop")
+
+    runner, _ = _runner([HELLO, READY, _message("hi")], blocking_sink)
+    await runner.run(max_events=1)
+    assert ran_on and ran_on[0] != loop_thread
+
+
+@pytest.mark.asyncio
 async def test_unknown_dispatch_types_are_ignored() -> None:
     seen: list[dict] = []
     frames = [
