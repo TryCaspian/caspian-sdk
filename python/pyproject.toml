@@ -9,9 +9,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Discord is the only channel that needs a held-open socket; everything else is
-# HTTP. Kept out of the default install so the base SDK stays two dependencies.
+# Discord needs a held-open socket (no webhook exists); Slack can use one
+# instead of a public URL. Kept optional so the base SDK stays two dependencies.
 discord = ["websockets>=12,<16"]
+# Slack Socket Mode: inbound over a socket instead of a public webhook URL.
+slack-socket = ["websockets>=12,<16"]
 
 [dependency-groups]
 dev = [

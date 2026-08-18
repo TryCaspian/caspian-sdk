@@ -174,23 +174,32 @@ class Caspian:
         return runner.run_forever(max_iterations=max_iterations)
 
     def listen(self, channel: str = "discord", *, max_events: int | None = None) -> list[Result]:
-        """Self-host inbound over a held-open connection (Discord Gateway).
+        """Self-host inbound over a held-open socket. No public URL needed.
 
-        Discord is the one channel that never delivers ordinary messages by
-        webhook, so it needs a socket rather than a route. Blocks for the life
-        of the process; each inbound goes through the same handle_webhook as
-        every other channel.
+        Two channels support this, for different reasons:
+
+            discord  the only way to receive ordinary messages at all
+            slack    Socket Mode, an alternative to the webhook route
+
+        Blocks for the life of the process; each inbound goes through the same
+        handle_webhook as every other channel, so handler, ack, streaming and
+        sending are identical to the webhook path.
 
             cx.channels.add("discord", via="self-host", bot_token=TOKEN)
-            cx.listen()
+            cx.listen("discord")
 
-        Requires the optional websockets dependency: caspian[discord].
+            cx.channels.add("slack", via="self-host",
+                            bot_token="xoxb-...", app_token="xapp-...")
+            cx.listen("slack")
+
+        Requires the optional websockets dependency: caspian[discord] or
+        caspian[slack-socket].
         """
-        if channel != "discord":
+        if channel not in ("discord", "slack"):
             return [
                 Result.err(
                     ProvisionError(
-                        reason=f"listen() is only implemented for discord, not {channel!r}; "
+                        reason=f"listen() supports discord and slack, not {channel!r}; "
                         f"use run() for hosted or handle() for webhook self-host"
                     )
                 )
@@ -206,16 +215,35 @@ class Caspian:
             ]
         import asyncio
 
+        connection = self.channels.connection_for(channel)
+        interp = self._interpreter_for(channel)
+
+        if channel == "slack":
+            from caspian.interpreters.slack_socket import SlackSocketRunner
+
+            app_token = connection.config.get("app_token", "")
+            if not app_token:
+                return [
+                    Result.err(
+                        ProvisionError(
+                            reason="slack socket mode needs an app_token (xapp-, scope "
+                            "connections:write) alongside the bot_token; without a "
+                            "public URL there is no webhook to fall back to"
+                        )
+                    )
+                ]
+            return asyncio.run(
+                SlackSocketRunner(app_token, interp.handle_webhook).run(max_events=max_events)
+            )
+
         from caspian.interpreters.discord_gateway import DiscordGatewayRunner
 
-        connection = self.channels.connection_for(channel)
         token = connection.config.get("bot_token", "")
         if not token:
             return [Result.err(ProvisionError(reason="discord self-host needs a bot_token"))]
-
-        interp = self._interpreter_for(channel)
-        runner = DiscordGatewayRunner(token, interp.handle_webhook)
-        return asyncio.run(runner.run(max_events=max_events))
+        return asyncio.run(
+            DiscordGatewayRunner(token, interp.handle_webhook).run(max_events=max_events)
+        )
 
     def run(
         self, *, max_iterations: int | None = None, interval: float = 1.0
