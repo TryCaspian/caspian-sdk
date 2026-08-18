@@ -69,7 +69,7 @@ const listenEcho = async (calls: TelegramCall[], secret = "s3cret") => {
   cx.onAction({ channel: "telegram" }, async (thread) => {
     await thread.post("ok")
   })
-  await cx.listen({
+  await cx.bind({
     channel: "telegram",
     secretToken: secret,
     connection: conn,
@@ -113,7 +113,7 @@ test("host failure still ACKs 200 so Telegram does not retry", async () => {
   cx.onMessage({ channel: "telegram" }, async () => {
     throw new Error("boom")
   })
-  await cx.listen({
+  await cx.bind({
     channel: "telegram",
     secretToken: "s3cret",
     connection: conn,
@@ -193,7 +193,7 @@ test("parse DecodeError still ACKs 200 so Telegram does not retry", async () => 
     format: (text) => text,
   })
   const cx = new Caspian()
-  await cx.listen({
+  await cx.bind({
     channel: "telegram",
     secretToken: "s3cret",
     connection: conn,
@@ -216,7 +216,7 @@ test("http layer posts planned calls to api.telegram.org", async () => {
   cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
     await thread.post(`echo:${msg.text}`)
   })
-  await cx.listen({
+  await cx.bind({
     channel: "telegram",
     secretToken: "s3cret",
     connection: conn,
