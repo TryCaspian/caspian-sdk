@@ -99,7 +99,7 @@ class TestMessengerExecute:
         sent = result.value
         assert sent.raw["transport"] == "http_json"
         assert sent.raw["method"] == "POST"
-        assert sent.raw["url"] == "https://graph.facebook.com/v20.0/me/messages"
+        assert sent.raw["url"] == "https://graph.facebook.com/v21.0/me/messages"
         assert sent.raw["native"] == "message"
         assert sent.raw["headers"]["Authorization"] == "Bearer PTKN"
         body = sent.raw["json"]

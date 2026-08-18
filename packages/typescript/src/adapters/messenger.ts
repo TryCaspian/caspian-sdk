@@ -24,7 +24,7 @@ import {
 } from "./util.ts"
 
 const PREFIX = "messenger:"
-const SEND_URL = "https://graph.facebook.com/v20.0/me/messages"
+const SEND_URL = "https://graph.facebook.com/v21.0/me/messages"
 
 export type NativeThread = { readonly psid: string }
 

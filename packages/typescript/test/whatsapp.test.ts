@@ -129,7 +129,7 @@ test("plan Post text", () => {
   if (planned?.transport !== "http_json") {
     return
   }
-  expect(planned.url).toBe("https://graph.facebook.com/v20.0/111222/messages")
+  expect(planned.url).toBe("https://graph.facebook.com/v21.0/111222/messages")
   expect(planned.native).toBe("text")
   expect(planned.headers?.["Authorization"]).toBe("Bearer TKN")
   expect(planned.json).toEqual({

@@ -24,7 +24,7 @@ import {
 } from "./util.ts"
 
 const PREFIX = "whatsapp:"
-const GRAPH_BASE = "https://graph.facebook.com/v20.0"
+const GRAPH_BASE = "https://graph.facebook.com/v21.0"
 
 export type NativeThread = { readonly waId: string }
 

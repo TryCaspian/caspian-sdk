@@ -6,7 +6,7 @@ Uniform execute() contract (shared by all adapters):
     Result.ok(Sent(raw={
         "transport": "http_json",
         "method": "POST",
-        "url": "https://graph.facebook.com/v20.0/{phone_number_id}/messages",
+        "url": "https://graph.facebook.com/v21.0/{phone_number_id}/messages",
         "json": {...},
         "headers": {"Authorization": f"Bearer {token}"},
         "native": "<label>",
@@ -38,7 +38,7 @@ from caspian.core.types import (
     ThreadId,
 )
 
-GRAPH_BASE = "https://graph.facebook.com/v20.0"
+GRAPH_BASE = "https://graph.facebook.com/v21.0"
 
 # WhatsApp media object kind per Attachment.type.
 _MEDIA_TYPES = {

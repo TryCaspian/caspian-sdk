@@ -134,7 +134,7 @@ class TestWhatsAppExecute:
         assert sent.raw["transport"] == "http_json"
         assert sent.raw["method"] == "POST"
         assert sent.raw["url"] == (
-            "https://graph.facebook.com/v20.0/111222/messages"
+            "https://graph.facebook.com/v21.0/111222/messages"
         )
         assert sent.raw["native"] == "text"
         assert sent.raw["headers"]["Authorization"] == "Bearer TKN"

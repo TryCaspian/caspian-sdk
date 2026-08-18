@@ -98,7 +98,7 @@ test("plan Post", () => {
   if (planned?.transport !== "http_json") {
     return
   }
-  expect(planned.url).toBe("https://graph.facebook.com/v20.0/me/messages")
+  expect(planned.url).toBe("https://graph.facebook.com/v21.0/me/messages")
   expect(planned.json).toEqual({
     recipient: { id: "PSID1" },
     message: { text: "hi" },

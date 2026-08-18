@@ -6,7 +6,7 @@ Uniform execute() contract (shared by all adapters):
     Result.ok(Sent(raw={
         "transport": "http_json",
         "method": "POST",
-        "url": "https://graph.facebook.com/v20.0/me/messages",
+        "url": "https://graph.facebook.com/v21.0/me/messages",
         "json": {...},
         "headers": {"Authorization": f"Bearer {token}"},
         "native": "<label>",
@@ -37,7 +37,7 @@ from caspian.core.types import (
     ThreadId,
 )
 
-GRAPH_BASE = "https://graph.facebook.com/v20.0"
+GRAPH_BASE = "https://graph.facebook.com/v21.0"
 SEND_URL = f"{GRAPH_BASE}/me/messages"
 
 # Messenger attachment kind per Attachment.type.
