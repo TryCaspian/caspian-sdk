@@ -79,7 +79,7 @@ export class Caspian {
           }))
   }
 
-  get program(): App {
+  get app(): App {
     return { rules: [...this.#rules] }
   }
 
@@ -135,7 +135,7 @@ export class Caspian {
     options: { readonly channel?: string } = {},
   ): Promise<MemoryInterpreter> {
     return Effect.runPromise(
-      makeMemoryInterpreter(this.program, {
+      makeMemoryInterpreter(this.app, {
         channelName: options.channel ?? "",
         host: bHostLayer(this.#handlers),
       }),
@@ -150,7 +150,7 @@ export class Caspian {
     },
   ): Promise<void> {
     return Effect.runPromise(
-      makeProcessInterpreter(this.program, {
+      makeProcessInterpreter(this.app, {
         channelName: options.channel ?? "",
         connection: options.connection,
         adapter: options.adapter,
@@ -175,13 +175,15 @@ export class Caspian {
     )
   }
 
-  run(
+  /** Wire a hosted-webhook interpreter (the gateway POSTs to you).
+   *  Construction only; run() below is the loop a developer calls. */
+  bindHosted(
     options: Omit<HostedOptions, "host" | "channelName"> & {
       readonly channel?: string
     },
   ): Promise<void> {
     return Effect.runPromise(
-      makeHostedInterpreter(this.program, {
+      makeHostedInterpreter(this.app, {
         channelName: options.channel ?? "",
         connection: options.connection,
         adapter: options.adapter,
@@ -202,11 +204,11 @@ export class Caspian {
    * Hosted inbound against the real gateway: poll /v1/events and drive the same
    * pipeline every other path uses.
    *
-   * `run()` above is the webhook half (the gateway POSTs to you). This is the
+   * bindHosted() is the webhook half (the gateway POSTs to you). This is the
    * poll half, and it is what works today without registering a push URL. Both
    * end up in ProcessInterpreter.handleRaw, so there is one inbound pipeline.
    */
-  runGateway(options: {
+  run(options: {
     readonly apiKey: string
     readonly baseUrl?: string
     readonly intervalMs?: number
@@ -224,7 +226,7 @@ export class Caspian {
     )
     const interval = options.intervalMs ?? 1000
     const maxIterations = options.maxIterations
-    const program = this.program
+    const program = this.app
     const host = bHostLayer(this.#handlers)
 
     return Effect.runPromise(
@@ -500,7 +502,7 @@ export class Caspian {
     }
     const host = bHostLayer(this.#handlers)
     const transport = this.#transport
-    const program = this.program
+    const program = this.app
     const interpreters = this.#interpreters
     const ruleCount = this.#rules.length
     return makeProcessInterpreter(program, {

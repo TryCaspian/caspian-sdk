@@ -48,7 +48,7 @@ class TestFacadeDesugar:
         cx = Caspian()
         cx.on_message({"channel": "telegram"}, lambda t, m, c: t.post("reply"))
 
-        interp = cx.memory()
+        interp = cx.interpret()
         event = Message(
             thread_id=ThreadId("telegram:123"),
             text="hello",

@@ -66,15 +66,15 @@ test("bHostLayer missing handler is HostError", () => {
 test("onMessage desugars into program.rules", () => {
   const cx = new Caspian()
   cx.onMessage({ channel: "telegram", kind: "dm" }, async () => undefined)
-  expect(cx.program.rules).toHaveLength(1)
-  expect(cx.program.rules[0]?.handler_id).toBe("onMessage:0")
-  expect(cx.program.rules[0]?.overlap).toEqual({ policy: "queue", bound: 16 })
+  expect(cx.app.rules).toHaveLength(1)
+  expect(cx.app.rules[0]?.handler_id).toBe("onMessage:0")
+  expect(cx.app.rules[0]?.overlap).toEqual({ policy: "queue", bound: 16 })
 })
 
 test("onMessage without options still creates a Rule", () => {
   const cx = new Caspian()
   cx.onMessage(async () => undefined)
-  expect(cx.program.rules[0]?.predicate).toEqual({ op: "kind", kind: "message" })
+  expect(cx.app.rules[0]?.predicate).toEqual({ op: "kind", kind: "message" })
 })
 
 test("interpret feeds a DM and records Post", async () => {
@@ -116,7 +116,7 @@ test("handler throw is HostError, not a throw from step", async () => {
 })
 
 test("package root exports Caspian", () => {
-  expect(new PublicCaspian().program.rules).toEqual([])
+  expect(new PublicCaspian().app.rules).toEqual([])
 })
 
 test("thread.recent is prior events on that thread, not the current one", async () => {

@@ -358,8 +358,19 @@ class Caspian:
         """Power-user escape: add a raw Rule directly (A-level API)."""
         self._rules.append(rule)
 
-    def memory(self) -> MemoryInterpreter:
-        """Create a MemoryInterpreter for testing this app."""
+    def tools(self, thread: Any = None, *, preset: str = "messenger") -> Any:  # noqa: ANN401
+        """Agent-callable tools derived from the Command types.
+
+        Hands a model typed functions (post, reply, react, typing) that address
+        thread_ids rather than raw platform ids. Mirrors cx.tools() in the
+        TypeScript SDK.
+        """
+        from caspian.tools import ToolSet
+
+        return ToolSet(thread, preset=preset)
+
+    def interpret(self) -> MemoryInterpreter:
+        """Create a MemoryInterpreter for testing this app, with no network."""
         interp = MemoryInterpreter()
         for hid, fn in self._handlers.items():
             interp.register_handler(hid, fn)

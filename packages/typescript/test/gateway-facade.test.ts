@@ -42,7 +42,7 @@ describe("runGateway", () => {
       await thread.post("hi back")
     })
 
-    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+    await cx.run({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
 
     expect(seen).toEqual(["hello"])
     const paths = client.requests.map((r) => r.path)
@@ -62,7 +62,7 @@ describe("runGateway", () => {
       seen.push(msg.kind === "message" ? msg.text : "")
     })
 
-    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+    await cx.run({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
     expect(seen).toEqual([])
   })
 })

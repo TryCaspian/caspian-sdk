@@ -38,7 +38,7 @@ describe("ack", () => {
     cx.onMessage({ ack: "On it, one moment…" }, async (thread) => {
       await thread.post("the real answer")
     })
-    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+    await cx.run({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
 
     const bodies = client.requests
       .filter((r) => r.method === "POST")
@@ -92,7 +92,7 @@ describe("pre-handler dispatch", () => {
       await thread.post("the answer")
     })
 
-    await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
+    await cx.run({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
     expect(ackSeenDuringHandler).toBe(true)
   })
 })
@@ -112,7 +112,7 @@ describe("poll loop resilience", () => {
 
     const cx = new Caspian()
     cx.onMessage({}, async () => {})
-    const results = await cx.runGateway({
+    const results = await cx.run({
       apiKey: "k",
       client: failing,
       maxIterations: 3,

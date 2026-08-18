@@ -37,3 +37,13 @@ class TestToolSet:
         commands = tools.execute("post_message", {"text": "hi", "thread_id": "slack:C1"})
         assert len(commands) == 1
         assert commands[0].thread_id == "slack:C1"  # type: ignore[union-attr]
+
+
+def test_facade_exposes_tools_like_typescript() -> None:
+    """cx.tools() must exist in both languages, or docs cannot be written once."""
+    from caspian import Caspian
+
+    cx = Caspian()
+    names = {t.name for t in cx.tools().definitions}
+    assert "post_message" in names
+    assert cx.tools(preset="outbound").definitions != cx.tools().definitions

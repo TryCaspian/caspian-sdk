@@ -71,7 +71,7 @@ const runEcho = async (calls: HostedCall[]) => {
   cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
     await thread.post(`echo:${msg.text}`)
   })
-  await cx.run({
+  await cx.bindHosted({
     channel: "telegram",
     webhookSecret: SECRET,
     connection: conn,
@@ -163,7 +163,7 @@ test("host failure still ACKs 200 so the gateway does not retry", async () => {
   cx.onMessage({ channel: "telegram" }, async () => {
     throw new Error("boom")
   })
-  await cx.run({
+  await cx.bindHosted({
     channel: "telegram",
     webhookSecret: SECRET,
     connection: conn,
@@ -204,7 +204,7 @@ test("http layer posts commands to the Caspian outbox", async () => {
   cx.onMessage({ channel: "telegram" }, async (thread, msg) => {
     await thread.post(`echo:${msg.text}`)
   })
-  await cx.run({
+  await cx.bindHosted({
     channel: "telegram",
     webhookSecret: SECRET,
     connection: conn,
