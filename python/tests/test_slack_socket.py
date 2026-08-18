@@ -56,7 +56,9 @@ def _event(text: str, *, envelope: str = "env-1") -> dict:
     }
 
 
-def _runner(frames: list[dict], sink, *, open_fails: str = "") -> tuple[SlackSocketRunner, FakeSocket]:
+def _runner(
+    frames: list[dict], sink, *, open_fails: str = ""
+) -> tuple[SlackSocketRunner, FakeSocket]:
     socket = FakeSocket(frames)
 
     async def open_url(token: str) -> str:
