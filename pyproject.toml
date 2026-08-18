@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 dependencies = [
   "caspian-cli",
   "caspian-sdk",
+  "caspian",
 ]
 
 [tool.uv]
@@ -13,19 +14,21 @@ package = false
 [tool.uv.sources]
 caspian-cli = { workspace = true }
 caspian-sdk = { workspace = true }
+caspian = { workspace = true }
 
 [tool.uv.workspace]
-members = ["apps/cli", "sdks/python"]
+members = ["apps/cli", "sdks/python", "python"]
 
 [dependency-groups]
 dev = [
   "pytest>=9.0.3,<10",
+  "pytest-asyncio>=0.23",
   "pytest-cov>=6,<7",
   "ruff>=0.12,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["apps/cli/tests", "sdks/python/tests"]
+testpaths = ["apps/cli/tests", "sdks/python/tests", "python/tests"]
 addopts = "-q"
 
 

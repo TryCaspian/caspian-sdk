@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [main, feat/rewrite, feat/rewrite-ts]
+    branches: [main, feat/rewrite, feat/rewrite-ts, feat/sdk-rewrite-latest]
   pull_request:
 
 concurrency:
@@ -15,7 +15,10 @@ concurrency:
 jobs:
   python:
     name: Python SDK
-    if: ${{ hashFiles('python/pyproject.toml', 'pyproject.toml', 'sdks/python/pyproject.toml') != '' }}
+    # No job-level `if` here. hashFiles() is unavailable in jobs.<id>.if (only
+    # github, needs, vars, inputs and the status functions are), so a condition
+    # using it makes the whole workflow fail to compile: every run ends in 0s
+    # with no jobs created and no log to read.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
