@@ -360,7 +360,7 @@ export class Caspian {
         process.handleRaw(body, headers ?? {}) as Effect.Effect<ReadonlyArray<unknown>>
 
       if (channel === "slack") {
-        const appToken = String(config.app_token ?? "")
+        const appToken = String(config.appToken ?? "")
         if (appToken === "") {
           return Effect.succeed([
             {
@@ -381,7 +381,7 @@ export class Caspian {
         ) as Effect.Effect<ReadonlyArray<HandleResult>>
       }
 
-      const botToken = String(config.bot_token ?? "")
+      const botToken = String(config.botToken ?? "")
       if (botToken === "") {
         return Effect.succeed([
           {

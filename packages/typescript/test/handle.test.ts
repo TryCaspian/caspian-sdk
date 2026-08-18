@@ -124,3 +124,30 @@ test("telegram parse membership, edited, and attachments", () => {
     expect(photo[0].message_id).toBe("5")
   }
 })
+
+test("handle accepts a raw string body, as a real webhook delivers", async () => {
+  // Python adapters json.loads the bytes themselves; TypeScript adapters
+  // expect the decoded object. Before this, a string body parsed to zero
+  // events and every self-host webhook dropped every message, silently.
+  const cx = new Caspian()
+  await cx.channels.add("telegram", { via: "self-host", bot_token: "tok" })
+  const seen: string[] = []
+  cx.onMessage(async (_thread, msg) => {
+    if (msg.kind === "message") seen.push(msg.text)
+  })
+  await cx.handle(
+    "telegram",
+    JSON.stringify({
+      update_id: 1,
+      message: {
+        message_id: 1,
+        date: 0,
+        chat: { id: 5, type: "private" },
+        from: { id: 5, is_bot: false },
+        text: "from raw bytes",
+      },
+    }),
+    {},
+  )
+  expect(seen).toEqual(["from raw bytes"])
+})

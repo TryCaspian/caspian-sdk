@@ -53,6 +53,14 @@ export type ProcessInterpreter = {
   ) => Effect.Effect<ReadonlyArray<HandleResult>>
 }
 
+const tryJson = (body: string): unknown => {
+  try {
+    return JSON.parse(body)
+  } catch {
+    return body
+  }
+}
+
 const jsonOf = (request: Request): Effect.Effect<unknown> =>
   Effect.tryPromise({
     try: () => request.json() as Promise<unknown>,
@@ -149,7 +157,12 @@ export const makeProcessInterpreter = (
             },
           ]
         }
-        const parsed = yield* adapter.parse(body).pipe(Effect.either)
+        // Webhooks deliver bytes; adapters expect the decoded object. Decode
+        // here, AFTER verify: signatures are HMACs over the exact raw body, so
+        // verify must see the original string. A non-JSON body (form-encoded
+        // platforms) passes through unchanged for the adapter to handle.
+        const decodedBody = typeof body === "string" ? tryJson(body) : body
+        const parsed = yield* adapter.parse(decodedBody).pipe(Effect.either)
         if (parsed._tag === "Left") {
           return [{ ok: false as const, error: parsed.left }]
         }
