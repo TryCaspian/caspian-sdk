@@ -40,12 +40,46 @@ class Result:
         return cls(error=error)
 
 
+class Headers(dict):
+    """HTTP headers, looked up without regard to case.
+
+    RFC 9110 makes field names case insensitive, and web frameworks disagree
+    about what they hand you: Starlette's `dict(request.headers)`, Express and
+    Bun lowercase them, while http.server and Flask preserve whatever the
+    client sent. Adapters ask for "X-Slack-Signature"; without this, every
+    signature check silently fails against half the ecosystem and each request
+    is rejected as unverified.
+
+    Original casing is preserved on iteration so raw payloads still round-trip.
+    """
+
+    def __init__(self, source: dict[str, str] | None = None) -> None:
+        super().__init__(source or {})
+        self._folded = {k.lower(): v for k, v in self.items()}
+
+    def __getitem__(self, key: str) -> str:
+        try:
+            return self._folded[key.lower()]
+        except KeyError:
+            raise KeyError(key) from None
+
+    def get(self, key: str, default: Any = None) -> Any:  # noqa: ANN401
+        return self._folded.get(key.lower(), default)
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and key.lower() in self._folded
+
+    def __setitem__(self, key: str, value: str) -> None:
+        super().__setitem__(key, value)
+        self._folded[key.lower()] = value
+
+
 class RawInbound:
     """Raw inbound bytes from a platform webhook. Opaque to core."""
 
     def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self.body = body
-        self.headers = headers or {}
+        self.headers = Headers(headers)
 
 
 class Sent:
