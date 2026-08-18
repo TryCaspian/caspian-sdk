@@ -165,6 +165,11 @@ class DiscordAdapter:
     def _parse_message_create(self, payload: dict[str, Any]) -> list[Event]:
         channel_id = str(payload.get("channel_id", ""))
         author = payload.get("author", {}) or {}
+        # Ignore messages authored by any bot, including our own. The gateway
+        # echoes back everything we send, so without this the handler answers
+        # its own reply and loops forever.
+        if author.get("bot") or payload.get("webhook_id"):
+            return []
         ref = payload.get("message_reference", {}) or {}
         return [
             Message(

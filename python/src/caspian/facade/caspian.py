@@ -173,6 +173,50 @@ class Caspian:
         )
         return runner.run_forever(max_iterations=max_iterations)
 
+    def listen(self, channel: str = "discord", *, max_events: int | None = None) -> list[Result]:
+        """Self-host inbound over a held-open connection (Discord Gateway).
+
+        Discord is the one channel that never delivers ordinary messages by
+        webhook, so it needs a socket rather than a route. Blocks for the life
+        of the process; each inbound goes through the same handle_webhook as
+        every other channel.
+
+            cx.channels.add("discord", via="self-host", bot_token=TOKEN)
+            cx.listen()
+
+        Requires the optional websockets dependency: caspian[discord].
+        """
+        if channel != "discord":
+            return [
+                Result.err(
+                    ProvisionError(
+                        reason=f"listen() is only implemented for discord, not {channel!r}; "
+                        f"use run() for hosted or handle() for webhook self-host"
+                    )
+                )
+            ]
+        owner = self.channels.inbound_owner(channel)
+        if owner != "local":
+            return [
+                Result.err(
+                    ProvisionError(
+                        reason=f"Inbound for {channel!r} is owned by the gateway; use run()"
+                    )
+                )
+            ]
+        import asyncio
+
+        from caspian.interpreters.discord_gateway import DiscordGatewayRunner
+
+        connection = self.channels.connection_for(channel)
+        token = connection.config.get("bot_token", "")
+        if not token:
+            return [Result.err(ProvisionError(reason="discord self-host needs a bot_token"))]
+
+        interp = self._interpreter_for(channel)
+        runner = DiscordGatewayRunner(token, interp.handle_webhook)
+        return asyncio.run(runner.run(max_events=max_events))
+
     def run(
         self, *, max_iterations: int | None = None, interval: float = 1.0
     ) -> list[Result]:

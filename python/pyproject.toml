@@ -8,6 +8,11 @@ dependencies = [
     "httpx>=0.27,<1",
 ]
 
+[project.optional-dependencies]
+# Discord is the only channel that needs a held-open socket; everything else is
+# HTTP. Kept out of the default install so the base SDK stays two dependencies.
+discord = ["websockets>=12,<16"]
+
 [dependency-groups]
 dev = [
     "pytest>=8",
