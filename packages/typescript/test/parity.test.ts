@@ -2,6 +2,8 @@
  * Parity with the Python SDK for the features added while testing live.
  */
 import { describe, expect, test } from "bun:test"
+import * as Effect from "effect/Effect"
+import { AdapterError } from "../src/core/errors.ts"
 import { Caspian } from "../src/facade/caspian.ts"
 import { fakeGatewayClient } from "../src/hosted/client.ts"
 import { desugarOnMessage } from "../src/facade/desugar.ts"
@@ -92,5 +94,32 @@ describe("pre-handler dispatch", () => {
 
     await cx.runGateway({ apiKey: "k", client, maxIterations: 1, intervalMs: 0 })
     expect(ackSeenDuringHandler).toBe(true)
+  })
+})
+
+describe("poll loop resilience", () => {
+  test("a failed poll does not end the loop", async () => {
+    let calls = 0
+    const failing = {
+      send: () => {
+        calls += 1
+        // First poll blows up; the loop must recover and keep polling.
+        return calls === 1
+          ? Effect.fail(new AdapterError({ reason: "network blip" }))
+          : Effect.succeed({ status: 200, json: {}, rows: [] })
+      },
+    }
+
+    const cx = new Caspian()
+    cx.onMessage({}, async () => {})
+    const results = await cx.runGateway({
+      apiKey: "k",
+      client: failing,
+      maxIterations: 3,
+      intervalMs: 0,
+      replay: true,
+    })
+    expect(calls).toBeGreaterThan(1)
+    expect(results.some((r) => !r.ok)).toBe(true)
   })
 })

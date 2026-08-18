@@ -234,8 +234,17 @@ export class Caspian {
           Effect.gen(function* () {
             const collected: HandleResult[] = []
             for (let i = 0; maxIterations === undefined || i < maxIterations; i++) {
-              const body = yield* poller.fetchRaw()
-              const results = yield* process.handleRaw(body, {})
+              // A poll that fails (network blip, gateway restart, rate limit)
+              // must not end the loop: this runs for the lifetime of the agent,
+              // and dying on one bad request takes the bot offline silently.
+              const fetched = yield* Effect.either(poller.fetchRaw())
+              if (fetched._tag === "Left") {
+                collected.push({ ok: false as const, error: fetched.left })
+                if (maxIterations !== undefined && i + 1 >= maxIterations) break
+                if (interval > 0) yield* Effect.sleep(`${interval} millis`)
+                continue
+              }
+              const results = yield* process.handleRaw(fetched.right, {})
               collected.push(...results)
               if (maxIterations !== undefined && i + 1 >= maxIterations) break
               if (interval > 0) yield* Effect.sleep(`${interval} millis`)
