@@ -6,8 +6,9 @@ It is paperwork, not behavior.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any
+
+from caspian._compat import StrEnum
 
 
 class Via(StrEnum):

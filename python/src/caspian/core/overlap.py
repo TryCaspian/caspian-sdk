@@ -6,10 +6,9 @@ The runner (memory / process / hosted) executes the actual queuing.
 
 from __future__ import annotations
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict
 
+from caspian._compat import StrEnum
 from caspian.core.types import OverlapPolicy
 
 

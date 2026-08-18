@@ -2,7 +2,7 @@
 name = "caspian"
 version = "0.1.0"
 description = "Caspian Python SDK — one bot program across channels"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.7,<3",
     "httpx>=0.27,<1",
@@ -37,11 +37,16 @@ plugins = ["pydantic.mypy"]
 exclude = ["tests/"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The version block and the str+Enum base are the point of the shim: on 3.10
+# enum.StrEnum does not exist.
+"src/caspian/_compat.py" = ["UP036", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

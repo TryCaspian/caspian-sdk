@@ -5,10 +5,11 @@ Everything here must be decidable without a network. No I/O imports.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Annotated, Any, Literal, NewType
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from caspian._compat import StrEnum
 
 # ─── Branded IDs ─────────────────────────────────────────────────────────────
 
