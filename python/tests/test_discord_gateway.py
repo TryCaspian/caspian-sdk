@@ -11,7 +11,7 @@ import json
 import pytest
 
 from caspian.adapters.discord import DiscordAdapter
-from caspian.core.ports import Connection, RawInbound, Result
+from caspian.core.ports import RawInbound, Result
 from caspian.interpreters.discord_gateway import INTENTS, DiscordGatewayRunner
 
 

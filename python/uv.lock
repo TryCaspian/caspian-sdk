@@ -105,6 +105,9 @@ dependencies = [
 discord = [
     { name = "websockets" },
 ]
+slack-socket = [
+    { name = "websockets" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -120,8 +123,9 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "websockets", marker = "extra == 'discord'", specifier = ">=12,<16" },
+    { name = "websockets", marker = "extra == 'slack-socket'", specifier = ">=12,<16" },
 ]
-provides-extras = ["discord"]
+provides-extras = ["discord", "slack-socket"]
 
 [package.metadata.requires-dev]
 dev = [
