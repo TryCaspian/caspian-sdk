@@ -6,7 +6,7 @@
  */
 import type { GatewayClient, GatewayRequest, GatewayResponse } from "caspian"
 import * as Effect from "effect/Effect"
-import { UsageError } from "./errors.ts"
+import { hostedNeeded, UsageError } from "./errors.ts"
 import type { Intent } from "./intent.ts"
 import {
   planIntent,
@@ -49,10 +49,13 @@ const filterRows = (rows: Json, channel: string): Json => {
 
 export const runPlan = (
   plan: Plan,
-  client: GatewayClient,
+  client?: GatewayClient,
 ): Effect.Effect<Json, UsageError> => {
   switch (plan._tag) {
     case "Gateway":
+      if (client === undefined) {
+        return Effect.fail(hostedNeeded())
+      }
       return Effect.map(send(client, plan.request), (rows) =>
         filterRows(rows, plan.filterChannel),
       )

@@ -36,7 +36,10 @@ caspian threads tail telegram:123:456
 | Follow events | `caspian threads tail` | `channels watch`, `listen` |
 
 Omit `--via` means hosted. Thread ids are `telegram:…` / `slack:…`, never a
-platform chat id. Hosted I/O is an injected `GatewayClient` from `caspian`.
+platform chat id. Hosted jobs need a key: `--api-key` / `CASPIAN_API_KEY`,
+optional `--gateway` / `CASPIAN_BASE_URL`, or sign up at
+https://dashboard.trycaspianai.com then `caspian init`. Catalog and self-host
+`channels add` do not.
 
 Argv desugars to `Intent` (syntax). `planIntent` is the denotation: a `Plan`
 (gateway request, local catalog value, or init). `runPlan` is one interpreter;

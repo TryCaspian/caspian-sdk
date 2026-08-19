@@ -6,5 +6,7 @@ test("help lists namespaces not connect", () => {
   for (const name of ["channels", "call", "catalog", "threads", "login"]) {
     expect(text).toContain(name)
   }
+  expect(text).toContain("--api-key")
+  expect(text).toContain("https://dashboard.trycaspianai.com")
   expect(text.includes("connect")).toBe(false)
 })

@@ -37,6 +37,11 @@ export const helpText = (): string =>
   caspian threads ls [--channel CHANNEL]
   caspian threads tail [THREAD]
 
+Hosted jobs (channels add/ls, call, threads, login) need a key:
+  --api-key KEY [--gateway URL]
+  or CASPIAN_API_KEY / CASPIAN_BASE_URL
+  or sign up at https://dashboard.trycaspianai.com
+
 catalog is the phone book. call is the only phone.
 `
 
@@ -192,9 +197,15 @@ const toIntent = (
   return fail(`${USAGE}  (not ${noun})`)
 }
 
-export const parseArgv = (
+export type Parsed = {
+  readonly intent: Intent
+  readonly api_key: string
+  readonly gateway: string
+}
+
+export const parseCli = (
   argv: ReadonlyArray<string>,
-): Effect.Effect<Intent, UsageError> =>
+): Effect.Effect<Parsed, UsageError> =>
   Effect.gen(function* () {
     if (argv.length === 0) return yield* fail(USAGE)
 
@@ -213,5 +224,15 @@ export const parseArgv = (
     }
 
     const { positional, options } = yield* parseTokens(argv)
-    return yield* toIntent(positional, options)
+    const intent = yield* toIntent(positional, options)
+    return {
+      intent,
+      api_key: str(options, "api-key"),
+      gateway: str(options, "gateway"),
+    }
   })
+
+export const parseArgv = (
+  argv: ReadonlyArray<string>,
+): Effect.Effect<Intent, UsageError> =>
+  Effect.map(parseCli(argv), (parsed) => parsed.intent)

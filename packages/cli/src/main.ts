@@ -10,7 +10,8 @@ import {
 } from "caspian"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
-import { helpText, parseArgv, UsageError } from "./desugar.ts"
+import { helpText, parseCli, UsageError } from "./desugar.ts"
+import { hostedNeeded } from "./errors.ts"
 import { planIntent } from "./plan.ts"
 import { runPlan } from "./run.ts"
 
@@ -51,18 +52,16 @@ const resolve = (
   return fallback
 }
 
-const clientOf = (): Effect.Effect<GatewayClient, UsageError> => {
-  const apiKey = resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
-  const baseUrl = resolve(
-    ["CASPIAN_BASE_URL", "COMM_BASE_URL"],
-    DEFAULT_BASE_URL,
-  )
-  if (apiKey === undefined) {
-    return Effect.fail(
-      new UsageError({
-        reason: "No CASPIAN_API_KEY found. Run: caspian init",
-      }),
-    )
+const clientOf = (
+  apiKeyFlag: string,
+  gatewayFlag: string,
+): Effect.Effect<GatewayClient, UsageError> => {
+  const apiKey = apiKeyFlag || resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
+  const baseUrl =
+    gatewayFlag ||
+    resolve(["CASPIAN_BASE_URL", "COMM_BASE_URL"], DEFAULT_BASE_URL)
+  if (apiKey === undefined || apiKey === "") {
+    return Effect.fail(hostedNeeded())
   }
   return Effect.succeed(httpGatewayClient(apiKey, baseUrl ?? DEFAULT_BASE_URL))
 }
@@ -81,8 +80,8 @@ const program = Effect.gen(function* () {
     console.log(helpText())
     return
   }
-  const intent = yield* parseArgv(argv)
-  const plan = yield* planIntent(intent)
+  const parsed = yield* parseCli(argv)
+  const plan = yield* planIntent(parsed.intent)
   if (plan._tag === "Init") {
     const existing = resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
     if (existing !== undefined && !plan.force) {
@@ -154,8 +153,16 @@ const program = Effect.gen(function* () {
     return
   }
 
-  const result = yield* runPlan(plan, yield* clientOf())
-  if (intent._tag === "Login") {
+  if (plan._tag === "Local") {
+    print(yield* runPlan(plan))
+    return
+  }
+
+  const result = yield* runPlan(
+    plan,
+    yield* clientOf(parsed.api_key, parsed.gateway),
+  )
+  if (parsed.intent._tag === "Login") {
     const record = result as { readonly [key: string]: unknown }
     const url =
       record["verification_uri_complete"] ?? record["verification_uri"] ?? ""
