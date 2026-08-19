@@ -2,14 +2,13 @@
  * Argv → Intent. Pure Effect. No HTTP.
  *
  * Rejected duplicate send/follow paths fail with the one command to use.
+ * Tokenization returns UsageError data — it does not throw.
  */
 import * as Effect from "effect/Effect"
-import * as Schema from "effect/Schema"
+import { UsageError } from "./errors.ts"
 import type { Intent, Via } from "./intent.ts"
 
-export class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
-  reason: Schema.String,
-}) {}
+export { UsageError } from "./errors.ts"
 
 const NOUNS = new Set([
   "channels",
@@ -48,7 +47,10 @@ type Options = { readonly [key: string]: string | boolean }
 
 const parseTokens = (
   argv: ReadonlyArray<string>,
-): { readonly positional: string[]; readonly options: Options } => {
+): Effect.Effect<
+  { readonly positional: string[]; readonly options: Options },
+  UsageError
+> => {
   const positional: string[] = []
   const options: { [key: string]: string | boolean } = {}
   for (let i = 0; i < argv.length; i++) {
@@ -69,7 +71,7 @@ const parseTokens = (
       }
       const next = argv[i + 1]
       if (next === undefined || next.startsWith("-")) {
-        throw new UsageError({ reason: `missing value for --${name}` })
+        return fail(`missing value for --${name}`)
       }
       options[name] = next
       i += 1
@@ -77,7 +79,7 @@ const parseTokens = (
     }
     positional.push(tok)
   }
-  return { positional, options }
+  return Effect.succeed({ positional, options })
 }
 
 const str = (options: Options, key: string, fallback = ""): string => {
@@ -132,14 +134,13 @@ const toIntent = (
   if (noun === "call") {
     const id = positional[1]
     if (id === undefined) return fail("use: caspian call <id>")
-    const args: { [key: string]: string } = {}
-    const thread = str(options, "thread")
-    const text = str(options, "text")
-    const file = str(options, "file")
-    if (thread !== "") args["thread_id"] = thread
-    if (text !== "") args["text"] = text
-    if (file !== "") args["file"] = file
-    return Effect.succeed({ _tag: "Call", id, args })
+    return Effect.succeed({
+      _tag: "Call",
+      id,
+      thread_id: str(options, "thread"),
+      text: str(options, "text"),
+      file: str(options, "file"),
+    })
   }
 
   if (noun === "catalog") {
@@ -193,28 +194,24 @@ const toIntent = (
 
 export const parseArgv = (
   argv: ReadonlyArray<string>,
-): Effect.Effect<Intent, UsageError> => {
-  if (argv.length === 0) return fail(USAGE)
+): Effect.Effect<Intent, UsageError> =>
+  Effect.gen(function* () {
+    if (argv.length === 0) return yield* fail(USAGE)
 
-  const head = argv[0]!
-  if (head === "connect") {
-    return fail("use: caspian channels add")
-  }
-  if (head === "channels" && argv[1] === "watch") {
-    return fail("use: caspian threads tail")
-  }
-  if (head === "threads" && argv[1] === "reply") {
-    return fail("use: caspian call post --thread … --text …")
-  }
-  if (head !== "help" && !NOUNS.has(head) && !head.includes(".")) {
-    return fail("use: caspian call <id>  (caspian catalog search …)")
-  }
+    const head = argv[0]!
+    if (head === "connect") {
+      return yield* fail("use: caspian channels add")
+    }
+    if (head === "channels" && argv[1] === "watch") {
+      return yield* fail("use: caspian threads tail")
+    }
+    if (head === "threads" && argv[1] === "reply") {
+      return yield* fail("use: caspian call post --thread … --text …")
+    }
+    if (head !== "help" && !NOUNS.has(head) && !head.includes(".")) {
+      return yield* fail("use: caspian call <id>  (caspian catalog search …)")
+    }
 
-  try {
-    const { positional, options } = parseTokens(argv)
-    return toIntent(positional, options)
-  } catch (error) {
-    if (error instanceof UsageError) return Effect.fail(error)
-    return fail(error instanceof Error ? error.message : String(error))
-  }
-}
+    const { positional, options } = yield* parseTokens(argv)
+    return yield* toIntent(positional, options)
+  })

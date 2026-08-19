@@ -1,7 +1,11 @@
 /**
  * Catalog is the phone book. It does not send.
+ *
+ * Lookup returns Effect so a missing id is UsageError data, not a throw.
  */
+import * as Effect from "effect/Effect"
 import catalogJson from "../../../vectors/cli_catalog.json" with { type: "json" }
+import { UsageError } from "./errors.ts"
 
 export type CatalogEntry = {
   readonly id: string
@@ -17,12 +21,18 @@ const CATALOG: ReadonlyArray<CatalogEntry> =
 
 export const loadCatalog = (): ReadonlyArray<CatalogEntry> => CATALOG
 
-export const getCatalog = (id: string): CatalogEntry => {
+export const getCatalog = (
+  id: string,
+): Effect.Effect<CatalogEntry, UsageError> => {
   const entry = CATALOG.find((row) => row.id === id)
   if (entry === undefined) {
-    throw new Error(`unknown id ${JSON.stringify(id)}; caspian catalog search …`)
+    return Effect.fail(
+      new UsageError({
+        reason: `unknown id ${JSON.stringify(id)}; caspian catalog search …`,
+      }),
+    )
   }
-  return entry
+  return Effect.succeed(entry)
 }
 
 export const searchCatalog = (query: string): ReadonlyArray<CatalogEntry> => {

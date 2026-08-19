@@ -1,5 +1,8 @@
 /**
- * CLI intents — programs as data. Argv desugars here; run.ts interprets.
+ * CLI intents — programs as data. Argv desugars here; plan.ts denotes.
+ *
+ * Call fields are closed (no string bag). Absent flags are empty strings so
+ * the type is total; planIntent rejects combinations the catalog cannot run.
  */
 export type Via = "hosted" | "self-host"
 
@@ -20,7 +23,9 @@ export type ChannelsLs = {
 export type Call = {
   readonly _tag: "Call"
   readonly id: string
-  readonly args: { readonly [key: string]: string }
+  readonly thread_id: string
+  readonly text: string
+  readonly file: string
 }
 
 export type CatalogList = {

@@ -62,7 +62,9 @@ test("call post is the send path", () => {
   expect(intent).toEqual({
     _tag: "Call",
     id: "post",
-    args: { thread_id: "telegram:123:456", text: "shipping now" },
+    thread_id: "telegram:123:456",
+    text: "shipping now",
+    file: "",
   })
 })
 
@@ -80,7 +82,9 @@ test("call native id is still call", () => {
   expect(intent).toEqual({
     _tag: "Call",
     id: "telegram.send-photo",
-    args: { thread_id: "telegram:123:456", file: "./graph.png" },
+    thread_id: "telegram:123:456",
+    text: "",
+    file: "./graph.png",
   })
 })
 

@@ -38,6 +38,11 @@ caspian threads tail telegram:123:456
 Omit `--via` means hosted. Thread ids are `telegram:…` / `slack:…`, never a
 platform chat id. Hosted I/O is an injected `GatewayClient` from `caspian`.
 
+Argv desugars to `Intent` (syntax). `planIntent` is the denotation: a `Plan`
+(gateway request, local catalog value, or init). `runPlan` is one interpreter;
+`fakeGatewayClient` / `chaosGatewayClient` are the others. Failure is
+`UsageError` data.
+
 ```bash
 cd packages/cli
 bun install

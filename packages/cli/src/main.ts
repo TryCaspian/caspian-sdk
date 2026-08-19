@@ -11,7 +11,8 @@ import {
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import { helpText, parseArgv, UsageError } from "./desugar.ts"
-import { runIntent } from "./run.ts"
+import { planIntent } from "./plan.ts"
+import { runPlan } from "./run.ts"
 
 const readDotenv = (text: string): { readonly [key: string]: string } => {
   const values: { [key: string]: string } = {}
@@ -81,19 +82,20 @@ const program = Effect.gen(function* () {
     return
   }
   const intent = yield* parseArgv(argv)
-  if (intent._tag === "Init") {
+  const plan = yield* planIntent(intent)
+  if (plan._tag === "Init") {
     const existing = resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
-    if (existing !== undefined && !intent.force) {
+    if (existing !== undefined && !plan.force) {
       console.log("CASPIAN_API_KEY already configured in .env (use --force to replace).")
       return
     }
-    const gateway = intent.gateway.replace(/\/$/, "")
+    const gateway = plan.gateway.replace(/\/$/, "")
     const response = yield* Effect.tryPromise({
       try: () =>
         fetch(`${gateway}/v1/projects/sandbox`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: intent.name }),
+          body: JSON.stringify({ name: plan.name }),
         }),
       catch: (cause) =>
         new UsageError({
@@ -112,7 +114,13 @@ const program = Effect.gen(function* () {
         new UsageError({ reason: `Error ${response.status}: ${text}` }),
       )
     }
-    const data = JSON.parse(text) as { api_key?: string; project_id?: string }
+    const data = yield* Effect.try({
+      try: () => JSON.parse(text) as { api_key?: string; project_id?: string },
+      catch: (cause) =>
+        new UsageError({
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    })
     const prev = yield* Effect.tryPromise({
       try: async () => {
         const file = Bun.file(".env")
@@ -146,7 +154,7 @@ const program = Effect.gen(function* () {
     return
   }
 
-  const result = yield* runIntent(intent, yield* clientOf())
+  const result = yield* runPlan(plan, yield* clientOf())
   if (intent._tag === "Login") {
     const record = result as { readonly [key: string]: unknown }
     const url =

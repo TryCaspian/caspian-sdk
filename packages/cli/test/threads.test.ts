@@ -24,6 +24,12 @@ test("threads tail gets events", () => {
   const out = sync(
     runIntent(sync(parseArgv(["threads", "tail", "telegram:123:456"])), gw),
   ) as ReadonlyArray<{ readonly seq: number }>
-  expect(gw.requests).toEqual([{ method: "GET", path: "/v1/events" }])
+  expect(gw.requests).toEqual([
+    {
+      method: "GET",
+      path: "/v1/events",
+      params: { after_seq: "0", limit: "100" },
+    },
+  ])
   expect(out[0]?.seq).toBe(1)
 })

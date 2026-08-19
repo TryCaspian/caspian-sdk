@@ -19,7 +19,7 @@ test("catalog search photo", () => {
 })
 
 test("catalog get", () => {
-  const entry = getCatalog("telegram.send-photo")
+  const entry = sync(getCatalog("telegram.send-photo"))
   expect(entry.command_tag).toBe("SendMedia")
 })
 
