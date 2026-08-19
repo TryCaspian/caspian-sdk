@@ -51,6 +51,8 @@ export type InitPlan = {
   readonly gateway: string
   readonly open: boolean
   readonly force: boolean
+  readonly path: string
+  readonly fresh: boolean
 }
 
 export type Plan = GatewayPlan | LocalPlan | LoginPlan | InitPlan
@@ -200,6 +202,8 @@ export const planIntent = (intent: Intent): Effect.Effect<Plan, UsageError> => {
         gateway: intent.gateway,
         open: intent.open,
         force: intent.force,
+        path: intent.path,
+        fresh: intent.fresh,
       })
   }
 }

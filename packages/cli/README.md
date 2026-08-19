@@ -11,7 +11,9 @@ browser — there is no sandbox mint.
 ```bash
 caspian init                 # asks: cli, project, or agent
 caspian init cli             # CLI secret → ~/.caspian/.env
-caspian init project         # also write ./.env for the SDK
+caspian init project         # asks which folder (default: this one); writes .env
+caspian init project --path DIR
+caspian init project --new   # TODO: scaffold TypeScript/Python SDK app
 caspian init agent           # CLI secret + ./.env + .caspian/AGENT.md
 caspian login                # sign in only; writes the CLI secret
 

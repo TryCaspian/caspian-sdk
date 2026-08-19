@@ -3,11 +3,15 @@
  *
  *   caspian init          asks: cli, project, or agent
  *   caspian init cli      this machine: CLI secret in ~/.caspian/.env
- *   caspian init project  this repo: ./.env for the SDK (and CLI secret)
+ *   caspian init project  asks which folder (default: cwd) and writes .env there
+ *   caspian init project --new
+ *     TODO(init-project-scaffold): create a TypeScript SDK or Python SDK app
+ *     (package files, sample bot). Not implemented yet.
  *   caspian init agent    an AI agent: CLI secret + ./.env + .caspian/AGENT.md
  *
  * Sign-in is the same device-auth as caspian login.
  */
+import { resolve } from "node:path"
 import * as Effect from "effect/Effect"
 import { DASHBOARD_URL, UsageError } from "./errors.ts"
 import { runLogin, type LoginIO, type LoginResult } from "./login.ts"
@@ -65,16 +69,49 @@ export const parseInitChoice = (raw: string): InitKind | undefined => {
   return undefined
 }
 
+export type ProjectTarget =
+  | { readonly _tag: "dir"; readonly path: string }
+  | { readonly _tag: "new" }
+
+export const projectPathPrompt = (cwd: string): string =>
+  [
+    "Where is the project?",
+    "",
+    `  Enter        this folder (${cwd})`,
+    "  <path>       another folder",
+    "  new          scaffold TypeScript/Python SDK project (TODO — not yet)",
+    "",
+    `Project path [${cwd}]: `,
+  ].join("\n")
+
+export const parseProjectChoice = (raw: string, cwd: string): ProjectTarget => {
+  const token = raw.trim()
+  if (token === "" || token === ".") return { _tag: "dir", path: cwd }
+  if (token.toLowerCase() === "new") return { _tag: "new" }
+  return { _tag: "dir", path: resolve(cwd, token) }
+}
+
+/** TODO(init-project-scaffold): TypeScript SDK / Python SDK app files. */
+export const NEW_PROJECT_TODO = [
+  "TODO: scaffold a new Caspian app (TypeScript SDK or Python SDK) is not implemented yet.",
+  "Use an existing folder for now:",
+  "  caspian init project              (asks; default is this folder)",
+  "  caspian init project --path DIR",
+].join("\n")
+
 export type InitIO = {
   readonly login: LoginIO
   readonly writeCliSecret: (
     values: SecretValues,
   ) => Effect.Effect<void, UsageError>
   readonly writeProjectEnv: (
+    dir: string,
     values: SecretValues,
   ) => Effect.Effect<void, UsageError>
   readonly writePlaybook: (text: string) => Effect.Effect<void, UsageError>
   readonly chooseKind: () => Effect.Effect<InitKind, UsageError>
+  readonly chooseProject: (cwd: string) => Effect.Effect<ProjectTarget, UsageError>
+  readonly cwd: string
   readonly cliSecretPath: string
   readonly existingApiKey?: string
   readonly existingBaseUrl: string
@@ -85,6 +122,8 @@ export type InitResult = {
   readonly signedIn: boolean
   readonly api_key: string
   readonly project_id: string
+  readonly projectPath: string
+  readonly scaffoldTodo: boolean
   readonly lines: ReadonlyArray<string>
 }
 
@@ -93,11 +132,16 @@ export const orientation = (kind: InitKind): string =>
     "Setting up Caspian.",
     "",
     `  caspian init cli       this machine — CLI secret in ~/.caspian/.env${kind === "cli" ? "  ←" : ""}`,
-    `  caspian init project   this repo — SDK key in ./.env${kind === "project" ? "  ←" : ""}`,
+    `  caspian init project   this repo — SDK key in <dir>/.env${kind === "project" ? "  ←" : ""}`,
     `  caspian init agent     an AI agent — CLI + ./.env + .caspian/AGENT.md${kind === "agent" ? "  ←" : ""}`,
   ].join("\n")
 
-const nextSteps = (kind: InitKind, cliPath: string): ReadonlyArray<string> => {
+const nextSteps = (
+  kind: InitKind,
+  cliPath: string,
+  projectPath: string,
+  scaffoldTodo: boolean,
+): ReadonlyArray<string> => {
   switch (kind) {
     case "cli":
       return [
@@ -106,9 +150,15 @@ const nextSteps = (kind: InitKind, cliPath: string): ReadonlyArray<string> => {
         `Add credit:  ${DASHBOARD_URL}`,
       ]
     case "project":
+      if (scaffoldTodo) {
+        return [
+          `CLI secret stored in ${cliPath}.`,
+          NEW_PROJECT_TODO,
+        ]
+      }
       return [
-        `Wrote ./.env for the SDK. CLI secret: ${cliPath}`,
-        "Keep ./.env out of git.",
+        `Wrote ${projectPath}/.env for the SDK. CLI secret: ${cliPath}`,
+        "Keep .env out of git.",
         "Next: caspian channels add telegram",
         `Add credit:  ${DASHBOARD_URL}`,
       ]
@@ -131,6 +181,21 @@ const asLogin = (plan: InitPlan): LoginPlan => ({
   open: plan.open,
 })
 
+const projectTargetOf = (
+  plan: InitPlan,
+  io: InitIO,
+  kind: InitKind,
+): Effect.Effect<ProjectTarget, UsageError> => {
+  if (kind !== "project") {
+    return Effect.succeed({ _tag: "dir", path: io.cwd })
+  }
+  if (plan.fresh) return Effect.succeed({ _tag: "new" })
+  if (plan.path !== "") {
+    return Effect.succeed(parseProjectChoice(plan.path, io.cwd))
+  }
+  return io.chooseProject(io.cwd)
+}
+
 export const runInit = (
   plan: InitPlan,
   io: InitIO,
@@ -138,6 +203,9 @@ export const runInit = (
   Effect.gen(function* () {
     const kind: InitKind =
       plan.kind === "ask" ? yield* io.chooseKind() : plan.kind
+    const target = yield* projectTargetOf(plan, io, kind)
+    const scaffoldTodo = kind === "project" && target._tag === "new"
+    const projectPath = target._tag === "dir" ? target.path : ""
 
     const haveKey =
       io.existingApiKey !== undefined && io.existingApiKey !== ""
@@ -165,8 +233,9 @@ export const runInit = (
       CASPIAN_BASE_URL: baseUrl,
     }
     yield* io.writeCliSecret(values)
-    if (kind === "project" || kind === "agent") {
-      yield* io.writeProjectEnv(values)
+    if ((kind === "project" || kind === "agent") && !scaffoldTodo) {
+      const dir = kind === "agent" ? io.cwd : projectPath
+      yield* io.writeProjectEnv(dir, values)
     }
     if (kind === "agent") {
       yield* io.writePlaybook(AGENT_PLAYBOOK)
@@ -177,13 +246,15 @@ export const runInit = (
       "",
       signedIn ? "Signed in." : "Using existing CASPIAN_API_KEY.",
       ...(projectId !== "" ? [`Project ${projectId}`] : []),
-      ...nextSteps(kind, io.cliSecretPath),
+      ...nextSteps(kind, io.cliSecretPath, projectPath, scaffoldTodo),
     ]
     return {
       kind,
       signedIn,
       api_key: apiKey,
       project_id: projectId,
+      projectPath,
+      scaffoldTodo,
       lines,
     }
   })

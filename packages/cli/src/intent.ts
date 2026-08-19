@@ -69,6 +69,10 @@ export type Init = {
   readonly open: boolean
   readonly gateway: string
   readonly force: boolean
+  /** For project: folder to write ./.env into. Empty means ask (default: cwd). */
+  readonly path: string
+  /** For project: scaffold a new TS/Python SDK app — not implemented yet. */
+  readonly fresh: boolean
 }
 
 export type Intent =

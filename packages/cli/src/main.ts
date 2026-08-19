@@ -2,6 +2,7 @@
 /**
  * caspian — thin Effect client of the rewrite B surface.
  */
+import { join } from "node:path"
 import * as readline from "node:readline"
 import {
   DEFAULT_BASE_URL,
@@ -24,7 +25,10 @@ import {
   ASK_PROMPT,
   failAsk,
   parseInitChoice,
+  parseProjectChoice,
+  projectPathPrompt,
   runInit,
+  type ProjectTarget,
 } from "./init.ts"
 import type { InitKind } from "./intent.ts"
 import { runLogin, type LoginIO } from "./login.ts"
@@ -57,37 +61,53 @@ const writeCliSecret = (values: {
   readonly CASPIAN_BASE_URL: string
 }) => writeEnvFileEffect(cliSecretPath(), values)
 
-const writeProjectEnv = (values: {
-  readonly CASPIAN_API_KEY: string
-  readonly CASPIAN_BASE_URL: string
-}) => writeEnvFileEffect(".env", values)
+const writeProjectEnv = (
+  dir: string,
+  values: {
+    readonly CASPIAN_API_KEY: string
+    readonly CASPIAN_BASE_URL: string
+  },
+) => writeEnvFileEffect(join(dir, ".env"), values)
 
 const writePlaybook = (text: string) =>
   writeTextFileEffect(AGENT_PLAYBOOK_PATH, text)
 
-const chooseKind = (): Effect.Effect<InitKind, UsageError> => {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    return Effect.fail(failAsk())
-  }
-  return Effect.tryPromise({
+const isTty = (): boolean =>
+  Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY)
+
+const askLine = (prompt: string): Effect.Effect<string, UsageError> =>
+  Effect.tryPromise({
     try: () =>
-      new Promise<InitKind>((resolve, reject) => {
+      new Promise<string>((resolve) => {
         const rl = readline.createInterface({
           input: process.stdin,
           output: process.stdout,
         })
-        rl.question(ASK_PROMPT, (answer) => {
+        rl.question(prompt, (answer) => {
           rl.close()
-          const kind = parseInitChoice(answer)
-          if (kind === undefined) {
-            reject(failAsk())
-            return
-          }
-          resolve(kind)
+          resolve(answer)
         })
       }),
-    catch: (cause) => (cause instanceof UsageError ? cause : failAsk()),
+    catch: (cause) =>
+      new UsageError({
+        reason: cause instanceof Error ? cause.message : String(cause),
+      }),
   })
+
+const chooseKind = (): Effect.Effect<InitKind, UsageError> => {
+  if (!isTty()) return Effect.fail(failAsk())
+  return Effect.gen(function* () {
+    const kind = parseInitChoice(yield* askLine(ASK_PROMPT))
+    if (kind === undefined) return yield* Effect.fail(failAsk())
+    return kind
+  })
+}
+
+const chooseProject = (cwd: string): Effect.Effect<ProjectTarget, UsageError> => {
+  if (!isTty()) return Effect.succeed({ _tag: "dir", path: cwd })
+  return Effect.map(askLine(projectPathPrompt(cwd)), (answer) =>
+    parseProjectChoice(answer, cwd),
+  )
 }
 
 const openUrl = (url: string): void => {
@@ -155,6 +175,8 @@ const program = Effect.gen(function* () {
       writeProjectEnv,
       writePlaybook,
       chooseKind,
+      chooseProject,
+      cwd: process.cwd(),
       cliSecretPath: cliSecretPath(),
       ...(creds.apiKey !== undefined && creds.apiKey !== ""
         ? { existingApiKey: creds.apiKey }

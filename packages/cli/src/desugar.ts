@@ -28,6 +28,7 @@ export const helpText = (): string =>
   `${USAGE}
 
   caspian init [cli|project|agent] [--open] [--gateway URL] [--force]
+  caspian init project [PATH] [--path PATH] [--new]
   caspian login [--open] [--gateway URL]
   caspian channels add <channel> [--via hosted|self-host] [--name NAME]
   caspian channels ls
@@ -40,7 +41,8 @@ export const helpText = (): string =>
 
 init asks cli / project / agent. Pass a kind to skip the question.
 init cli stores the key in ~/.caspian/.env — not this repo's .env.
-init project also writes ./.env for the SDK.
+init project asks which folder (default: this one) and writes .env there.
+  --new scaffolds a TypeScript/Python SDK app (TODO — not yet).
 init agent writes CLI secret, ./.env, and .caspian/AGENT.md.
 
 Hosted jobs (channels add/ls, call, threads) need a key:
@@ -77,7 +79,7 @@ const parseTokens = (
         options["inbound"] = false
         continue
       }
-      if (name === "inbound" || name === "open" || name === "force") {
+      if (name === "inbound" || name === "open" || name === "force" || name === "new") {
         options[name] = true
         continue
       }
@@ -206,16 +208,31 @@ const toIntent = (
     ) {
       return fail("use: caspian init [cli|project|agent]")
     }
-    if (positional[2] !== undefined) {
+    const kind = kindTok ?? "ask"
+    const posPath = positional[2] ?? ""
+    const flagPath = str(options, "path")
+    if (kind !== "project" && posPath !== "") {
       return fail("use: caspian init [cli|project|agent]")
     }
-    const kind = kindTok ?? "ask"
+    if (posPath !== "" && flagPath !== "" && posPath !== flagPath) {
+      return fail("use one path: caspian init project <path>")
+    }
+    const path = posPath !== "" ? posPath : flagPath
+    const fresh = flag(options, "new")
+    if (fresh && kind !== "project" && kind !== "ask") {
+      return fail("use: caspian init project --new")
+    }
+    if (fresh && path !== "") {
+      return fail("use: caspian init project --new   or a path, not both")
+    }
     return Effect.succeed({
       _tag: "Init",
       kind,
       open: flag(options, "open"),
       gateway: str(options, "gateway", DEFAULT_BASE_URL),
       force: flag(options, "force"),
+      path,
+      fresh,
     })
   }
 

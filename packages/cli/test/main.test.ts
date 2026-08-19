@@ -142,3 +142,55 @@ test("binary init project writes ./.env for the SDK and the CLI secret", async (
     "ck_test",
   )
 })
+
+test("binary init project --path writes that folder, not cwd", async () => {
+  const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
+  const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))
+  const dest = mkdtempSync(join(tmpdir(), "caspian-dest-"))
+  const proc = Bun.spawn(
+    ["bun", join(import.meta.dir, "../src/main.ts"), "init", "project", "--path", dest],
+    {
+      cwd,
+      env: {
+        ...bareEnv(),
+        CASPIAN_HOME: secret,
+        CASPIAN_API_KEY: "ck_test",
+        CASPIAN_BASE_URL: "https://gw.example",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  expect(await proc.exited).toBe(0)
+  expect(existsSync(join(cwd, ".env"))).toBe(false)
+  expect(parseDotenv(readFileSync(join(dest, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
+    "ck_test",
+  )
+})
+
+test("binary init project --new is a TODO and does not write repo .env", async () => {
+  const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
+  const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))
+  const proc = Bun.spawn(
+    ["bun", join(import.meta.dir, "../src/main.ts"), "init", "project", "--new"],
+    {
+      cwd,
+      env: {
+        ...bareEnv(),
+        CASPIAN_HOME: secret,
+        CASPIAN_API_KEY: "ck_test",
+        CASPIAN_BASE_URL: "https://gw.example",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const out = await new Response(proc.stdout).text()
+  expect(await proc.exited).toBe(0)
+  expect(out).toContain("TODO")
+  expect(out).toContain("TypeScript SDK")
+  expect(existsSync(join(cwd, ".env"))).toBe(false)
+  expect(parseDotenv(readFileSync(join(secret, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
+    "ck_test",
+  )
+})
