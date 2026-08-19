@@ -133,11 +133,14 @@ const program = Effect.gen(function* () {
   const plan = yield* planIntent(parsed.intent)
 
   if (plan._tag === "Login") {
+    const existingKey = resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
     const result = yield* runLogin(plan, {
       fetch,
       wait: (ms) => Effect.sleep(`${ms} millis`),
       writeEnv,
-      existingApiKey: resolve(["CASPIAN_API_KEY", "COMM_API_KEY"]),
+      ...(existingKey !== undefined && existingKey !== ""
+        ? { existingApiKey: existingKey }
+        : {}),
       openUrl,
       onUrl: (url) => {
         console.log("Sign in to Caspian:")
