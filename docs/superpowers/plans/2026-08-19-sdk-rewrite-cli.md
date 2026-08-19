@@ -4,7 +4,7 @@
 
 **Goal:** Replace the CommClient-era `caspian` CLI with a namespaced thin client of the rewrite B surface, matching `docs/caspian-prd.md` §3.1.
 
-**Architecture:** Argv is syntax. A pure `desugar(argv) → Intent` maps flags onto the same option objects as `packages/typescript` (`channels.add`, `cx.tools` outbound, `thread.recent`). Hosted I/O is an injected HTTP port (`python/src/caspian/hosted/` provisioning + outbound). **One verb per job.** Catalog is how you find the verb; `call` is how you run it. Threads are how you read. Channels are how you get an identity.
+**Architecture:** Same shape as treg: `catalog` discovers, `call <id>` invokes, other nouns are resources with `ls`/`add`/`tail`. The CLI is a thin client of B, not a second API. Argv desugars to `cx.channels.*` / `cx.catalog.*` / outbound `cx.tools` execute / `cx.threads.*`. Hosted I/O is an injected HTTP port. **One verb per job.** `channels watch` is not a job; following events is `threads tail`.
 
 **Tech Stack:** Python 3.10+, httpx, argparse (already `apps/cli`), pytest. Design source: `packages/typescript` (`src/tools/derive.ts`, `src/provision/add.ts`, `src/hosted/outbound.ts`). Golden catalog JSON under `vectors/`.
 
@@ -49,6 +49,44 @@ caspian threads tail telegram:123:456
 `channels watch` is `threads tail` without a thread id. Do not ship it. If someone types it, exit with `use: caspian threads tail`.
 
 `channels add` and `channels ls` are not the same: add mints a connection; ls prints connections. `threads ls` and `threads tail` are not the same: ls lists conversations (a table, then exit); tail follows events (a stream). Different resources (`connections` vs `conversations` vs `events`), so the same verb `ls` on `channels` vs `threads` is correct — it is not a second send path.
+
+## This is already treg-shaped
+
+treg's public CLI is:
+
+```bash
+treg catalog search "find a work email"
+treg catalog get hunter.people.email.find
+treg call hunter.people.email.find --query domain=reddit.com
+treg login
+```
+
+Not `treg hunter people email find` and not `treg tiktok user-profile`. The vendor is an id you **call**, not a program you grow. Caspian copies that:
+
+```bash
+caspian catalog search "send a photo"
+caspian catalog get telegram.send-photo
+caspian call telegram.send-photo --thread telegram:123:456 --file ./graph.png
+caspian call post --thread slack:C123:ts --text "shipped"
+```
+
+Caspian is not a tool proxy, so it has two extra nouns treg does not: **channels** (identity on Telegram/Slack) and **threads** (conversations + events). Those stay namespaced the same way (`channels add`, `threads tail`). They must not grow a third send path.
+
+## Can the SDK support this?
+
+Yes — the CLI must not invent jobs the SDK cannot name. Map, then fill gaps in B (TypeScript first) so argv is a skin.
+
+| CLI | SDK today (`packages/typescript` / `python/`) | Do |
+|---|---|---|
+| `channels add` | `cx.channels.add` (Python: omit via = hosted. TS: still requires `via` — fix TS to match PRD) | already the identity write |
+| `channels ls` | Python `ChannelManager.list()` / `added()`. TS keeps connections in a private Map | add `cx.channels.ls()` on TS |
+| `channels watch` | nothing; do not add | reject in CLI |
+| `catalog` / `search` / `get` | `cx.tools` is the abstract slice only; no native catalog | add `cx.catalog` as a view over Command tools + adapter planned methods (data, not adapters imported into the facade). CLI loads the same `vectors/cli_catalog.json` |
+| `call <id>` | `cx.tools({ preset: "outbound" }).post_message.execute(args)` | CLI `call` **is** that execute. Do not add `cx.call` as a third send next to `thread.post` + `tools`. Handlers keep `thread.post`. Outbound agents/CLI keep tools execute. One send per audience. |
+| `threads ls` | hosted `GET /v1/conversations` exists on the gateway; not on B | add `cx.threads.ls({ channel? })` that asks the runner (gateway when hosted, memory/process store when self-host) |
+| `threads tail` | `thread.recent()` is in-handler history; hosted `GET /v1/events` is the poller | add `cx.threads.tail(threadId?)` as the outbound follow. `thread.recent()` stays the handler read of the same store — not a second CLI |
+
+Handlers (`onMessage` + `thread.post`) stay the Chat SDK. CLI/coding agents never register handlers; they only `channels` + `catalog` + `call` + `threads`. That is the same split as treg (no “write a bot” path) plus Caspian's bot path.
 
 ## Global Constraints
 
@@ -235,6 +273,11 @@ def test_channel_verb_is_error_use_call():
 def test_threads_reply_is_error_use_call_post():
     with pytest.raises(SystemExit, match="caspian call post"):
         parse_argv(["threads", "reply", "telegram:123:456", "--text", "on my way"])
+
+
+def test_channels_watch_is_error_use_threads_tail():
+    with pytest.raises(SystemExit, match="caspian threads tail"):
+        parse_argv(["channels", "watch"])
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
