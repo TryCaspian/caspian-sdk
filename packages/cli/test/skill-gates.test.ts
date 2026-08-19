@@ -119,6 +119,15 @@ test("login is a Plan, not a hosted Gateway request", () => {
   }
 })
 
+test("init is a Plan, not sandbox mint", () => {
+  const intent = sync(parseArgv(["init", "project"]))
+  const plan = sync(planIntent(intent))
+  expect(plan._tag).toBe("Init")
+  if (plan._tag === "Init") {
+    expect(plan.kind).toBe("project")
+  }
+})
+
 test("threads tail is bounded", () => {
   const plan = sync(planIntent(sync(parseArgv(["threads", "tail"]))))
   expect(plan._tag).toBe("Gateway")

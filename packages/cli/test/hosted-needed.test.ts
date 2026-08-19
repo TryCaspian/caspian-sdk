@@ -1,4 +1,6 @@
 import { join } from "node:path"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
@@ -36,7 +38,8 @@ test("hostedNeeded names flags, env, and signup", () => {
   expect(reason).toContain(DASHBOARD_URL)
   expect(reason.includes("connect")).toBe(false)
   expect(reason).toContain("caspian login")
-  expect(reason).not.toContain("caspian init")
+  expect(reason).toContain("caspian init")
+  expect(reason).not.toContain("sandbox")
 })
 
 for (const argv of hostedJobs) {
@@ -90,11 +93,15 @@ const bareEnv = (): Record<string, string> => {
     if (
       value !== undefined &&
       key !== "CASPIAN_API_KEY" &&
-      key !== "COMM_API_KEY"
+      key !== "COMM_API_KEY" &&
+      key !== "CASPIAN_HOME" &&
+      key !== "CASPIAN_BASE_URL" &&
+      key !== "COMM_BASE_URL"
     ) {
       env[key] = value
     }
   }
+  env["CASPIAN_HOME"] = mkdtempSync(join(tmpdir(), "caspian-empty-"))
   return env
 }
 
@@ -113,10 +120,11 @@ test("binary catalog works without a hosted key", async () => {
 })
 
 test("binary call without a key asks to pass, env, or sign up", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "caspian-empty-proj-"))
   const proc = Bun.spawn(
-    ["bun", "src/main.ts", "call", "post", "--thread", "telegram:1", "--text", "hi"],
+    ["bun", join(import.meta.dir, "../src/main.ts"), "call", "post", "--thread", "telegram:1", "--text", "hi"],
     {
-      cwd: join(import.meta.dir, ".."),
+      cwd,
       env: bareEnv(),
       stdout: "pipe",
       stderr: "pipe",
@@ -129,5 +137,6 @@ test("binary call without a key asks to pass, env, or sign up", async () => {
   expect(err).toContain("--gateway")
   expect(err).toContain(DASHBOARD_URL)
   expect(err).toContain("caspian login")
-  expect(err).not.toContain("caspian init")
+  expect(err).toContain("caspian init")
+  expect(err).not.toContain("sandbox")
 })

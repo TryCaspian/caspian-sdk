@@ -58,6 +58,16 @@ export type Login = {
   readonly gateway: string
 }
 
+export type InitKind = "cli" | "project" | "agent"
+
+export type Init = {
+  readonly _tag: "Init"
+  readonly kind: InitKind
+  readonly open: boolean
+  readonly gateway: string
+  readonly force: boolean
+}
+
 export type Intent =
   | ChannelsAdd
   | ChannelsLs
@@ -68,3 +78,4 @@ export type Intent =
   | ThreadsLs
   | ThreadsTail
   | Login
+  | Init

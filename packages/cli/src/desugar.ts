@@ -7,7 +7,7 @@
 import { DEFAULT_BASE_URL } from "caspian"
 import * as Effect from "effect/Effect"
 import { UsageError } from "./errors.ts"
-import type { Intent, Via } from "./intent.ts"
+import type { InitKind, Intent, Via } from "./intent.ts"
 
 export { UsageError } from "./errors.ts"
 
@@ -17,15 +17,17 @@ const NOUNS = new Set([
   "catalog",
   "threads",
   "login",
+  "init",
   "help",
 ])
 
 export const USAGE =
-  "usage: caspian <channels|call|catalog|threads|login>"
+  "usage: caspian <init|login|channels|call|catalog|threads>"
 
 export const helpText = (): string =>
   `${USAGE}
 
+  caspian init [cli|project|agent] [--open] [--gateway URL] [--force]
   caspian login [--open] [--gateway URL]
   caspian channels add <channel> [--via hosted|self-host] [--name NAME]
   caspian channels ls
@@ -36,10 +38,13 @@ export const helpText = (): string =>
   caspian threads ls [--channel CHANNEL]
   caspian threads tail [THREAD]
 
+init cli (default) stores the key in ~/.caspian/.env — not this repo's .env.
+init project also writes ./.env for the SDK. init agent is CLI secret + next steps.
+
 Hosted jobs (channels add/ls, call, threads) need a key:
   --api-key KEY [--gateway URL]
   or CASPIAN_API_KEY / CASPIAN_BASE_URL
-  or caspian login
+  or caspian init / caspian login
   or sign up at https://dashboard.trycaspianai.com
 
 catalog is the phone book. call is the only phone.
@@ -70,7 +75,7 @@ const parseTokens = (
         options["inbound"] = false
         continue
       }
-      if (name === "inbound" || name === "open") {
+      if (name === "inbound" || name === "open" || name === "force") {
         options[name] = true
         continue
       }
@@ -189,6 +194,29 @@ const toIntent = (
     })
   }
 
+  if (noun === "init") {
+    const kindTok = positional[1]
+    if (
+      kindTok !== undefined &&
+      kindTok !== "cli" &&
+      kindTok !== "project" &&
+      kindTok !== "agent"
+    ) {
+      return fail("use: caspian init [cli|project|agent]")
+    }
+    if (positional[2] !== undefined) {
+      return fail("use: caspian init [cli|project|agent]")
+    }
+    const kind: InitKind = kindTok ?? "cli"
+    return Effect.succeed({
+      _tag: "Init",
+      kind,
+      open: flag(options, "open"),
+      gateway: str(options, "gateway", DEFAULT_BASE_URL),
+      force: flag(options, "force"),
+    })
+  }
+
   return fail(`${USAGE}  (not ${noun})`)
 }
 
@@ -207,9 +235,6 @@ export const parseCli = (
     const head = argv[0]!
     if (head === "connect") {
       return yield* fail("use: caspian channels add")
-    }
-    if (head === "init") {
-      return yield* fail("use: caspian login")
     }
     if (head === "channels" && argv[1] === "watch") {
       return yield* fail("use: caspian threads tail")

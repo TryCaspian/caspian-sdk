@@ -2,7 +2,7 @@
  * Intent → Plan. The denotation. Pure. No HTTP.
  *
  * argv parses into Intent (syntax). This module says what that Intent *means*:
- * a gateway request, a local catalog value, or a login (device-auth). run.ts
+ * a gateway request, a local catalog value, login, or init (setup). run.ts
  * is one interpreter of Plan; dry-run is just returning the Plan.
  */
 import {
@@ -13,7 +13,7 @@ import {
 import * as Effect from "effect/Effect"
 import { getCatalog, loadCatalog, searchCatalog, type CatalogEntry } from "./catalog.ts"
 import { UsageError } from "./errors.ts"
-import type { Call, ChannelsAdd, Intent } from "./intent.ts"
+import type { Call, ChannelsAdd, InitKind, Intent } from "./intent.ts"
 
 /** Gateway list endpoints cap limit at 500; stay inside that. */
 export const TAIL_LIMIT = 100
@@ -45,7 +45,15 @@ export type LoginPlan = {
   readonly open: boolean
 }
 
-export type Plan = GatewayPlan | LocalPlan | LoginPlan
+export type InitPlan = {
+  readonly _tag: "Init"
+  readonly kind: InitKind
+  readonly gateway: string
+  readonly open: boolean
+  readonly force: boolean
+}
+
+export type Plan = GatewayPlan | LocalPlan | LoginPlan | InitPlan
 
 const fail = (reason: string): Effect.Effect<never, UsageError> =>
   Effect.fail(new UsageError({ reason }))
@@ -184,6 +192,14 @@ export const planIntent = (intent: Intent): Effect.Effect<Plan, UsageError> => {
         _tag: "Login",
         gateway: intent.gateway,
         open: intent.open,
+      })
+    case "Init":
+      return Effect.succeed({
+        _tag: "Init",
+        kind: intent.kind,
+        gateway: intent.gateway,
+        open: intent.open,
+        force: intent.force,
       })
   }
 }

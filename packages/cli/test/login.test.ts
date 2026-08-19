@@ -8,18 +8,9 @@ import { planIntent } from "../src/plan.ts"
 
 const sync = <A, E>(effect: Effect.Effect<A, E>): A => Effect.runSync(effect)
 
-const left = <A, E extends { readonly reason: string }>(
-  effect: Effect.Effect<A, E>,
-): E => {
-  const result = Effect.runSync(Effect.either(effect))
-  if (Either.isRight(result)) {
-    throw new Error("expected failure as data")
-  }
-  return result.left
-}
-
-test("init is rejected in favor of login", () => {
-  expect(left(parseArgv(["init"])).reason).toContain("caspian login")
+test("init is setup, not a rejected alias for login", () => {
+  const plan = sync(planIntent(sync(parseArgv(["init"]))))
+  expect(plan._tag).toBe("Init")
 })
 
 test("login is a Plan that does not need an API key", () => {
@@ -31,11 +22,12 @@ test("login is a Plan that does not need an API key", () => {
   }
 })
 
-test("hostedNeeded points at login, not sandbox init", () => {
+test("hostedNeeded points at init/login, not sandbox", () => {
   const reason = hostedNeeded().reason
   expect(reason).toContain("caspian login")
+  expect(reason).toContain("caspian init")
+  expect(reason).toContain("~/.caspian/.env")
   expect(reason).toContain(DASHBOARD_URL)
-  expect(reason).not.toContain("caspian init")
   expect(reason).not.toContain("sandbox")
 })
 

@@ -62,9 +62,10 @@ export const runPlan = (
     case "Local":
       return Effect.succeed(plan.value)
     case "Login":
+    case "Init":
       return Effect.fail(
         new UsageError({
-          reason: "login is interactive; use the caspian binary",
+          reason: `${plan._tag.toLowerCase()} is interactive; use the caspian binary`,
         }),
       )
   }
