@@ -14,6 +14,8 @@ from caspian_cli.intent import (
     ChannelsAdd,
     ChannelsLs,
     Intent,
+    ThreadsLs,
+    ThreadsTail,
 )
 
 HOSTED_INSTALL = frozenset({"slack", "discord", "x", "github"})
@@ -37,6 +39,18 @@ def run_intent(intent: Intent, *, gateway: Gateway) -> Any:
         return get_catalog(intent.id)
     if isinstance(intent, Call):
         return _call(intent, gateway)
+    if isinstance(intent, ThreadsLs):
+        rows = gateway.request("GET", "/v1/conversations", None) or []
+        if not intent.channel:
+            return rows
+        return [
+            row
+            for row in rows
+            if str(row.get("channel", "")) == intent.channel
+            or str(row.get("id", "")).startswith(f"{intent.channel}:")
+        ]
+    if isinstance(intent, ThreadsTail):
+        return gateway.request("GET", "/v1/events", None)
     raise SystemExit(f"unhandled intent: {type(intent).__name__}")
 
 
@@ -78,5 +92,10 @@ def _call(intent: Call, gateway: Gateway) -> Any:
             "POST",
             f"/v1/conversations/{cid}/messages",
             {"text": text},
+        )
+    if tag == "SendMedia":
+        raise SystemExit(
+            "SendMedia is not available in hosted mode: the gateway exposes no "
+            "endpoint for it. Use self-host for this."
         )
     raise SystemExit(f"{tag} is not available in hosted mode")
