@@ -46,12 +46,21 @@ bun install
 bun run ci           # tsc + eslint + dependency-cruiser + bun test
 ```
 
+**TypeScript CLI** (`packages/cli`, bun + Effect):
+
+```bash
+cd packages/cli
+bun install
+bun run ci           # tsc + eslint + bun test
+```
+
 ## What lives where
 
 - `server/src/comm_gateway/providers` — channel adapters. Each adapter implements the small provider interface in `providers/base.py`: `provision` / `send` / `reply` / `parse_webhook` (+ optional `typing`, OAuth hooks), a `capabilities` set, and webhook signature verification.
 - `sdks/python` / `python/` — the Python client (rewrite lives under `python/` when present).
-- `packages/typescript` — the TypeScript client (bun). `src/core` must stay free of I/O.
-- `apps/cli` — the `caspian` CLI. It ships as a separate package `caspian-cli` (`pip install caspian-cli`, or run without installing via `uvx caspian-cli`), while `caspian-sdk` is the library. `comm` is a legacy alias only.
+- `packages/typescript` — the TypeScript client (bun + Effect). `src/core` must stay free of I/O.
+- `packages/cli` — the rewrite `caspian` CLI (bun + Effect). Catalog discovers; `call` invokes; it must not import adapters.
+- `apps/cli` — the legacy CommClient Python CLI (`caspian-cli` on PyPI). `comm` is a legacy alias only.
 
 ## Adding a new channel adapter
 
@@ -65,6 +74,7 @@ bun run ci           # tsc + eslint + dependency-cruiser + bun test
 
 - Python: `uv run pytest` and `uv run ruff check .` must pass.
 - TypeScript: in `packages/typescript`, `bun run ci` must pass.
+- TypeScript CLI: in `packages/cli`, `bun run ci` must pass.
 - No secrets in code, tests, or fixtures — use obviously-fake placeholder values.
 - Webhook verification is not optional: if the platform signs its webhooks, the adapter must verify the signature and reject mismatches.
 - Commit messages: concise imperative subject ("add reminder example", not "added"/"adds"), no emojis, and reference the issue number when there is one (e.g. `fix email triage classifier (#42)`).

@@ -4,9 +4,11 @@
 
 **Goal:** Replace the CommClient-era `caspian` CLI with a namespaced thin client of the rewrite B surface, matching `docs/caspian-prd.md` §3.1.
 
-**Architecture:** Same shape as treg: `catalog` discovers, `call <id>` invokes, other nouns are resources with `ls`/`add`/`tail`. The CLI is a thin client of B, not a second API. Argv desugars to `cx.channels.*` / `cx.catalog.*` / outbound `cx.tools` execute / `cx.threads.*`. Hosted I/O is an injected HTTP port. **One verb per job.** `channels watch` is not a job; following events is `threads tail`.
+**Architecture:** Same shape as treg: `catalog` discovers, `call <id>` invokes, other nouns are resources with `ls`/`add`/`tail`. The CLI is a thin client of B, not a second API. Argv desugars to Intent data, then `runIntent` interprets via the hosted `GatewayClient`. **One verb per job.** `channels watch` is not a job; following events is `threads tail`.
 
-**Tech Stack:** Python 3.10+, httpx, argparse (already `apps/cli`), pytest. Design source: `packages/typescript` (`src/tools/derive.ts`, `src/provision/add.ts`, `src/hosted/outbound.ts`). Golden catalog JSON under `vectors/`.
+**Tech Stack:** TypeScript, bun, Effect (`packages/cli`). Imports the rewrite SDK (`packages/typescript`: `toRequest`, `fakeGatewayClient` / `httpGatewayClient`). Golden catalog JSON under `vectors/cli_catalog.json`. Tests are `bun test`. The CLI must not import `caspian/telegram` (or any adapter).
+
+> An early cut of this plan targeted Python `apps/cli`. That is not the product. `apps/cli` stays the legacy CommClient CLI. The rewrite CLI is bun + Effect in `packages/cli`.
 
 ## One way to do each thing
 
@@ -90,7 +92,8 @@ Handlers (`onMessage` + `thread.post`) stay the Chat SDK. CLI/coding agents neve
 
 ## Global Constraints
 
-- Design from `packages/typescript` B, not `sdks/typescript` CommClient and not `sdks/python`.
+- CLI is treg-shaped: `catalog` discovers, `call <id>` invokes. No `caspian telegram <verb>` program.
+- Every CLI job must have a B name (table above). If B is missing, add it (or the shared `vectors/cli_catalog.json`) in the same PR as the CLI command — do not let argv become the source of truth.
 - Omit `--via` means hosted. `--via self-host` is opt-in. Never invent `via: oauth` or `via: credentials`.
 - One token: `CASPIAN_API_KEY`. Channel secrets stay on the gateway for hosted. Self-host `--bot-token` is local provision.
 - Thread ids are `telegram:…` / `slack:…`, never platform chat ids.
@@ -106,20 +109,18 @@ Handlers (`onMessage` + `thread.post`) stay the Chat SDK. CLI/coding agents neve
 
 | Path | Role |
 |---|---|
-| `apps/cli/src/caspian_cli/argv.py` | argparse: `channels` (`add\|ls`), `call`, `catalog`, `threads` (`ls\|tail`), `login`, `init` |
-| `apps/cli/src/caspian_cli/intent.py` | frozen dataclasses: `Intent` union |
-| `apps/cli/src/caspian_cli/desugar.py` | `argv → Intent` (pure) |
-| `apps/cli/src/caspian_cli/catalog.py` | load `vectors/cli_catalog.json` |
-| `apps/cli/src/caspian_cli/run.py` | interpret Intent via injected `Gateway` |
-| `apps/cli/src/caspian_cli/gateway.py` | Protocol + httpx implementation |
-| `apps/cli/src/caspian_cli/main.py` | `main()`: parse, desugar, run, print |
+| `packages/cli/src/intent.ts` | Intent tagged union (data) |
+| `packages/cli/src/desugar.ts` | `argv → Effect<Intent, UsageError>` |
+| `packages/cli/src/catalog.ts` | load `vectors/cli_catalog.json` |
+| `packages/cli/src/run.ts` | interpret Intent via injected `GatewayClient` |
+| `packages/cli/src/main.ts` | bun bin: parse, run, print; `login` / `init` |
 | `vectors/cli_catalog.json` | ids you can `call` |
-| `apps/cli/tests/test_desugar.py` | argv → Intent |
-| `apps/cli/tests/test_call.py` | call → hosted outbound |
-| `apps/cli/tests/test_channels.py` | channels add/ls |
-| `apps/cli/tests/test_catalog.py` | catalog search/get (no invoke) |
-| `apps/cli/tests/test_threads.py` | threads ls/tail only |
-| `apps/cli/README.md` | one-way examples |
+| `packages/cli/test/desugar.test.ts` | argv → Intent |
+| `packages/cli/test/call.test.ts` | call → hosted outbound `toRequest` |
+| `packages/cli/test/channels.test.ts` | channels add/ls |
+| `packages/cli/test/catalog.test.ts` | catalog search/get (no invoke) |
+| `packages/cli/test/threads.test.ts` | threads ls/tail only |
+| `packages/cli/README.md` | one-way examples |
 
 Do **not** keep adding to the 500-line `main.py` dispatcher. Split first.
 
