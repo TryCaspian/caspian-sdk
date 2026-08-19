@@ -13,7 +13,7 @@ import {
 import * as Effect from "effect/Effect"
 import { getCatalog, loadCatalog, searchCatalog, type CatalogEntry } from "./catalog.ts"
 import { UsageError } from "./errors.ts"
-import type { Call, ChannelsAdd, InitKind, Intent } from "./intent.ts"
+import type { Call, ChannelsAdd, InitTarget, Intent } from "./intent.ts"
 
 /** Gateway list endpoints cap limit at 500; stay inside that. */
 export const TAIL_LIMIT = 100
@@ -47,7 +47,7 @@ export type LoginPlan = {
 
 export type InitPlan = {
   readonly _tag: "Init"
-  readonly kind: InitKind
+  readonly kind: InitTarget
   readonly gateway: string
   readonly open: boolean
   readonly force: boolean

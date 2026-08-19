@@ -2,7 +2,13 @@ import { expect, test } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import { parseArgv } from "../src/desugar.ts"
-import { runInit } from "../src/init.ts"
+import { UsageError } from "../src/errors.ts"
+import {
+  AGENT_PLAYBOOK,
+  parseInitChoice,
+  runInit,
+  type InitIO,
+} from "../src/init.ts"
 import type { LoginFetch } from "../src/login.ts"
 import { planIntent } from "../src/plan.ts"
 
@@ -18,11 +24,11 @@ const left = <A, E extends { readonly reason: string }>(
   return result.left
 }
 
-test("init defaults to cli setup, not sandbox mint", () => {
+test("bare init asks rather than defaulting to cli", () => {
   const plan = sync(planIntent(sync(parseArgv(["init"]))))
   expect(plan._tag).toBe("Init")
   if (plan._tag === "Init") {
-    expect(plan.kind).toBe("cli")
+    expect(plan.kind).toBe("ask")
     expect(plan.force).toBe(false)
   }
 })
@@ -47,6 +53,13 @@ test("init sandbox is not a kind", () => {
   )
 })
 
+test("parseInitChoice accepts numbers and names", () => {
+  expect(parseInitChoice("1")).toBe("cli")
+  expect(parseInitChoice(" project ")).toBe("project")
+  expect(parseInitChoice("3")).toBe("agent")
+  expect(parseInitChoice("nope")).toBeUndefined()
+})
+
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
     status,
@@ -68,9 +81,32 @@ const approvedFetch: LoginFetch = async (input) => {
   })
 }
 
+const ioOf = (
+  partial: Partial<InitIO> & {
+    readonly writeCliSecret: InitIO["writeCliSecret"]
+    readonly writeProjectEnv: InitIO["writeProjectEnv"]
+  },
+): InitIO => ({
+  login: {
+    fetch: async () => {
+      throw new Error("login should not run when a key already exists")
+    },
+    wait: () => Effect.void,
+    writeEnv: () => Effect.void,
+  },
+  writePlaybook: () => Effect.void,
+  chooseKind: () =>
+    Effect.fail(new UsageError({ reason: "should not ask" })),
+  cliSecretPath: "/tmp/caspian-secret/.env",
+  existingApiKey: "ck_existing",
+  existingBaseUrl: "https://gw.example",
+  ...partial,
+})
+
 test("init cli with an existing key writes the CLI secret, not project .env", async () => {
   const cli: Array<Record<string, string>> = []
   const project: Array<Record<string, string>> = []
+  const playbooks: string[] = []
   const result = await Effect.runPromise(
     runInit(
       {
@@ -80,14 +116,7 @@ test("init cli with an existing key writes the CLI secret, not project .env", as
         open: false,
         force: false,
       },
-      {
-        login: {
-          fetch: async () => {
-            throw new Error("login should not run when a key already exists")
-          },
-          wait: () => Effect.void,
-          writeEnv: () => Effect.void,
-        },
+      ioOf({
         writeCliSecret: (values) =>
           Effect.sync(() => {
             cli.push(values)
@@ -96,17 +125,43 @@ test("init cli with an existing key writes the CLI secret, not project .env", as
           Effect.sync(() => {
             project.push(values)
           }),
-        cliSecretPath: "/tmp/caspian-secret/.env",
-        existingApiKey: "ck_existing",
-        existingBaseUrl: "https://gw.example",
-      },
+        writePlaybook: (text) =>
+          Effect.sync(() => {
+            playbooks.push(text)
+          }),
+      }),
     ),
   )
   expect(result.signedIn).toBe(false)
   expect(cli[0]?.["CASPIAN_API_KEY"]).toBe("ck_existing")
   expect(project).toEqual([])
+  expect(playbooks).toEqual([])
   expect(result.lines.join("\n")).toContain("not this repo's .env")
-  expect(result.lines.join("\n")).toContain("caspian init project")
+})
+
+test("bare init asks, then runs the chosen kind", async () => {
+  const project: Array<Record<string, string>> = []
+  const result = await Effect.runPromise(
+    runInit(
+      {
+        _tag: "Init",
+        kind: "ask",
+        gateway: "https://gw.example",
+        open: false,
+        force: false,
+      },
+      ioOf({
+        chooseKind: () => Effect.succeed("project"),
+        writeCliSecret: () => Effect.void,
+        writeProjectEnv: (values) =>
+          Effect.sync(() => {
+            project.push(values)
+          }),
+      }),
+    ),
+  )
+  expect(result.kind).toBe("project")
+  expect(project[0]?.["CASPIAN_API_KEY"]).toBe("ck_existing")
 })
 
 test("init project writes CLI secret and ./.env", async () => {
@@ -121,14 +176,7 @@ test("init project writes CLI secret and ./.env", async () => {
         open: false,
         force: false,
       },
-      {
-        login: {
-          fetch: async () => {
-            throw new Error("login should not run when a key already exists")
-          },
-          wait: () => Effect.void,
-          writeEnv: () => Effect.void,
-        },
+      ioOf({
         writeCliSecret: (values) =>
           Effect.sync(() => {
             cli.push(values)
@@ -137,19 +185,17 @@ test("init project writes CLI secret and ./.env", async () => {
           Effect.sync(() => {
             project.push(values)
           }),
-        cliSecretPath: "/tmp/caspian-secret/.env",
-        existingApiKey: "ck_existing",
-        existingBaseUrl: "https://gw.example",
-      },
+      }),
     ),
   )
   expect(cli[0]?.["CASPIAN_API_KEY"]).toBe("ck_existing")
   expect(project[0]?.["CASPIAN_API_KEY"]).toBe("ck_existing")
 })
 
-test("init agent without a key signs in and does not write project .env", async () => {
+test("init agent writes CLI secret, repo .env, and the agent playbook", async () => {
   const cli: Array<Record<string, string>> = []
   const project: Array<Record<string, string>> = []
+  const playbooks: string[] = []
   const result = await Effect.runPromise(
     runInit(
       {
@@ -160,31 +206,36 @@ test("init agent without a key signs in and does not write project .env", async 
         force: false,
       },
       {
+        ...ioOf({
+          writeCliSecret: (values) =>
+            Effect.sync(() => {
+              cli.push(values)
+            }),
+          writeProjectEnv: (values) =>
+            Effect.sync(() => {
+              project.push(values)
+            }),
+          writePlaybook: (text) =>
+            Effect.sync(() => {
+              playbooks.push(text)
+            }),
+        }),
         login: {
           fetch: approvedFetch,
           wait: () => Effect.void,
           writeEnv: () => Effect.void,
         },
-        writeCliSecret: (values) =>
-          Effect.sync(() => {
-            cli.push(values)
-          }),
-        writeProjectEnv: (values) =>
-          Effect.sync(() => {
-            project.push(values)
-          }),
-        cliSecretPath: "/tmp/caspian-secret/.env",
-        existingBaseUrl: "https://gw.example",
+        existingApiKey: "",
       },
     ),
   )
   expect(result.signedIn).toBe(true)
   expect(result.api_key).toBe("ck_live_1")
   expect(cli[0]?.["CASPIAN_API_KEY"]).toBe("ck_live_1")
-  expect(project).toEqual([])
+  expect(project[0]?.["CASPIAN_API_KEY"]).toBe("ck_live_1")
+  expect(playbooks[0]).toBe(AGENT_PLAYBOOK)
+  expect(playbooks[0]).toContain("caspian call")
   const text = result.lines.join("\n")
-  expect(text).toContain("caspian channels add")
+  expect(text).toContain(".caspian/AGENT.md")
   expect(text).toContain("caspian catalog")
-  expect(text).toContain("caspian call")
-  expect(text).toContain("caspian init project")
 })

@@ -9,10 +9,10 @@ The CLI secret lives in **`~/.caspian/.env`** (override the directory with
 browser — there is no sandbox mint.
 
 ```bash
-caspian init                 # this machine (same as init cli)
+caspian init                 # asks: cli, project, or agent
 caspian init cli             # CLI secret → ~/.caspian/.env
 caspian init project         # also write ./.env for the SDK
-caspian init agent           # CLI secret + next: channels / catalog / call
+caspian init agent           # CLI secret + ./.env + .caspian/AGENT.md
 caspian login                # sign in only; writes the CLI secret
 
 caspian channels add telegram

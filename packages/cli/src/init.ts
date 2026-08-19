@@ -1,16 +1,15 @@
 /**
  * caspian init — guided setup. Not sandbox mint.
  *
- *   caspian init          same as init cli
+ *   caspian init          asks: cli, project, or agent
  *   caspian init cli      this machine: CLI secret in ~/.caspian/.env
  *   caspian init project  this repo: ./.env for the SDK (and CLI secret)
- *   caspian init agent    an AI agent: CLI secret + next channels / catalog / call
+ *   caspian init agent    an AI agent: CLI secret + ./.env + .caspian/AGENT.md
  *
- * Sign-in is the same device-auth as caspian login. The CLI secret is never
- * the project .env unless the kind is project.
+ * Sign-in is the same device-auth as caspian login.
  */
 import * as Effect from "effect/Effect"
-import { DASHBOARD_URL, type UsageError } from "./errors.ts"
+import { DASHBOARD_URL, UsageError } from "./errors.ts"
 import { runLogin, type LoginIO, type LoginResult } from "./login.ts"
 import type { InitKind } from "./intent.ts"
 import type { InitPlan, LoginPlan } from "./plan.ts"
@@ -20,10 +19,62 @@ export type SecretValues = {
   readonly CASPIAN_BASE_URL: string
 }
 
+export const AGENT_PLAYBOOK_PATH = ".caspian/AGENT.md"
+
+export const AGENT_PLAYBOOK = `# Caspian — for the agent
+
+A CLI secret is on this machine (\`~/.caspian/.env\`). This repo also has \`./.env\`
+for SDK code. Never print the key.
+
+| Job | Command |
+|---|---|
+| Discover | \`caspian catalog\` / \`search "…"\` / \`get <id>\` |
+| Do | \`caspian call <id> --thread …\` |
+| Identity | \`caspian channels add <channel>\` / \`ls\` |
+| Threads | \`caspian threads ls\` / \`tail\` |
+
+\`call\` is the only send path. Do not invent \`caspian slack post\` or \`threads reply\`.
+Hosted is the default. Self-host: \`--via self-host --bot-token\`.
+`
+
+export const ASK_PROMPT = [
+  "What are you setting up?",
+  "",
+  "  1) cli      this machine — global CLI secret (~/.caspian/.env)",
+  "  2) project  this repo — ./.env for the SDK",
+  "  3) agent    an AI agent — CLI secret, ./.env, and .caspian/AGENT.md",
+  "",
+  "Choice [1/2/3]: ",
+].join("\n")
+
+export const ASK_NEEDED = [
+  "What are you setting up?",
+  "",
+  "  caspian init cli       this machine — ~/.caspian/.env",
+  "  caspian init project   this repo — ./.env for the SDK",
+  "  caspian init agent     an AI agent — CLI + ./.env + .caspian/AGENT.md",
+  "",
+  "Re-run with one of those, or run caspian init in a terminal to choose.",
+].join("\n")
+
+export const parseInitChoice = (raw: string): InitKind | undefined => {
+  const token = raw.trim().toLowerCase()
+  if (token === "1" || token === "cli") return "cli"
+  if (token === "2" || token === "project") return "project"
+  if (token === "3" || token === "agent") return "agent"
+  return undefined
+}
+
 export type InitIO = {
   readonly login: LoginIO
-  readonly writeCliSecret: (values: SecretValues) => Effect.Effect<void, UsageError>
-  readonly writeProjectEnv: (values: SecretValues) => Effect.Effect<void, UsageError>
+  readonly writeCliSecret: (
+    values: SecretValues,
+  ) => Effect.Effect<void, UsageError>
+  readonly writeProjectEnv: (
+    values: SecretValues,
+  ) => Effect.Effect<void, UsageError>
+  readonly writePlaybook: (text: string) => Effect.Effect<void, UsageError>
+  readonly chooseKind: () => Effect.Effect<InitKind, UsageError>
   readonly cliSecretPath: string
   readonly existingApiKey?: string
   readonly existingBaseUrl: string
@@ -43,7 +94,7 @@ export const orientation = (kind: InitKind): string =>
     "",
     `  caspian init cli       this machine — CLI secret in ~/.caspian/.env${kind === "cli" ? "  ←" : ""}`,
     `  caspian init project   this repo — SDK key in ./.env${kind === "project" ? "  ←" : ""}`,
-    `  caspian init agent     an AI agent — CLI secret, then channels / call${kind === "agent" ? "  ←" : ""}`,
+    `  caspian init agent     an AI agent — CLI + ./.env + .caspian/AGENT.md${kind === "agent" ? "  ←" : ""}`,
   ].join("\n")
 
 const nextSteps = (kind: InitKind, cliPath: string): ReadonlyArray<string> => {
@@ -63,12 +114,12 @@ const nextSteps = (kind: InitKind, cliPath: string): ReadonlyArray<string> => {
       ]
     case "agent":
       return [
-        `CLI secret stored in ${cliPath}.`,
+        `CLI secret stored in ${cliPath}. Wrote ./.env for the SDK.`,
+        `Wrote ${AGENT_PLAYBOOK_PATH} (how the agent should call caspian).`,
         "Next:",
         "  caspian channels add telegram",
         "  caspian catalog",
         "  caspian call post --thread … --text …",
-        "This repo's SDK can get a key with: caspian init project",
         `Add credit:  ${DASHBOARD_URL}`,
       ]
   }
@@ -85,6 +136,9 @@ export const runInit = (
   io: InitIO,
 ): Effect.Effect<InitResult, UsageError> =>
   Effect.gen(function* () {
+    const kind: InitKind =
+      plan.kind === "ask" ? yield* io.chooseKind() : plan.kind
+
     const haveKey =
       io.existingApiKey !== undefined && io.existingApiKey !== ""
     const needLogin = plan.force || !haveKey
@@ -111,22 +165,27 @@ export const runInit = (
       CASPIAN_BASE_URL: baseUrl,
     }
     yield* io.writeCliSecret(values)
-    if (plan.kind === "project") {
+    if (kind === "project" || kind === "agent") {
       yield* io.writeProjectEnv(values)
+    }
+    if (kind === "agent") {
+      yield* io.writePlaybook(AGENT_PLAYBOOK)
     }
 
     const lines = [
-      orientation(plan.kind),
+      orientation(kind),
       "",
       signedIn ? "Signed in." : "Using existing CASPIAN_API_KEY.",
       ...(projectId !== "" ? [`Project ${projectId}`] : []),
-      ...nextSteps(plan.kind, io.cliSecretPath),
+      ...nextSteps(kind, io.cliSecretPath),
     ]
     return {
-      kind: plan.kind,
+      kind,
       signedIn,
       api_key: apiKey,
       project_id: projectId,
       lines,
     }
   })
+
+export const failAsk = (): UsageError => new UsageError({ reason: ASK_NEEDED })

@@ -7,7 +7,7 @@
 import { DEFAULT_BASE_URL } from "caspian"
 import * as Effect from "effect/Effect"
 import { UsageError } from "./errors.ts"
-import type { InitKind, Intent, Via } from "./intent.ts"
+import type { Intent, Via } from "./intent.ts"
 
 export { UsageError } from "./errors.ts"
 
@@ -38,8 +38,10 @@ export const helpText = (): string =>
   caspian threads ls [--channel CHANNEL]
   caspian threads tail [THREAD]
 
-init cli (default) stores the key in ~/.caspian/.env — not this repo's .env.
-init project also writes ./.env for the SDK. init agent is CLI secret + next steps.
+init asks cli / project / agent. Pass a kind to skip the question.
+init cli stores the key in ~/.caspian/.env — not this repo's .env.
+init project also writes ./.env for the SDK.
+init agent writes CLI secret, ./.env, and .caspian/AGENT.md.
 
 Hosted jobs (channels add/ls, call, threads) need a key:
   --api-key KEY [--gateway URL]
@@ -207,7 +209,7 @@ const toIntent = (
     if (positional[2] !== undefined) {
       return fail("use: caspian init [cli|project|agent]")
     }
-    const kind: InitKind = kindTok ?? "cli"
+    const kind = kindTok ?? "ask"
     return Effect.succeed({
       _tag: "Init",
       kind,

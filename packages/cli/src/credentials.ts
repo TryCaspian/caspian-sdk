@@ -105,6 +105,21 @@ export const writeEnvFileEffect = (
       }),
   })
 
+export const writeTextFileEffect = (
+  path: string,
+  text: string,
+): Effect.Effect<void, UsageError> =>
+  Effect.try({
+    try: () => {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, text)
+    },
+    catch: (cause) =>
+      new UsageError({
+        reason: cause instanceof Error ? cause.message : String(cause),
+      }),
+  })
+
 const first = (
   sources: ReadonlyArray<(key: string) => string | undefined>,
   keys: ReadonlyArray<string>,

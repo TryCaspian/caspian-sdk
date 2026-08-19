@@ -64,6 +64,59 @@ test("binary init cli stores the key in CASPIAN_HOME, not cwd .env", async () =>
   expect(existsSync(join(cwd, ".env"))).toBe(false)
 })
 
+test("binary init without a kind asks (non-TTY lists the choices)", async () => {
+  const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
+  const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))
+  const proc = Bun.spawn(["bun", join(import.meta.dir, "../src/main.ts"), "init"], {
+    cwd,
+    env: {
+      ...bareEnv(),
+      CASPIAN_HOME: secret,
+      CASPIAN_API_KEY: "ck_test",
+      CASPIAN_BASE_URL: "https://gw.example",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const err = await new Response(proc.stderr).text()
+  expect(await proc.exited).toBe(1)
+  expect(err).toContain("What are you setting up?")
+  expect(err).toContain("caspian init cli")
+  expect(err).toContain("caspian init project")
+  expect(err).toContain("caspian init agent")
+  expect(existsSync(join(secret, ".env"))).toBe(false)
+  expect(existsSync(join(cwd, ".env"))).toBe(false)
+})
+
+test("binary init agent writes .env and .caspian/AGENT.md", async () => {
+  const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
+  const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))
+  const proc = Bun.spawn(
+    ["bun", join(import.meta.dir, "../src/main.ts"), "init", "agent"],
+    {
+      cwd,
+      env: {
+        ...bareEnv(),
+        CASPIAN_HOME: secret,
+        CASPIAN_API_KEY: "ck_test",
+        CASPIAN_BASE_URL: "https://gw.example",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const out = await new Response(proc.stdout).text()
+  expect(await proc.exited).toBe(0)
+  expect(out).toContain(".caspian/AGENT.md")
+  expect(parseDotenv(readFileSync(join(secret, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
+    "ck_test",
+  )
+  expect(parseDotenv(readFileSync(join(cwd, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
+    "ck_test",
+  )
+  expect(readFileSync(join(cwd, ".caspian/AGENT.md"), "utf8")).toContain("caspian call")
+})
+
 test("binary init project writes ./.env for the SDK and the CLI secret", async () => {
   const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
   const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))

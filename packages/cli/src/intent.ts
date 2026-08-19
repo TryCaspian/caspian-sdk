@@ -60,9 +60,12 @@ export type Login = {
 
 export type InitKind = "cli" | "project" | "agent"
 
+/** Bare `caspian init` asks; a kind skips the question. */
+export type InitTarget = InitKind | "ask"
+
 export type Init = {
   readonly _tag: "Init"
-  readonly kind: InitKind
+  readonly kind: InitTarget
   readonly open: boolean
   readonly gateway: string
   readonly force: boolean

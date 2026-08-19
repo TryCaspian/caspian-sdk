@@ -2,6 +2,7 @@
 /**
  * caspian — thin Effect client of the rewrite B surface.
  */
+import * as readline from "node:readline"
 import {
   DEFAULT_BASE_URL,
   httpGatewayClient,
@@ -14,10 +15,18 @@ import {
   readFileText,
   resolveCredentials,
   writeEnvFileEffect,
+  writeTextFileEffect,
 } from "./credentials.ts"
 import { helpText, parseCli, UsageError } from "./desugar.ts"
 import { DASHBOARD_URL, hostedNeeded } from "./errors.ts"
-import { runInit } from "./init.ts"
+import {
+  AGENT_PLAYBOOK_PATH,
+  ASK_PROMPT,
+  failAsk,
+  parseInitChoice,
+  runInit,
+} from "./init.ts"
+import type { InitKind } from "./intent.ts"
 import { runLogin, type LoginIO } from "./login.ts"
 import { planIntent } from "./plan.ts"
 import { runPlan } from "./run.ts"
@@ -52,6 +61,34 @@ const writeProjectEnv = (values: {
   readonly CASPIAN_API_KEY: string
   readonly CASPIAN_BASE_URL: string
 }) => writeEnvFileEffect(".env", values)
+
+const writePlaybook = (text: string) =>
+  writeTextFileEffect(AGENT_PLAYBOOK_PATH, text)
+
+const chooseKind = (): Effect.Effect<InitKind, UsageError> => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return Effect.fail(failAsk())
+  }
+  return Effect.tryPromise({
+    try: () =>
+      new Promise<InitKind>((resolve, reject) => {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        })
+        rl.question(ASK_PROMPT, (answer) => {
+          rl.close()
+          const kind = parseInitChoice(answer)
+          if (kind === undefined) {
+            reject(failAsk())
+            return
+          }
+          resolve(kind)
+        })
+      }),
+    catch: (cause) => (cause instanceof UsageError ? cause : failAsk()),
+  })
+}
 
 const openUrl = (url: string): void => {
   const command =
@@ -116,6 +153,8 @@ const program = Effect.gen(function* () {
       login: loginIO(creds.apiKey),
       writeCliSecret,
       writeProjectEnv,
+      writePlaybook,
+      chooseKind,
       cliSecretPath: cliSecretPath(),
       ...(creds.apiKey !== undefined && creds.apiKey !== ""
         ? { existingApiKey: creds.apiKey }
