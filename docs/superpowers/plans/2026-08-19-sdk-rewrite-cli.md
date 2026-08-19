@@ -15,10 +15,11 @@ The PRD example block listed `call post`, `slack post`, `telegram send-photo`, a
 | Job | The one command | Not also |
 |---|---|---|
 | Get a key | `caspian login` / `caspian init` | — |
-| Get an identity | `caspian channels add \| ls \| watch` | `connect`, `status`, `listen` |
+| Mint / list identities | `caspian channels add` / `caspian channels ls` | `connect`, `status`, `watch` |
 | Find what you can do | `caspian catalog` / `search` / `get` | invoking from catalog |
 | **Do something** (send, edit, react, photo, dm) | **`caspian call <id>`** | `caspian slack post`, `caspian telegram send-photo`, `caspian threads reply` |
-| Read a conversation | `caspian threads ls \| tail` | reply/post/send |
+| List conversations | `caspian threads ls` | — |
+| Follow events | `caspian threads tail` | `channels watch`, `listen` |
 
 `caspian call` is `cx.tools({ preset: "outbound" })`. Every catalog row is a `call` id. Abstract: `caspian call post`. Native: `caspian call telegram.send-photo`. Same command, different id. Adding a channel adds catalog rows, not argv programs.
 
@@ -30,7 +31,6 @@ caspian channels add discord --name Maya
 caspian channels add telegram --via self-host --bot-token "$TG" \
   --webhook-url https://myapp.example.com/hook
 caspian channels ls
-caspian channels watch
 
 caspian catalog
 caspian catalog search "send a photo"
@@ -45,6 +45,10 @@ caspian threads tail telegram:123:456
 ```
 
 `threads reply … --text` is `call post`. Do not ship it. If someone types it, exit with `use: caspian call post --thread … --text …`.
+
+`channels watch` is `threads tail` without a thread id. Do not ship it. If someone types it, exit with `use: caspian threads tail`.
+
+`channels add` and `channels ls` are not the same: add mints a connection; ls prints connections. `threads ls` and `threads tail` are not the same: ls lists conversations (a table, then exit); tail follows events (a stream). Different resources (`connections` vs `conversations` vs `events`), so the same verb `ls` on `channels` vs `threads` is correct — it is not a second send path.
 
 ## Global Constraints
 
@@ -64,7 +68,7 @@ caspian threads tail telegram:123:456
 
 | Path | Role |
 |---|---|
-| `apps/cli/src/caspian_cli/argv.py` | argparse: `channels`, `call`, `catalog`, `threads`, `login`, `init` |
+| `apps/cli/src/caspian_cli/argv.py` | argparse: `channels` (`add\|ls`), `call`, `catalog`, `threads` (`ls\|tail`), `login`, `init` |
 | `apps/cli/src/caspian_cli/intent.py` | frozen dataclasses: `Intent` union |
 | `apps/cli/src/caspian_cli/desugar.py` | `argv → Intent` (pure) |
 | `apps/cli/src/caspian_cli/catalog.py` | load `vectors/cli_catalog.json` |
@@ -109,11 +113,6 @@ class ChannelsLs:
 
 
 @dataclass(frozen=True)
-class ChannelsWatch:
-    pass
-
-
-@dataclass(frozen=True)
 class Call:
     """The only mutate/send intent. `id` is a catalog id (`post`, `telegram.send-photo`)."""
     id: str
@@ -146,7 +145,7 @@ class ThreadsTail:
 
 
 Intent = (
-    ChannelsAdd | ChannelsLs | ChannelsWatch | Call
+    ChannelsAdd | ChannelsLs | Call
     | CatalogList | CatalogSearch | CatalogGet
     | ThreadsLs | ThreadsTail
 )
@@ -246,7 +245,7 @@ Expected: FAIL with `ModuleNotFoundError: caspian_cli.desugar`.
 
 - [ ] **Step 3: Write minimal argparse + desugar**
 
-Subparsers: `channels` (`add|ls|watch`), `call` (id is a free string looked up later), `catalog`, `threads` (`ls|tail` only). Omit `--via` → `"hosted"`. `call post` → `Call(id="post", …)`. Do not implement HTTP.
+Subparsers: `channels` (`add|ls`), `call` (id is a free string looked up later), `catalog`, `threads` (`ls|tail`). Omit `--via` → `"hosted"`. `call post` → `Call(id="post", …)`. `channels watch` and `threads reply` are SystemExit pointing at the one command. Do not implement HTTP.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -510,9 +509,8 @@ git commit -m "feat(cli): caspian call post is the only text send"
 - Create: `apps/cli/tests/test_threads.py`
 
 **Interfaces:**
-- `threads ls --channel telegram` → `GET /v1/conversations` (filter by channel prefix if needed)
-- `threads tail telegram:123:456` → `GET /v1/events` once in tests (`max_events=1`)
-- `channels watch` → same events poll without a thread filter
+- `threads ls --channel telegram` → `GET /v1/conversations` (filter by channel prefix if needed). Snapshot, then exit.
+- `threads tail [thread_id]` → `GET /v1/events` once in tests (`max_events=1`). Optional thread id; omitting it follows every conversation. This is the only event stream.
 
 No reply.
 
@@ -600,6 +598,7 @@ git commit -m "feat(cli): replace connect-era surface with one-way namespaces"
 | `caspian telegram send-photo` as argv | Duplicate of `caspian call telegram.send-photo` |
 | `caspian slack post` | Duplicate of `caspian call post --thread slack:…` |
 | `caspian threads reply` | Duplicate of `caspian call post` |
+| `caspian channels watch` | Duplicate of `caspian threads tail` |
 | MCP | Same four nouns later |
 | Billing / topup / domains | CommClient-era |
 | Importing adapters | CLI law |
@@ -612,7 +611,8 @@ git commit -m "feat(cli): replace connect-era surface with one-way namespaces"
 | PRD example | What we ship |
 |---|---|
 | `caspian login` | Task 7 (keep) |
-| `channels add/ls/watch` | 1, 3, 5 |
+| `channels add/ls` | 1, 3 |
+| `channels watch` | rejected; tell user to `threads tail` |
 | `call post --thread telegram:…` | 1, 4 |
 | `call post --thread slack:…` | 4 (same command) |
 | `telegram send-photo` | `call telegram.send-photo` (2, 6) |
