@@ -61,12 +61,12 @@ export const runPlan = (
       )
     case "Local":
       return Effect.succeed(plan.value)
-    case "Init":
-      return Effect.succeed({
-        gateway: plan.gateway,
-        name: plan.name,
-        force: plan.force,
-      })
+    case "Login":
+      return Effect.fail(
+        new UsageError({
+          reason: "login is interactive; use the caspian binary",
+        }),
+      )
   }
 }
 

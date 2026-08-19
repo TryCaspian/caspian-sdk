@@ -55,13 +55,7 @@ export type ThreadsTail = {
 export type Login = {
   readonly _tag: "Login"
   readonly open: boolean
-}
-
-export type Init = {
-  readonly _tag: "Init"
   readonly gateway: string
-  readonly name: string
-  readonly force: boolean
 }
 
 export type Intent =
@@ -74,4 +68,3 @@ export type Intent =
   | ThreadsLs
   | ThreadsTail
   | Login
-  | Init

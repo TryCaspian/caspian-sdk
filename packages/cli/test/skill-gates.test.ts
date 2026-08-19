@@ -109,12 +109,13 @@ test("self-host without a bot token is unplannable", () => {
   expect(left(planIntent(intent)).reason).toContain("--bot-token")
 })
 
-test("init is a Plan, not a run-time special case", () => {
-  const intent = sync(parseArgv(["init", "--name", "demo"]))
+test("login is a Plan, not a hosted Gateway request", () => {
+  const intent = sync(parseArgv(["login", "--open", "--gateway", "https://gw.example"]))
   const plan = sync(planIntent(intent))
-  expect(plan._tag).toBe("Init")
-  if (plan._tag === "Init") {
-    expect(plan.name).toBe("demo")
+  expect(plan._tag).toBe("Login")
+  if (plan._tag === "Login") {
+    expect(plan.gateway).toBe("https://gw.example")
+    expect(plan.open).toBe(true)
   }
 })
 

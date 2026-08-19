@@ -25,7 +25,6 @@ const hostedJobs = [
   ["call", "post", "--thread", "telegram:1", "--text", "hi"],
   ["threads", "ls"],
   ["threads", "tail"],
-  ["login"],
 ] as const
 
 test("hostedNeeded names flags, env, and signup", () => {
@@ -36,6 +35,8 @@ test("hostedNeeded names flags, env, and signup", () => {
   expect(reason).toContain("CASPIAN_BASE_URL")
   expect(reason).toContain(DASHBOARD_URL)
   expect(reason.includes("connect")).toBe(false)
+  expect(reason).toContain("caspian login")
+  expect(reason).not.toContain("caspian init")
 })
 
 for (const argv of hostedJobs) {
@@ -127,4 +128,6 @@ test("binary call without a key asks to pass, env, or sign up", async () => {
   expect(err).toContain("CASPIAN_API_KEY")
   expect(err).toContain("--gateway")
   expect(err).toContain(DASHBOARD_URL)
+  expect(err).toContain("caspian login")
+  expect(err).not.toContain("caspian init")
 })

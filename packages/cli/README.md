@@ -5,8 +5,7 @@ invokes. Channels and threads are resources. This is not the CommClient-era
 `connect` / `listen` / `billing` CLI.
 
 ```bash
-# hosted needs a key: --api-key, CASPIAN_API_KEY, or sign up
-# caspian init   # optional: mint a sandbox key into .env
+caspian login                   # sign in in the browser; writes the key to .env
 
 caspian channels add telegram
 caspian channels add discord --name Maya
@@ -28,7 +27,7 @@ caspian threads tail telegram:123:456
 
 | Job | The one command | Not also |
 |---|---|---|
-| Key | `--api-key` / `CASPIAN_API_KEY` / signup | `caspian init` is optional sandbox |
+| Key | `caspian login` (browser sign-in) / `--api-key` / `CASPIAN_API_KEY` | `caspian init`, sandbox mint |
 | Identity | `caspian channels add` / `ls` | `connect`, `status`, `watch` |
 | Discover | `caspian catalog` / `search` / `get` | invoking from catalog |
 | Do | **`caspian call <id>`** | `slack post`, `telegram send-photo` argv, `threads reply` |
@@ -36,13 +35,13 @@ caspian threads tail telegram:123:456
 | Follow events | `caspian threads tail` | `channels watch`, `listen` |
 
 Omit `--via` means hosted. Thread ids are `telegram:…` / `slack:…`, never a
-platform chat id. Hosted jobs need a key: `--api-key` / `CASPIAN_API_KEY`,
-optional `--gateway` / `CASPIAN_BASE_URL`, or sign up at
-https://dashboard.trycaspianai.com. Catalog and self-host
-`channels add` do not. `caspian init` is optional (sandbox key into `.env`).
+platform chat id. Hosted jobs need a key: `caspian login` (device-auth sign-in
+writes `CASPIAN_API_KEY` to `.env`), or `--api-key` / `CASPIAN_API_KEY`,
+optional `--gateway` / `CASPIAN_BASE_URL`. Catalog and self-host
+`channels add` do not.
 
 Argv desugars to `Intent` (syntax). `planIntent` is the denotation: a `Plan`
-(gateway request, local catalog value, or init). `runPlan` is one interpreter;
+(gateway request, local catalog value, or login). `runPlan` is one interpreter;
 `fakeGatewayClient` / `chaosGatewayClient` are the others. Failure is
 `UsageError` data.
 

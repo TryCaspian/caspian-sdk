@@ -9,4 +9,6 @@ test("help lists namespaces not connect", () => {
   expect(text).toContain("--api-key")
   expect(text).toContain("https://dashboard.trycaspianai.com")
   expect(text.includes("connect")).toBe(false)
+  expect(text.includes("init")).toBe(false)
+  expect(text.includes("sandbox")).toBe(false)
 })

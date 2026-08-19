@@ -14,4 +14,17 @@ test("binary --help lists namespaces not connect", async () => {
     expect(text).toContain(name)
   }
   expect(text.includes("connect")).toBe(false)
+  expect(text.includes("init")).toBe(false)
+})
+
+test("binary init points at login, not sandbox", async () => {
+  const proc = Bun.spawn(["bun", "src/main.ts", "init"], {
+    cwd: join(import.meta.dir, ".."),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const err = await new Response(proc.stderr).text()
+  expect(await proc.exited).toBe(1)
+  expect(err).toContain("caspian login")
+  expect(err).not.toContain("sandbox")
 })

@@ -16,7 +16,7 @@ The PRD example block listed `call post`, `slack post`, `telegram send-photo`, a
 
 | Job | The one command | Not also |
 |---|---|---|
-| Get a key | `caspian login` / `caspian init` | — |
+| Get a key | `caspian login` | `caspian init`, sandbox mint |
 | Mint / list identities | `caspian channels add` / `caspian channels ls` | `connect`, `status`, `watch` |
 | Find what you can do | `caspian catalog` / `search` / `get` | invoking from catalog |
 | **Do something** (send, edit, react, photo, dm) | **`caspian call <id>`** | `caspian slack post`, `caspian telegram send-photo`, `caspian threads reply` |

@@ -16,6 +16,7 @@ export const hostedNeeded = (): UsageError =>
       "This command needs the hosted Caspian gateway.",
       "Pass --api-key KEY and optionally --gateway URL,",
       "or set CASPIAN_API_KEY and CASPIAN_BASE_URL (env or .env),",
-      `or sign up at ${DASHBOARD_URL} and paste the key.`,
+      "or run caspian login (sign in in the browser; the key is written to .env),",
+      `or sign up at ${DASHBOARD_URL}`,
     ].join("\n"),
   })

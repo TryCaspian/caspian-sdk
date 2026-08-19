@@ -11,7 +11,8 @@ import {
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import { helpText, parseCli, UsageError } from "./desugar.ts"
-import { hostedNeeded } from "./errors.ts"
+import { DASHBOARD_URL, hostedNeeded } from "./errors.ts"
+import { runLogin } from "./login.ts"
 import { planIntent } from "./plan.ts"
 import { runPlan } from "./run.ts"
 
@@ -66,6 +67,54 @@ const clientOf = (
   return Effect.succeed(httpGatewayClient(apiKey, baseUrl ?? DEFAULT_BASE_URL))
 }
 
+const mergeEnv = (
+  prev: string,
+  values: { readonly [key: string]: string },
+): string => {
+  const keys = new Set(Object.keys(values))
+  const lines = prev.split("\n").filter((line) => {
+    const key = line.split("=", 1)[0]?.trim() ?? ""
+    return key === "" || !keys.has(key)
+  })
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop()
+  }
+  for (const [key, value] of Object.entries(values)) {
+    lines.push(`${key}=${value}`)
+  }
+  return `${lines.join("\n")}\n`
+}
+
+const writeEnv = (values: {
+  readonly CASPIAN_API_KEY: string
+  readonly CASPIAN_BASE_URL: string
+}): Effect.Effect<void, UsageError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const file = Bun.file(".env")
+      const prev = (await file.exists()) ? await file.text() : ""
+      await Bun.write(".env", mergeEnv(prev, values))
+    },
+    catch: (cause) =>
+      new UsageError({
+        reason: cause instanceof Error ? cause.message : String(cause),
+      }),
+  })
+
+const openUrl = (url: string): void => {
+  const command =
+    process.platform === "darwin"
+      ? ["open", url]
+      : process.platform === "win32"
+        ? ["cmd", "/c", "start", "", url]
+        : ["xdg-open", url]
+  try {
+    Bun.spawn(command, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+  } catch {
+    // Printing the URL is enough; opening the browser is best-effort.
+  }
+}
+
 const print = (value: unknown): void => {
   if (typeof value === "string") {
     console.log(value)
@@ -82,74 +131,25 @@ const program = Effect.gen(function* () {
   }
   const parsed = yield* parseCli(argv)
   const plan = yield* planIntent(parsed.intent)
-  if (plan._tag === "Init") {
-    const existing = resolve(["CASPIAN_API_KEY", "COMM_API_KEY"])
-    if (existing !== undefined && !plan.force) {
-      console.log("CASPIAN_API_KEY already configured in .env (use --force to replace).")
-      return
-    }
-    const gateway = plan.gateway.replace(/\/$/, "")
-    const response = yield* Effect.tryPromise({
-      try: () =>
-        fetch(`${gateway}/v1/projects/sandbox`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: plan.name }),
-        }),
-      catch: (cause) =>
-        new UsageError({
-          reason: cause instanceof Error ? cause.message : String(cause),
-        }),
-    })
-    const text = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: (cause) =>
-        new UsageError({
-          reason: cause instanceof Error ? cause.message : String(cause),
-        }),
-    })
-    if (!response.ok) {
-      return yield* Effect.fail(
-        new UsageError({ reason: `Error ${response.status}: ${text}` }),
-      )
-    }
-    const data = yield* Effect.try({
-      try: () => JSON.parse(text) as { api_key?: string; project_id?: string },
-      catch: (cause) =>
-        new UsageError({
-          reason: cause instanceof Error ? cause.message : String(cause),
-        }),
-    })
-    const prev = yield* Effect.tryPromise({
-      try: async () => {
-        const file = Bun.file(".env")
-        return (await file.exists()) ? file.text() : ""
+
+  if (plan._tag === "Login") {
+    const result = yield* runLogin(plan, {
+      fetch,
+      wait: (ms) => Effect.sleep(`${ms} millis`),
+      writeEnv,
+      existingApiKey: resolve(["CASPIAN_API_KEY", "COMM_API_KEY"]),
+      openUrl,
+      onUrl: (url) => {
+        console.log("Sign in to Caspian:")
+        console.log(`\n  ${url}\n`)
+        console.log("Waiting for you to approve in the browser...")
       },
-      catch: (cause) =>
-        new UsageError({
-          reason: cause instanceof Error ? cause.message : String(cause),
-        }),
     })
-    const env = readDotenv(prev)
-    const next = {
-      ...env,
-      CASPIAN_API_KEY: data.api_key ?? "",
-      CASPIAN_BASE_URL: gateway,
+    console.log("\nSigned in. Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to .env")
+    if (result.project_id !== "") {
+      console.log(`Project ${result.project_id}`)
     }
-    const body =
-      Object.entries(next)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n") + "\n"
-    yield* Effect.tryPromise({
-      try: () => Bun.write(".env", body),
-      catch: (cause) =>
-        new UsageError({
-          reason: cause instanceof Error ? cause.message : String(cause),
-        }),
-    })
-    console.log(`Project ${data.project_id ?? ""} created.`)
-    console.log("Wrote CASPIAN_API_KEY and CASPIAN_BASE_URL to .env")
-    console.log("Next: caspian channels add telegram")
+    console.log(`Next: add credit in the dashboard:  ${DASHBOARD_URL}`)
     return
   }
 
@@ -158,19 +158,7 @@ const program = Effect.gen(function* () {
     return
   }
 
-  const result = yield* runPlan(
-    plan,
-    yield* clientOf(parsed.api_key, parsed.gateway),
-  )
-  if (parsed.intent._tag === "Login") {
-    const record = result as { readonly [key: string]: unknown }
-    const url =
-      record["verification_uri_complete"] ?? record["verification_uri"] ?? ""
-    console.log("Sign in to Caspian (one-time - enables paid channels):")
-    console.log(`\n  ${String(url)}\n`)
-    return
-  }
-  print(result)
+  print(yield* runPlan(plan, yield* clientOf(parsed.api_key, parsed.gateway)))
 })
 
 const result = await Effect.runPromise(Effect.either(program))

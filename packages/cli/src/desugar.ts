@@ -4,6 +4,7 @@
  * Rejected duplicate send/follow paths fail with the one command to use.
  * Tokenization returns UsageError data — it does not throw.
  */
+import { DEFAULT_BASE_URL } from "caspian"
 import * as Effect from "effect/Effect"
 import { UsageError } from "./errors.ts"
 import type { Intent, Via } from "./intent.ts"
@@ -16,18 +17,16 @@ const NOUNS = new Set([
   "catalog",
   "threads",
   "login",
-  "init",
   "help",
 ])
 
 export const USAGE =
-  "usage: caspian <channels|call|catalog|threads|login|init>"
+  "usage: caspian <channels|call|catalog|threads|login>"
 
 export const helpText = (): string =>
   `${USAGE}
 
-  caspian login
-  caspian init [--gateway URL] [--name NAME]
+  caspian login [--open] [--gateway URL]
   caspian channels add <channel> [--via hosted|self-host] [--name NAME]
   caspian channels ls
   caspian catalog
@@ -37,9 +36,10 @@ export const helpText = (): string =>
   caspian threads ls [--channel CHANNEL]
   caspian threads tail [THREAD]
 
-Hosted jobs (channels add/ls, call, threads, login) need a key:
+Hosted jobs (channels add/ls, call, threads) need a key:
   --api-key KEY [--gateway URL]
   or CASPIAN_API_KEY / CASPIAN_BASE_URL
+  or caspian login
   or sign up at https://dashboard.trycaspianai.com
 
 catalog is the phone book. call is the only phone.
@@ -70,7 +70,7 @@ const parseTokens = (
         options["inbound"] = false
         continue
       }
-      if (name === "inbound" || name === "open" || name === "force") {
+      if (name === "inbound" || name === "open") {
         options[name] = true
         continue
       }
@@ -182,15 +182,10 @@ const toIntent = (
   }
 
   if (noun === "login") {
-    return Effect.succeed({ _tag: "Login", open: flag(options, "open") })
-  }
-
-  if (noun === "init") {
     return Effect.succeed({
-      _tag: "Init",
-      gateway: str(options, "gateway", "https://api.trycaspianai.com"),
-      name: str(options, "name", "sandbox"),
-      force: flag(options, "force"),
+      _tag: "Login",
+      open: flag(options, "open"),
+      gateway: str(options, "gateway", DEFAULT_BASE_URL),
     })
   }
 
@@ -212,6 +207,9 @@ export const parseCli = (
     const head = argv[0]!
     if (head === "connect") {
       return yield* fail("use: caspian channels add")
+    }
+    if (head === "init") {
+      return yield* fail("use: caspian login")
     }
     if (head === "channels" && argv[1] === "watch") {
       return yield* fail("use: caspian threads tail")

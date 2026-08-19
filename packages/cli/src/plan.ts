@@ -2,7 +2,7 @@
  * Intent → Plan. The denotation. Pure. No HTTP.
  *
  * argv parses into Intent (syntax). This module says what that Intent *means*:
- * a gateway request, a local catalog value, or an init description. run.ts
+ * a gateway request, a local catalog value, or a login (device-auth). run.ts
  * is one interpreter of Plan; dry-run is just returning the Plan.
  */
 import {
@@ -39,14 +39,13 @@ export type LocalPlan = {
   readonly value: Json
 }
 
-export type InitPlan = {
-  readonly _tag: "Init"
+export type LoginPlan = {
+  readonly _tag: "Login"
   readonly gateway: string
-  readonly name: string
-  readonly force: boolean
+  readonly open: boolean
 }
 
-export type Plan = GatewayPlan | LocalPlan | InitPlan
+export type Plan = GatewayPlan | LocalPlan | LoginPlan
 
 const fail = (reason: string): Effect.Effect<never, UsageError> =>
   Effect.fail(new UsageError({ reason }))
@@ -182,16 +181,9 @@ export const planIntent = (intent: Intent): Effect.Effect<Plan, UsageError> => {
       })
     case "Login":
       return Effect.succeed({
-        _tag: "Gateway",
-        request: { method: "POST", path: "/v1/auth/device/start", body: {} },
-        filterChannel: "",
-      })
-    case "Init":
-      return Effect.succeed({
-        _tag: "Init",
+        _tag: "Login",
         gateway: intent.gateway,
-        name: intent.name,
-        force: intent.force,
+        open: intent.open,
       })
   }
 }
