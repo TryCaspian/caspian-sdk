@@ -10,7 +10,7 @@ import pytest
 from caspian.core.step import StepState, step
 from caspian.core.types import Action, App, Event, Message, Reaction
 
-VECTORS_PATH = Path(__file__).parent.parent.parent / "vectors" / "step_vectors.json"
+VECTORS_PATH = Path(__file__).resolve().parents[3] / "vectors" / "step_vectors.json"
 
 
 def load_vectors() -> list[dict]:

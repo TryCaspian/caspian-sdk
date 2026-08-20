@@ -1,4 +1,4 @@
-# Python rewrite (`python/`) — follow-ups
+# Python rewrite (`packages/python/`) — follow-ups
 
 Tracked against PR #185. Reviewed with the `.cursor` skills
 `sdk-reliability`, `functional-dsl`, `languages-as-libraries`, and
@@ -36,7 +36,7 @@ or `cx.channels.add(` does not explain the contract.
       Either implement `message & channel("telegram") & ~dm()` or delete
       that claim from `predicates.py` — there is no `__and__` / `__or__`
       / `__invert__`.
-- [ ] Add `python/README.md`: install, `on_message` + `handle` /
+- [ ] Add `packages/python/README.md`: install, `on_message` + `handle` /
       `poll` / `run`, hosted vs self-host, how to type a handler.
 - [ ] Export `Stream` from `Thread`’s public surface; document
       `thread.stream()` as the Chat-SDK equivalent of the published
@@ -73,10 +73,10 @@ or `cx.channels.add(` does not explain the contract.
       outbound HTTP, no SLO/health surface. Overlap bound is the only
       explicit limit; `_pending` is a dict of latest-per-key (fine) but
       unbounded in the number of keys.
-- [ ] **Change.** `python/` is not in the uv workspace or CI
-      `testpaths` (root `pyproject.toml` still tests `sdks/python`
-      only). No API-diff / semver gate. Hosted paths never hit the live
-      gateway.
+- [ ] **Change.** Root workspace members=`["packages/python"]` and
+      `testpaths = ["packages/python/tests"]` (legacy `sdks/python`
+      removed). Still missing: API-diff / semver gate; hosted paths never
+      hit the live gateway.
 - [ ] **Critical-path hygiene.** `ProcessInterpreter` uses
       `getattr(adapter, "verify"|"acknowledge"|"channel_of")` — those
       methods are not on `AdapterPort`, so the CP is structurally
@@ -189,7 +189,7 @@ frozen models). Remaining:
 - [ ] Golden vectors cover message/action/reaction only; newer events
       (`Edited`, `Deleted`, `MemberJoin`, …) and STREAM overlap have
       no shared vector. TS parity cannot be claimed until they do.
-- [ ] `python/` still not in CI — the skill says make core contracts a
+- [ ] `packages/python/` still not in CI — the skill says make core contracts a
       **build error**, not a review habit.
 - [ ] Cannot register an event webhook URL (`PUT /v1/webhook`).
       Receiving a pushed event works; announcing the URL does not.
