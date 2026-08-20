@@ -1,0 +1,175 @@
+[
+  {
+    "name": "Post becomes sendMessage",
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "alice",
+      "raw": {}
+    },
+    "commands": [
+      {
+        "tag": "Post",
+        "thread_id": "telegram:123",
+        "text": "hi",
+        "actions": []
+      }
+    ],
+    "expected_calls": [
+      { "method": "sendMessage", "body": { "chat_id": "123", "text": "hi" } }
+    ]
+  },
+  {
+    "name": "Post with actions becomes inline keyboard",
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "alice",
+      "raw": {}
+    },
+    "commands": [
+      {
+        "tag": "Post",
+        "thread_id": "telegram:123",
+        "text": "pick",
+        "actions": [{ "text": "Done", "data": "done" }]
+      }
+    ],
+    "expected_calls": [
+      {
+        "method": "sendMessage",
+        "body": {
+          "chat_id": "123",
+          "text": "pick",
+          "reply_markup": {
+            "inline_keyboard": [[{ "text": "Done", "callback_data": "done" }]]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "Edit becomes editMessageText",
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "alice",
+      "raw": {}
+    },
+    "commands": [
+      {
+        "tag": "Edit",
+        "thread_id": "telegram:123",
+        "message_id": "10",
+        "text": "later"
+      }
+    ],
+    "expected_calls": [
+      {
+        "method": "editMessageText",
+        "body": { "chat_id": "123", "message_id": "10", "text": "later" }
+      }
+    ]
+  },
+  {
+    "name": "Typing becomes sendChatAction",
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "alice",
+      "raw": {}
+    },
+    "commands": [
+      { "tag": "Typing", "thread_id": "telegram:123" }
+    ],
+    "expected_calls": [
+      {
+        "method": "sendChatAction",
+        "body": { "chat_id": "123", "action": "typing" }
+      }
+    ]
+  },
+  {
+    "name": "React becomes setMessageReaction",
+    "event": {
+      "kind": "message",
+      "thread_id": "telegram:123",
+      "text": "hello",
+      "chat_kind": "dm",
+      "sender": "alice",
+      "raw": {}
+    },
+    "commands": [
+      {
+        "tag": "React",
+        "thread_id": "telegram:123",
+        "message_id": "10",
+        "emoji": "👍"
+      }
+    ],
+    "expected_calls": [
+      {
+        "method": "setMessageReaction",
+        "body": {
+          "chat_id": "123",
+          "message_id": "10",
+          "reaction": [{ "type": "emoji", "emoji": "👍" }]
+        }
+      }
+    ]
+  },
+  {
+    "name": "Action turn acks then posts",
+    "event": {
+      "kind": "action",
+      "thread_id": "telegram:123",
+      "data": "done",
+      "sender": "alice",
+      "raw": {
+        "update_id": 3,
+        "callback_query": {
+          "id": "cb1",
+          "from": { "id": 42 },
+          "message": { "message_id": 10, "chat": { "id": 123, "type": "private" } },
+          "data": "done"
+        }
+      }
+    },
+    "commands": [
+      {
+        "tag": "Post",
+        "thread_id": "telegram:123",
+        "text": "ok",
+        "actions": []
+      }
+    ],
+    "expected_calls": [
+      { "method": "answerCallbackQuery", "body": { "callback_query_id": "cb1" } },
+      { "method": "sendMessage", "body": { "chat_id": "123", "text": "ok" } }
+    ]
+  },
+  {
+    "name": "Action turn with no commands still acks",
+    "event": {
+      "kind": "action",
+      "thread_id": "telegram:123",
+      "data": "done",
+      "sender": "alice",
+      "raw": {
+        "callback_query": { "id": "cb1" }
+      }
+    },
+    "commands": [],
+    "expected_calls": [
+      { "method": "answerCallbackQuery", "body": { "callback_query_id": "cb1" } }
+    ]
+  }
+]

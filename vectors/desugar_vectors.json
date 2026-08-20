@@ -1,0 +1,93 @@
+[
+  {
+    "name": "onMessage with no options is message + queue/16",
+    "method": "onMessage",
+    "options": {},
+    "handler_id": "onMessage:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "message"},
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "onMessage:0"
+        }
+      ]
+    }
+  },
+  {
+    "name": "onMessage kind is chat_kind, not event kind",
+    "method": "onMessage",
+    "options": {"channel": "telegram", "kind": "dm", "overlap": "queue"},
+    "handler_id": "onMessage:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {
+            "op": "and",
+            "left": {
+              "op": "and",
+              "left": {"op": "kind", "kind": "message"},
+              "right": {"op": "channel", "channels": ["telegram"]}
+            },
+            "right": {"op": "chat_kind", "chat_kind": "dm"}
+          },
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "onMessage:0"
+        }
+      ]
+    }
+  },
+  {
+    "name": "onMessage channel list",
+    "method": "onMessage",
+    "options": {"channel": ["discord", "telegram"]},
+    "handler_id": "onMessage:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {
+            "op": "and",
+            "left": {"op": "kind", "kind": "message"},
+            "right": {"op": "channel", "channels": ["discord", "telegram"]}
+          },
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "onMessage:0"
+        }
+      ]
+    }
+  },
+  {
+    "name": "onAction defaults to drop/16",
+    "method": "onAction",
+    "options": {},
+    "handler_id": "onAction:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {"op": "kind", "kind": "action"},
+          "overlap": {"policy": "drop", "bound": 16},
+          "handler_id": "onAction:0"
+        }
+      ]
+    }
+  },
+  {
+    "name": "onAction with overlap drop and channel",
+    "method": "onAction",
+    "options": {"channel": "telegram", "overlap": "drop"},
+    "handler_id": "onAction:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {
+            "op": "and",
+            "left": {"op": "kind", "kind": "action"},
+            "right": {"op": "channel", "channels": ["telegram"]}
+          },
+          "overlap": {"policy": "drop", "bound": 16},
+          "handler_id": "onAction:0"
+        }
+      ]
+    }
+  }
+]
