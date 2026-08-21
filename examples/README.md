@@ -1,38 +1,42 @@
-# Examples
+# Self-host examples
 
-Minimal, runnable agents built on `caspian-sdk`. Each file is self-contained and
-documented at the top - read the docstring, set your API key, and run it.
+One Python example per catalog adapter. Handlers live in `examples/<channel>/app.py`
+as `register(cx)`. The process file (`bot.py`, or `hosted.py` for hosted Telegram)
+only does paperwork: `channels.add(via="self-host", …)` plus the inbound loop.
 
-**New here?** Start with [`email_triage.py`](./email_triage.py) or
-[`autoreply.py`](./autoreply.py) (or its TypeScript equivalent,
-[`autoreply.ts`](./autoreply.ts)) - they run with just an API key (email works
-on the hosted gateway out of the box). The others need channel credentials (a
-bot token, a Slack app, or a carrier account), noted in the Setup column below.
+Webhook channels share [`serve.py`](serve.py) — POST → `cx.handle(channel, body,
+headers)` with optional Meta GET challenge, X CRC, or TwiML response. Socket
+channels (Discord, Slack) use `cx.listen()` instead.
 
-## Prerequisites
+Per-channel run instructions and provider setup are in each `examples/<channel>/README.md`.
+Copy `.env.example` to `.env` and fill in secrets (never commit tokens).
 
-- Set `CASPIAN_API_KEY` (get one from the [dashboard](https://dashboard.trycaspianai.com)).
-- `CASPIAN_BASE_URL` is optional - it defaults to the hosted gateway at
-  `https://api.trycaspianai.com`.
-
-```bash
-export CASPIAN_API_KEY=...
-uv run python examples/<file>.py       # Python examples
-npx tsx examples/autoreply.ts          # TypeScript example
-```
+**Hosted-all-channels is out of scope for this tree.** Telegram hosted already
+exists as `examples/telegram/hosted.py` (same handlers, gateway owns inbound).
+See the [self-host adapter examples plan](../docs/superpowers/plans/2026-08-21-self-host-adapter-examples.md).
 
 ## Index
 
-| File | What it shows | Channel | Setup |
-| --- | --- | --- | --- |
-| [`autoreply.py`](./autoreply.py) | The core loop: connect, `on_message`, `listen` | Email | API key only |
-| [`autoreply.ts`](./autoreply.ts) | TypeScript version of `autoreply.py` - same flow, no build/publish step required | Email | API key only |
-| [`email_triage.py`](./email_triage.py) | Keyword-classify inbound mail and reply per category | Email | API key only |
-| [`one_handler_three_channels.py`](./one_handler_three_channels.py) | One `on_message` handler serving three channels at once | Discord + Telegram + Email | Discord + Telegram bot tokens |
-| [`slack_support_bot.py`](./slack_support_bot.py) | One-click install + replies with rich message blocks | Slack | Open the printed install URL |
-| [`slack_slow_agent.py`](./slack_slow_agent.py) | `listen(ack=)` so a slow handler survives Slack's timing | Slack | Bring-your-own Slack app creds |
-| [`telegram_reminders.py`](./telegram_reminders.py) | Agent-initiated reminder via `send_message` | Telegram | Telegram bot token |
-| [`reminder.py`](./reminder.py) | Proactive cold-start with `initiate()` | SMS | Bring-your-own carrier (Twilio/Telnyx) |
+| Channel | Script | Inbound verb | Required env |
+|---|---|---|---|
+| [discord](discord/) | `bot.py` | `listen("discord")` | `DISCORD_BOT_TOKEN` |
+| [slack](slack/) | `bot.py` | `listen("slack")` | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_SIGNING_SECRET` |
+| [telegram](telegram/) (self-host) | `bot.py` | `handle("telegram", …)` | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `PORT` (`TELEGRAM_WEBHOOK_SECRET` optional) |
+| [telegram](telegram/) (hosted) | `hosted.py` | `run()` → `handle("gateway", …)` | `TELEGRAM_BOT_TOKEN`, `CASPIAN_API_KEY` |
+| [email](email/) | `bot.py` | `handle("email", …)` via `serve()` | `EMAIL_FROM`, `PORT` |
+| [sms](sms/) | `bot.py` | `handle("sms", …)` via `serve()` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `SMS_WEBHOOK_URL`, `PORT` |
+| [voice](voice/) | `bot.py` | `handle("voice", …)` via `serve(twiml=True)` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `VOICE_WEBHOOK_URL`, `PORT` |
+| [whatsapp](whatsapp/) | `bot.py` | `handle("whatsapp", …)` via `serve(verify_token=…)` | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `PORT` |
+| [messenger](messenger/) | `bot.py` | `handle("messenger", …)` via `serve(verify_token=…)` | `MESSENGER_PAGE_ACCESS_TOKEN`, `MESSENGER_APP_SECRET`, `MESSENGER_VERIFY_TOKEN`, `PORT` |
+| [imessage](imessage/) | `bot.py` | `handle("imessage", …)` via `serve()` | `IMESSAGE_API_KEY`, `IMESSAGE_WEBHOOK_SECRET`, `IMESSAGE_RELAY_URL`, `PORT` |
+| [linear](linear/) | `bot.py` | `handle("linear", …)` via `serve()` | `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `PORT` |
+| [x](x/) | `bot.py` | `handle("x", …)` via `serve(consumer_secret=…)` | `X_BEARER_TOKEN`, `X_CONSUMER_SECRET`, `PORT` |
 
-Bring-your-own credentials are passed as keyword arguments to the matching
-`connect_*` call - see each file's docstring for the exact variables.
+Run from `packages/python` so the `caspian-sdk` package resolves (`from caspian import …`):
+
+```bash
+cd packages/python
+uv run python ../../examples/<channel>/bot.py
+```
+
+Socket channels need optional extras: `uv sync --extra discord` or `--extra slack-socket`.

@@ -1,0 +1,153 @@
+"""Tests for the B facade — verifying desugar to A rules."""
+
+from __future__ import annotations
+
+from caspian.core.types import Action, Message, ThreadId
+from caspian.facade.caspian import Caspian
+
+
+class TestFacadeDesugar:
+    """on_message / on_action must produce Rules with correct predicates and overlap."""
+
+    def test_on_message_creates_rule(self) -> None:
+        cx = Caspian()
+
+        def handler(thread, msg, ctx):
+            thread.post("hi")
+
+        cx.on_message({"channel": "telegram", "overlap": "queue"}, handler)
+
+        app = cx.app
+        assert len(app.rules) == 1
+        rule = app.rules[0]
+        assert rule.overlap.policy.value == "queue"
+        assert rule.handler_id != ""
+
+    def test_on_action_creates_rule_with_drop(self) -> None:
+        cx = Caspian()
+
+        def handler(thread, act, ctx):
+            pass
+
+        cx.on_action({"overlap": "drop"}, handler)
+
+        app = cx.app
+        assert len(app.rules) == 1
+        rule = app.rules[0]
+        assert rule.overlap.policy.value == "drop"
+
+    def test_multiple_handlers_produce_multiple_rules(self) -> None:
+        cx = Caspian()
+        cx.on_message({"channel": "telegram"}, lambda t, m, c: None)
+        cx.on_message({"channel": "discord"}, lambda t, m, c: None)
+        cx.on_action({}, lambda t, a, c: None)
+
+        assert len(cx.app.rules) == 3
+
+    def test_memory_interpreter_runs_step(self) -> None:
+        cx = Caspian()
+        cx.on_message({"channel": "telegram"}, lambda t, m, c: t.post("reply"))
+
+        interp = cx.interpret()
+        event = Message(
+            thread_id=ThreadId("telegram:123"),
+            text="hello",
+            chat_kind="dm",
+        )
+        result = interp.run(cx.app, event, channel_name="telegram")
+
+        assert len(result.commands) == 2
+        assert result.commands[0].tag == "Typing"  # type: ignore[union-attr]
+        assert result.commands[1].tag == "Host"  # type: ignore[union-attr]
+
+    def test_decorator_syntax(self) -> None:
+        cx = Caspian()
+
+        @cx.on_message({"channel": ["telegram", "discord"]})
+        def handle(thread, msg, ctx):
+            thread.post("hello")
+
+        assert len(cx.app.rules) == 1
+
+    def test_command_filter_matches_slash_and_bot_suffix(self) -> None:
+        from caspian.core.predicates import evaluate
+
+        cx = Caspian()
+        cx.on_message({"channel": "telegram", "command": ["start", "help"]}, lambda t, m, c: None)
+        pred = cx.app.rules[0].predicate
+        hit = Message(
+            thread_id=ThreadId("telegram:1"), text="/help@caspian_test_bot", chat_kind="dm"
+        )
+        miss = Message(thread_id=ThreadId("telegram:1"), text="hi", chat_kind="dm")
+        assert evaluate(pred, hit, channel_name="telegram")
+        assert not evaluate(pred, miss, channel_name="telegram")
+
+    def test_command_rule_wins_over_later_catchall(self) -> None:
+        from caspian.core.predicates import evaluate
+        from caspian.core.step import StepState, step
+
+        cx = Caspian()
+        cx.on_message({"channel": "telegram", "command": "help"}, lambda t, m, c: None)
+        cx.on_message({"channel": "telegram"}, lambda t, m, c: None)
+        event = Message(thread_id=ThreadId("telegram:1"), text="/help", chat_kind="dm")
+        first, catchall = cx.app.rules
+        assert evaluate(first.predicate, event, channel_name="telegram")
+        assert evaluate(catchall.predicate, event, channel_name="telegram")
+        result = step(StepState(), event, cx.app, channel_name="telegram")
+        assert result.matched_rule is not None
+        assert result.matched_rule.handler_id == first.handler_id
+
+    def test_action_data_filter(self) -> None:
+        from caspian.core.predicates import evaluate
+
+        cx = Caspian()
+        cx.on_action({"channel": "telegram", "data": "story"}, lambda t, a, c: None)
+        pred = cx.app.rules[0].predicate
+        hit = Action(thread_id=ThreadId("telegram:1"), data="story")
+        miss = Action(thread_id=ThreadId("telegram:1"), data="ok")
+        assert evaluate(pred, hit, channel_name="telegram")
+        assert not evaluate(pred, miss, channel_name="telegram")
+
+
+class TestThread:
+    """Thread.post/typing/edit enqueue Commands, not HTTP calls."""
+
+    def test_post_enqueues_command(self) -> None:
+        from caspian.facade.thread import Thread
+
+        t = Thread(thread_id=ThreadId("tg:1"))
+        t.post("hello")
+        assert len(t.commands) == 1
+        assert t.commands[0].tag == "Post"  # type: ignore[union-attr]
+        assert t.commands[0].text == "hello"  # type: ignore[union-attr]
+
+    def test_typing_enqueues_command(self) -> None:
+        from caspian.facade.thread import Thread
+
+        t = Thread(thread_id=ThreadId("tg:1"))
+        t.typing()
+        assert len(t.commands) == 1
+        assert t.commands[0].tag == "Typing"  # type: ignore[union-attr]
+
+    def test_multiple_commands_accumulate(self) -> None:
+        from caspian.facade.thread import Thread
+
+        t = Thread(thread_id=ThreadId("tg:1"))
+        t.typing()
+        t.post("hi")
+        t.react("msg1", "👍")
+        assert len(t.commands) == 3
+
+
+def test_hosted_defaults_to_the_real_gateway() -> None:
+    """Caspian(api_key=...) with no base_url must target the hosted gateway.
+
+    The facade's own empty-string default used to override the client's
+    DEFAULT_BASE_URL, so the minimal quickstart failed on its first request.
+    """
+    from caspian import Caspian
+    from caspian.hosted.client import DEFAULT_BASE_URL
+
+    cx = Caspian(api_key="k")
+    assert cx._gateway_client._base_url == DEFAULT_BASE_URL
+    assert cx._gateway_client._base_url.startswith("https://")

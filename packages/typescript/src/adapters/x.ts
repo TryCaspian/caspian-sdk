@@ -7,6 +7,7 @@ import { ThreadId } from "../core/ids.ts"
 import { httpLayer, type AdapterFetch } from "./http.ts"
 import type { HttpJsonCall, PlannedCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
+import { capabilitiesOf } from "../catalog.ts"
 import {
   asJsonObject,
   configString,
@@ -212,7 +213,7 @@ export const x = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => ["receive", "send", "reply", "dm"],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("x"),
   format: (text: string): string => text,
   openModal: undefined as never,
 })

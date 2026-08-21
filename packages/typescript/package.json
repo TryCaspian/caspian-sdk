@@ -1,36 +1,119 @@
 {
-  "name": "caspian",
-  "version": "0.1.0",
-  "description": "Caspian TypeScript SDK — one bot program across channels",
+  "name": "caspian-sdk",
+  "version": "1.0.1",
+  "description": "Caspian TypeScript SDK \u2014 one bot program across channels",
   "type": "module",
-  "private": true,
   "exports": {
-    ".": "./src/index.ts",
-    "./telegram": "./src/adapters/telegram.ts",
-    "./discord": "./src/adapters/discord.ts",
-    "./slack": "./src/adapters/slack.ts",
-    "./voice": "./src/adapters/voice.ts",
-    "./email": "./src/adapters/email.ts",
-    "./sms": "./src/adapters/sms.ts",
-    "./whatsapp": "./src/adapters/whatsapp.ts",
-    "./messenger": "./src/adapters/messenger.ts",
-    "./imessage": "./src/adapters/imessage.ts",
-    "./x": "./src/adapters/x.ts",
-    "./linear": "./src/adapters/linear.ts"
+    ".": {
+      "bun": {
+        "types": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./telegram": {
+      "bun": {
+        "types": "./src/adapters/telegram.ts",
+        "default": "./src/adapters/telegram.ts"
+      },
+      "types": "./dist/adapters/telegram.d.ts",
+      "default": "./dist/adapters/telegram.js"
+    },
+    "./discord": {
+      "bun": {
+        "types": "./src/adapters/discord.ts",
+        "default": "./src/adapters/discord.ts"
+      },
+      "types": "./dist/adapters/discord.d.ts",
+      "default": "./dist/adapters/discord.js"
+    },
+    "./slack": {
+      "bun": {
+        "types": "./src/adapters/slack.ts",
+        "default": "./src/adapters/slack.ts"
+      },
+      "types": "./dist/adapters/slack.d.ts",
+      "default": "./dist/adapters/slack.js"
+    },
+    "./voice": {
+      "bun": {
+        "types": "./src/adapters/voice.ts",
+        "default": "./src/adapters/voice.ts"
+      },
+      "types": "./dist/adapters/voice.d.ts",
+      "default": "./dist/adapters/voice.js"
+    },
+    "./email": {
+      "bun": {
+        "types": "./src/adapters/email.ts",
+        "default": "./src/adapters/email.ts"
+      },
+      "types": "./dist/adapters/email.d.ts",
+      "default": "./dist/adapters/email.js"
+    },
+    "./sms": {
+      "bun": {
+        "types": "./src/adapters/sms.ts",
+        "default": "./src/adapters/sms.ts"
+      },
+      "types": "./dist/adapters/sms.d.ts",
+      "default": "./dist/adapters/sms.js"
+    },
+    "./whatsapp": {
+      "bun": {
+        "types": "./src/adapters/whatsapp.ts",
+        "default": "./src/adapters/whatsapp.ts"
+      },
+      "types": "./dist/adapters/whatsapp.d.ts",
+      "default": "./dist/adapters/whatsapp.js"
+    },
+    "./messenger": {
+      "bun": {
+        "types": "./src/adapters/messenger.ts",
+        "default": "./src/adapters/messenger.ts"
+      },
+      "types": "./dist/adapters/messenger.d.ts",
+      "default": "./dist/adapters/messenger.js"
+    },
+    "./imessage": {
+      "bun": {
+        "types": "./src/adapters/imessage.ts",
+        "default": "./src/adapters/imessage.ts"
+      },
+      "types": "./dist/adapters/imessage.d.ts",
+      "default": "./dist/adapters/imessage.js"
+    },
+    "./x": {
+      "bun": {
+        "types": "./src/adapters/x.ts",
+        "default": "./src/adapters/x.ts"
+      },
+      "types": "./dist/adapters/x.d.ts",
+      "default": "./dist/adapters/x.js"
+    },
+    "./linear": {
+      "bun": {
+        "types": "./src/adapters/linear.ts",
+        "default": "./src/adapters/linear.ts"
+      },
+      "types": "./dist/adapters/linear.d.ts",
+      "default": "./dist/adapters/linear.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "README.md"
   ],
-  "engines": {
-    "bun": ">=1.3.0"
-  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "eslint .",
     "lint:deps": "depcruise src --config .dependency-cruiser.cjs",
-    "ci": "bun run typecheck && bun run lint && bun run lint:deps && bun test"
+    "ci": "bun run typecheck && bun run lint && bun run lint:deps && bun test",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [
     "ai",

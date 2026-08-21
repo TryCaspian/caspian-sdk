@@ -7,6 +7,7 @@ import { ThreadId } from "../core/ids.ts"
 import { httpLayer, type AdapterFetch } from "./http.ts"
 import type { PlannedCall, TwimlCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
+import { capabilitiesOf } from "../catalog.ts"
 import {
   configString,
   messageDefaults,
@@ -134,7 +135,7 @@ export const voice = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => ["receive", "send", "voice", "tts"],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("voice"),
   format: escapeXml,
   openModal: undefined as never,
 })

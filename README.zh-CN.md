@@ -344,7 +344,3 @@ cd sdks/typescript && npm ci && npm test   # 49 个 vitest 测试
 欢迎贡献——见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 **如果 Caspian 帮你省了时间，[一颗 star](https://github.com/TryCaspian/caspian-sdk/stargazers) 能帮助更多智能体开发者找到它。** ⭐
-
-## 许可证
-
-本仓库使用 Apache-2.0。PyPI 上的 `caspian-sdk` 包使用 MIT。

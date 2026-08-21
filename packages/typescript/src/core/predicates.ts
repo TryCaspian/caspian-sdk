@@ -37,6 +37,18 @@ export const MatchChatKind = Schema.Struct({
 })
 export type MatchChatKind = typeof MatchChatKind.Type
 
+export const MatchCommand = Schema.Struct({
+  op: Schema.Literal("command"),
+  names: Schema.Array(Schema.String),
+})
+export type MatchCommand = typeof MatchCommand.Type
+
+export const MatchData = Schema.Struct({
+  op: Schema.Literal("data"),
+  values: Schema.Array(Schema.String),
+})
+export type MatchData = typeof MatchData.Type
+
 export interface And {
   readonly op: "and"
   readonly left: Predicate
@@ -59,6 +71,8 @@ export type Predicate =
   | MatchKind
   | MatchChannel
   | MatchChatKind
+  | MatchCommand
+  | MatchData
   | And
   | Or
   | Not
@@ -85,6 +99,8 @@ export const Predicate: Schema.Schema<Predicate> = Schema.Union(
   MatchKind,
   MatchChannel,
   MatchChatKind,
+  MatchCommand,
+  MatchData,
   And,
   Or,
   Not,
@@ -105,6 +121,28 @@ export const channel = (...names: string[]): MatchChannel => ({
 export const dm = (): MatchChatKind => ({ op: "chat_kind", chat_kind: "dm" })
 export const group = (): MatchChatKind => ({ op: "chat_kind", chat_kind: "group" })
 
+export const commandOf = (text: string): string => {
+  const trimmed = text.trim()
+  if (trimmed === "") {
+    return ""
+  }
+  let token = trimmed.split(/\s+/)[0] ?? ""
+  if (token.startsWith("/")) {
+    token = token.slice(1)
+  }
+  return (token.split("@")[0] ?? "").toLowerCase()
+}
+
+export const command = (...names: string[]): MatchCommand => ({
+  op: "command",
+  names: names.map(commandOf),
+})
+
+export const data = (...values: string[]): MatchData => ({
+  op: "data",
+  values,
+})
+
 export const evaluate = (
   pred: Predicate,
   event: Event,
@@ -119,6 +157,10 @@ export const evaluate = (
       return pred.channels.includes(channelName)
     case "chat_kind":
       return "chat_kind" in event && event.chat_kind === pred.chat_kind
+    case "command":
+      return "text" in event && pred.names.includes(commandOf(event.text))
+    case "data":
+      return "data" in event && pred.values.includes(event.data)
     case "and":
       return (
         evaluate(pred.left, event, channelName) &&

@@ -1,0 +1,37 @@
+{
+  "name": "@caspian/cli",
+  "version": "0.1.0",
+  "description": "Caspian CLI \u2014 catalog discovers, call invokes, channels and threads are resources",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "caspian": "./src/main.ts"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "eslint .",
+    "ci": "bun run typecheck && bun run lint && bun test"
+  },
+  "license": "MIT",
+  "homepage": "https://trycaspianai.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TryCaspian/caspian-sdk.git",
+    "directory": "packages/cli"
+  },
+  "dependencies": {
+    "effect": "^3.22.1",
+    "caspian-sdk": "file:../typescript"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.3.14",
+    "eslint": "^10.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.67.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "pythonVersion": "3.10",
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": ["packages/python/src"],
+  "include": [
+    "packages/python/src",
+    "packages/python/tests",
+    "examples"
+  ]
+}

@@ -39,6 +39,7 @@ export const verifyTelegram = (raw: unknown, conn: Connection): boolean => {
   return timingSafeEqualUtf8(expected, got)
 }
 
+<<<<<<< HEAD
 export const telegramCapabilities = (): ReadonlyArray<string> => [
   "receive",
   "reply",
@@ -54,6 +55,12 @@ export const telegramCapabilities = (): ReadonlyArray<string> => [
   "threading",
   "membership",
 ]
+=======
+import { capabilitiesOf } from "../../catalog.ts"
+
+export const telegramCapabilities = (): ReadonlyArray<string> =>
+  capabilitiesOf("telegram")
+>>>>>>> e972615f6ea1c870bc2e3da11bdd29c3d9465ef6
 
 export const telegramLayer = (
   sink: TelegramCall[],

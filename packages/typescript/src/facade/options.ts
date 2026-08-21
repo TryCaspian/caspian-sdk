@@ -15,6 +15,7 @@ export const OnMessageOptions = Schema.Struct({
   /** Instant acknowledgement sent before the handler runs. Answers the
    *  silence on channels with no typing indicator (email, SMS, X). */
   ack: Schema.optional(Schema.String),
+  command: Schema.optional(ChannelOption),
 })
 export type OnMessageOptions = typeof OnMessageOptions.Type
 
@@ -25,5 +26,6 @@ export const OnActionOptions = Schema.Struct({
   /** Instant acknowledgement sent before the handler runs. Answers the
    *  silence on channels with no typing indicator (email, SMS, X). */
   ack: Schema.optional(Schema.String),
+  data: Schema.optional(ChannelOption),
 })
 export type OnActionOptions = typeof OnActionOptions.Type

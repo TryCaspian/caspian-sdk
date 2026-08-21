@@ -4,6 +4,8 @@ import {
   Event,
   action,
   channel,
+  command,
+  data,
   dm,
   evaluate,
   group,
@@ -42,6 +44,24 @@ test("chat_kind predicate is false on actions (no chat_kind field)", () => {
   expect(evaluate(dm(), dmEvent, "telegram")).toBe(true)
   expect(evaluate(group(), dmEvent, "telegram")).toBe(false)
   expect(evaluate(dm(), actionEvent, "telegram")).toBe(false)
+})
+
+test("command matches slash, bot suffix, and extra words", () => {
+  const help = Schema.decodeUnknownSync(Event)({
+    kind: "message",
+    thread_id: "telegram:1",
+    text: "/help@caspian_test_bot please",
+    chat_kind: "dm",
+    sender: "u",
+    raw: {},
+  })
+  expect(evaluate(command("help"), help, "telegram")).toBe(true)
+  expect(evaluate(command("help"), dmEvent, "telegram")).toBe(false)
+})
+
+test("data matches action payload", () => {
+  expect(evaluate(data("ok"), actionEvent, "telegram")).toBe(true)
+  expect(evaluate(data("story"), actionEvent, "telegram")).toBe(false)
 })
 
 test("and / or / not compose", () => {
