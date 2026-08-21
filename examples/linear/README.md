@@ -7,8 +7,9 @@ the body, no prefix). Catalog inbound is webhook —
 The adapter plans GraphQL `commentCreate` for `Post` and `Reply`. Handlers live
 in `app.py`. `bot.py` only adds the channel and holds HTTP.
 
-Linear has no media or buttons. This example posts `/help` and echoes
-everything else as issue comments.
+Linear has no media or buttons. This example posts a help menu when you
+comment `/help` on an issue. Other comments are ignored — Linear webhooks
+also fire for comments the bot just posted, so echoing would loop.
 
 ## Self-host `add()` and `bot_token`
 

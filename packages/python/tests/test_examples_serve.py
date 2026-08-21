@@ -32,3 +32,12 @@ def test_x_crc_response_token() -> None:
     assert status == 200
     assert json.loads(body) == {"response_token": expected}
     assert content_type == "application/json"
+
+
+def test_crc_response_empty_secret_is_forbidden() -> None:
+    from examples.serve import crc_response
+
+    body, status, content_type = crc_response("crc", consumer_secret="")
+    assert status == 403
+    assert body == b""
+    assert content_type == "text/plain"

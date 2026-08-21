@@ -1,14 +1,9 @@
 from caspian import Caspian, HandlerContext, Message, Thread
 
-HELP = "/help menu\nanything else is echoed."
+HELP = "Commands: help — this menu"
 
 
 def register(cx: Caspian) -> None:
     @cx.on_message({"channel": "linear", "command": "help"})
     def on_help(thread: Thread, msg: Message, ctx: HandlerContext) -> None:
         thread.post(HELP)
-
-    @cx.on_message({"channel": "linear"})
-    def on_echo(thread: Thread, msg: Message, ctx: HandlerContext) -> None:
-        if msg.text.strip():
-            thread.post(msg.text)

@@ -31,6 +31,8 @@ def crc_response(
     *,
     consumer_secret: str,
 ) -> tuple[bytes, int, str]:
+    if not consumer_secret:
+        return b"", 403, "text/plain"
     digest = hmac.new(consumer_secret.encode(), token.encode(), hashlib.sha256).digest()
     payload = json.dumps(
         {"response_token": "sha256=" + base64.b64encode(digest).decode()}
