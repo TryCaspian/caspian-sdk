@@ -23,6 +23,7 @@ import hmac
 import json
 from typing import Any
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import Command, Post, Reply
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -137,7 +138,7 @@ class LinearAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"receive", "reply", "send", "threading"})
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """Linear comments accept plain Markdown; text is sent verbatim."""

@@ -26,6 +26,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import Command, Post, Reply, SendMedia
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -165,7 +166,7 @@ class SmsAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"receive", "reply", "send", "media"})
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """SMS is plain text; no formatting transformation needed."""

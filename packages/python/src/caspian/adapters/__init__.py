@@ -1,8 +1,9 @@
 """Adapters package — channel packs. The only code that knows a platform exists.
 
 Each adapter satisfies the AdapterPort protocol (parse / execute / overlap_key /
-capabilities / verify / format). Adding a channel = adding an adapter here; no
-change to the public API or the core algebra.
+capabilities / verify / format). Adding a channel = a catalog row in
+`caspian.catalog` plus an adapter here; REGISTRY, listen(), and bot-token
+rules are derived from the row. Capabilities are never listed locally.
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ from caspian.adapters.telegram import TelegramAdapter
 from caspian.adapters.voice import VoiceAdapter
 from caspian.adapters.whatsapp import WhatsAppAdapter
 from caspian.adapters.x import XAdapter
+from caspian.catalog import CHANNELS
 
 # Registry: channel name → adapter class. Used by the facade/runner to look up
 # the right pack for a connection.
-REGISTRY: dict[str, type] = {
+_ADAPTERS: dict[str, type] = {
     "telegram": TelegramAdapter,
     "slack": SlackAdapter,
     "discord": DiscordAdapter,
@@ -34,6 +36,13 @@ REGISTRY: dict[str, type] = {
     "x": XAdapter,
     "linear": LinearAdapter,
 }
+
+if set(_ADAPTERS) != set(CHANNELS):
+    raise RuntimeError(
+        f"adapter map {sorted(_ADAPTERS)} != catalog {sorted(CHANNELS)}"
+    )
+
+REGISTRY: dict[str, type] = dict(_ADAPTERS)
 
 
 def get_adapter(channel: str) -> object:

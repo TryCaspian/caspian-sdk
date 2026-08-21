@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from caspian.catalog import CHANNELS, SocketKind, socket_channels
 from caspian.core.errors import AuthRequired, ProvisionError
 from caspian.core.interpreter_memory import MemoryInterpreter
 from caspian.core.ports import RawInbound, Result, Sent
@@ -176,10 +177,8 @@ class Caspian:
     def listen(self, channel: str = "discord", *, max_events: int | None = None) -> list[Result]:
         """Self-host inbound over a held-open socket. No public URL needed.
 
-        Two channels support this, for different reasons:
-
-            discord  the only way to receive ordinary messages at all
-            slack    Socket Mode, an alternative to the webhook route
+        Channels whose catalog row has a socket inbound. Today that is discord
+        (the only inbound path) and slack (Socket Mode, alternative to webhook).
 
         Blocks for the life of the process; each inbound goes through the same
         handle_webhook as every other channel, so handler, ack, streaming and
@@ -195,11 +194,13 @@ class Caspian:
         Requires the optional websockets dependency: caspian[discord] or
         caspian[slack-socket].
         """
-        if channel not in ("discord", "slack"):
+        allowed = socket_channels()
+        if channel not in allowed:
+            names = ", ".join(allowed)
             return [
                 Result.err(
                     ProvisionError(
-                        reason=f"listen() supports discord and slack, not {channel!r}; "
+                        reason=f"listen() supports {names}, not {channel!r}; "
                         f"use run() for hosted or handle() for webhook self-host"
                     )
                 )
@@ -217,8 +218,9 @@ class Caspian:
 
         connection = self.channels.connection_for(channel)
         interp = self._interpreter_for(channel)
+        row = CHANNELS[channel]  # type: ignore[index]
 
-        if channel == "slack":
+        if row.socket is SocketKind.SLACK:
             from caspian.interpreters.slack_socket import SlackSocketRunner
 
             app_token = connection.config.get("app_token", "")

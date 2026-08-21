@@ -74,6 +74,20 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "catalog must not import I/O or core"
+type = "forbidden"
+source_modules = ["caspian.catalog"]
+forbidden_modules = [
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+    "caspian.hosted",
+    "caspian.interpreters",
+    "caspian.core",
+    "httpx",
+]
+
+[[tool.importlinter.contracts]]
 name = "provision must not import core"
 type = "forbidden"
 source_modules = ["caspian.provision"]

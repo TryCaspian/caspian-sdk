@@ -33,6 +33,7 @@ import json
 from email.utils import parseaddr
 from typing import Any
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import Command, Post, Reply, SendBlocks, SendMedia
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -230,7 +231,7 @@ class EmailAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"receive", "reply", "send", "media", "threading"})
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """Email bodies are plaintext; passthrough."""

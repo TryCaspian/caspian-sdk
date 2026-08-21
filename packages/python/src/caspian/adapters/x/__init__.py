@@ -26,6 +26,7 @@ import hmac
 import json
 from typing import Any
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import Command, Post, Reply
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -161,7 +162,7 @@ class XAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"receive", "send", "reply", "dm"})
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """X has no markup; text is sent verbatim."""

@@ -22,6 +22,7 @@ import json
 import urllib.parse
 from typing import Any
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import (
     Call,
     Command,
@@ -309,22 +310,7 @@ class SlackAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset(
-            {
-                "receive",
-                "reply",
-                "send",
-                "media",
-                "buttons",
-                "blocks",
-                "react",
-                "edit",
-                "delete",
-                "threading",
-                "modals",
-                "history",
-            }
-        )
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """Escape text for Slack mrkdwn (& < > are the reserved characters)."""

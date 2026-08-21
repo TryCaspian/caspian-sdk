@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from caspian._compat import StrEnum
+from caspian.catalog import CHANNELS, BotTokenWhen, needs_bot_token
 
 
 class Via(StrEnum):
@@ -82,14 +83,13 @@ class Channels:
         """
         via_enum = Via(via)
 
-        # Telegram is always BYO BotFather token — hosted does not mint a bot.
-        if channel == "telegram" and not bot_token:
-            raise ProvisionError(
-                "Telegram requires bot_token (from @BotFather). "
-                "Hosted does not mint a Telegram bot; it only owns inbound I/O."
-            )
-
-        if via_enum == Via.SELF_HOST and not bot_token:
+        if not bot_token and needs_bot_token(channel, via_enum.value):
+            row = CHANNELS.get(channel)  # type: ignore[arg-type]
+            if row is not None and row.bot_token is BotTokenWhen.ALWAYS:
+                raise ProvisionError(
+                    f"{channel} requires bot_token (from @BotFather). "
+                    "Hosted does not mint a bot; it only owns inbound I/O."
+                )
             raise ProvisionError(
                 f"Self-host '{channel}' requires bot_token. "
                 "Omit `via` for hosted (Caspian owns the identity)."

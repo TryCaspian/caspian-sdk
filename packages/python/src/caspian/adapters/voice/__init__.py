@@ -23,6 +23,7 @@ import hmac
 from urllib.parse import parse_qs
 from xml.sax.saxutils import escape
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import Command, Post, Reply
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -118,7 +119,7 @@ class VoiceAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset({"receive", "send", "voice", "tts"})
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """Escape text for inclusion in TwiML (XML)."""

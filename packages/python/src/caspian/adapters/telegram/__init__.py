@@ -20,6 +20,7 @@ import hmac
 import json
 from typing import Any
 
+from caspian.catalog import capabilities_of
 from caspian.core.commands import (
     Call,
     Command,
@@ -385,23 +386,7 @@ class TelegramAdapter:
         return str(event.thread_id)
 
     def capabilities(self) -> frozenset[str]:
-        return frozenset(
-            {
-                "receive",
-                "reply",
-                "send",
-                "media",
-                "buttons",
-                "edit",
-                "delete",
-                "react",
-                "typing",
-                "pin",
-                "forward",
-                "threading",
-                "membership",
-            }
-        )
+        return capabilities_of(self.name)
 
     def format(self, text: str) -> str:
         """Escape text for Telegram MarkdownV2."""

@@ -10,6 +10,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from caspian.catalog import ChannelName
+
 
 class MatchAll(BaseModel):
     """Always matches."""
@@ -123,7 +125,7 @@ def deleted() -> MatchKind:
     return MatchKind(kind="deleted")
 
 
-def channel(*names: str) -> MatchChannel:
+def channel(*names: ChannelName | str) -> MatchChannel:
     return MatchChannel(channels=tuple(names))
 
 

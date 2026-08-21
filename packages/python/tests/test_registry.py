@@ -5,27 +5,14 @@ from __future__ import annotations
 import pytest
 
 from caspian.adapters import REGISTRY, get_adapter
-
-EXPECTED_CHANNELS = {
-    "telegram",
-    "slack",
-    "discord",
-    "email",
-    "whatsapp",
-    "messenger",
-    "sms",
-    "voice",
-    "imessage",
-    "x",
-    "linear",
-}
+from caspian.catalog import CHANNELS
 
 
 def test_registry_has_all_channels() -> None:
-    assert set(REGISTRY) == EXPECTED_CHANNELS
+    assert set(REGISTRY) == set(CHANNELS)
 
 
-@pytest.mark.parametrize("channel", sorted(EXPECTED_CHANNELS))
+@pytest.mark.parametrize("channel", sorted(CHANNELS))
 def test_adapter_conforms_to_port(channel: str) -> None:
     adapter = get_adapter(channel)
 
@@ -42,7 +29,7 @@ def test_adapter_conforms_to_port(channel: str) -> None:
     assert caps & {"receive", "send"}
 
 
-@pytest.mark.parametrize("channel", sorted(EXPECTED_CHANNELS))
+@pytest.mark.parametrize("channel", sorted(CHANNELS))
 def test_parse_unknown_never_raises(channel: str) -> None:
     from caspian.core.ports import RawInbound
 

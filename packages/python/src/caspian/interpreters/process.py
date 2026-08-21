@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from caspian.catalog import Capability
 from caspian.core.commands import Command, Host, Typing
 from caspian.core.errors import DecodeError
 from caspian.core.overlap import OverlapDecision, drain_transition
@@ -184,7 +185,7 @@ class _Sink:
                 caps = set(cap_fn())
             except Exception:  # a capability probe must never break a handler
                 caps = set()
-        self.can_stream = runner._transport is not None and "edit" in caps
+        self.can_stream = runner._transport is not None and Capability.EDIT.value in caps
 
     def emit(self, command: Command) -> str:
         result = self._runner._maybe_dispatch(
