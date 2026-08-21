@@ -47,8 +47,7 @@ class Caspian:
     Self-host::
 
         cx = Caspian()
-        added = cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
-        # added is Result.ok(Connection) or Result.err(ProvisionError)
+        cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
 
         @cx.on_message({"channel": "telegram"})
         def reply(thread, msg, ctx):
@@ -168,7 +167,7 @@ class Caspian:
         runner = PollingRunner(
             self.channels.adapter_for(channel),
             self.channels.connection_for(channel),
-            interp.handle_webhook,
+            lambda raw: interp.handle_webhook(raw, trusted=True),
             transport=transport or self._transport,  # type: ignore[arg-type]
             offset=offset,
             sleep=lambda _s: None,
@@ -236,7 +235,9 @@ class Caspian:
                     )
                 ]
             return asyncio.run(
-                SlackSocketRunner(app_token, interp.handle_webhook).run(max_events=max_events)
+                SlackSocketRunner(
+                    app_token, lambda raw: interp.handle_webhook(raw, trusted=True)
+                ).run(max_events=max_events)
             )
 
         from caspian.interpreters.discord_gateway import DiscordGatewayRunner
@@ -245,7 +246,9 @@ class Caspian:
         if not token:
             return [Result.err(ProvisionError(reason="discord self-host needs a bot_token"))]
         return asyncio.run(
-            DiscordGatewayRunner(token, interp.handle_webhook).run(max_events=max_events)
+            DiscordGatewayRunner(
+                token, lambda raw: interp.handle_webhook(raw, trusted=True)
+            ).run(max_events=max_events)
         )
 
     def run(

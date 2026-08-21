@@ -1,9 +1,8 @@
 """Adapters package — channel packs. The only code that knows a platform exists.
 
-Each adapter satisfies the AdapterPort protocol (parse / execute / overlap_key /
-capabilities / verify / format). Adding a channel = a catalog row in
-`caspian.catalog` plus an adapter here; REGISTRY, listen(), and bot-token
-rules are derived from the row. Capabilities are never listed locally.
+Each channel is `pack(parse, plan, verify)`. Overlap, capabilities, and the
+colon thread codec come from `caspian.catalog`. Adding a channel = a catalog
+row plus parse + plan here.
 """
 
 from __future__ import annotations

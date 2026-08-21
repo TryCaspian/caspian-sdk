@@ -155,7 +155,7 @@ class TestXMisc:
 
     def test_verify_true_when_unconfigured(self) -> None:
         adapter = XAdapter()
-        assert adapter.verify(RawInbound(body=b"{}"), _conn()) is True
+        assert adapter.verify(RawInbound(body=b"{}"), _conn()) is False
 
     def test_thread_roundtrip(self) -> None:
         adapter = XAdapter()

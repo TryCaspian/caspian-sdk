@@ -33,28 +33,15 @@ import json
 from email.utils import parseaddr
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import unsigned
 from caspian.core.commands import Command, Post, Reply, SendBlocks, SendMedia
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
-from caspian.core.types import Block, Event, Message, ThreadId
+from caspian.core.types import Block, Message, ThreadId
 
 
-class EmailAdapter:
-    """Adapter for inbound email (SES/SNS) and outbound SMTP request-descriptions."""
-
-    @property
-    def name(self) -> str:
-        return "email"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the inbound webhook.
-
-        SNS signature verification is a documented follow-up; accept for now.
-        """
-        return True
+class _Email:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse an inbound email payload into kernel Events.
@@ -227,12 +214,6 @@ class EmailAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """Email bodies are plaintext; passthrough."""
         return text
@@ -285,3 +266,14 @@ class EmailAdapter:
             if content.get("text"):
                 lines.append(str(content["text"]))
         return "\n".join(lines)
+
+
+_impl = _Email()
+EmailAdapter = pack(
+    channel="email",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=unsigned,
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)

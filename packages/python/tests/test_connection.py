@@ -10,9 +10,7 @@ from caspian.hosted.provisioning import HostedProvisioning
 
 def test_add_and_connection_for_are_the_same_record() -> None:
     cx = Caspian(dispatch=False)
-    result = cx.channels.add("slack", via="self-host", bot_token="xoxb-1")
-    assert result.is_ok
-    added = result.value
+    added = cx.channels.add("slack", via="self-host", bot_token="xoxb-1")
     got = cx.channels.connection_for("slack")
     assert added is got
     assert isinstance(added, Connection)
@@ -60,9 +58,7 @@ def test_hosted_add_overlays_gateway_id_onto_the_same_record() -> None:
         }
     )
     cx = Caspian(dispatch=False, gateway_client=client)
-    result = cx.channels.add("email")
-    assert result.is_ok
-    added = result.value
+    added = cx.channels.add("email")
     assert added is cx.channels.connection_for("email")
     assert added.id == "gw_99"
     assert added.address == "bot@example.com"

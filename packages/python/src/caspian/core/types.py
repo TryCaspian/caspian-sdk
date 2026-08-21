@@ -37,11 +37,10 @@ class Attachment(BaseModel):
 
 
 class Block(BaseModel):
-    """A rich layout block (Slack Block Kit, Discord embed, Telegram-rendered).
+    """A rich layout block. Adapters render this to their native cards.
 
-    `type` is the block kind (section, image, divider, actions, header, ...).
-    `content` carries the block-specific fields. Adapters render this to their
-    native format via format().
+    `type` is the block kind. `content` carries block-specific fields.
+    Prefer `Post(actions=...)` for buttons; adapters render those.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

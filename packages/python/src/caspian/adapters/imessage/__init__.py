@@ -19,12 +19,11 @@ Uniform execute() contract (shared by all adapters):
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import hmac_hex
 from caspian.core.commands import Command, Post, React, Reply, SendMedia
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -34,26 +33,7 @@ DEFAULT_RELAY = "https://relay.local"
 SIGNATURE_HEADER = "X-Relay-Signature"
 
 
-class IMessageAdapter:
-    """Adapter for an iMessage HTTP-JSON relay/bridge."""
-
-    @property
-    def name(self) -> str:
-        return "imessage"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the relay webhook signature (constant-time HMAC-SHA256 hex).
-
-        No secret configured → trust the relay (return True). Never raises.
-        """
-        secret = conn.config.get("webhook_secret", "")
-        if not secret:
-            return True
-        expected = hmac.new(secret.encode(), raw.body, hashlib.sha256).hexdigest()
-        got = raw.headers.get(SIGNATURE_HEADER, "")
-        return hmac.compare_digest(expected, got)
+class _IMessage:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a relay webhook payload into kernel Events.
@@ -153,12 +133,6 @@ class IMessageAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """iMessage is plaintext; pass through unchanged."""
         return text
@@ -209,3 +183,14 @@ class IMessageAdapter:
                 "native": native,
             }
         )
+
+
+_impl = _IMessage()
+IMessageAdapter = pack(
+    channel="imessage",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=hmac_hex(header=SIGNATURE_HEADER, secret_key="webhook_secret"),
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)

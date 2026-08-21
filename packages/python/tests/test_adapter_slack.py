@@ -236,7 +236,7 @@ class TestSlackVerify:
     def test_verify_ok_when_no_secret(self) -> None:
         adapter = SlackAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="slack", config={})
-        assert adapter.verify(RawInbound(body=b"{}"), conn) is True
+        assert adapter.verify(RawInbound(body=b"{}"), conn) is False
 
     def test_verify_checks_signature(self) -> None:
         adapter = SlackAdapter()

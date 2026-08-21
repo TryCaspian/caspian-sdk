@@ -155,7 +155,7 @@ class ScheduleSend(BaseModel):
 
 
 class OpenModal(BaseModel):
-    """Open an interactive modal (Slack views, Discord modals)."""
+    """Open an interactive modal on a channel that supports them."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     tag: Literal["OpenModal"] = "OpenModal"

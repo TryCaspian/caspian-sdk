@@ -1,98 +1,74 @@
-"""Error ADT — closed union, exhaustive match. No raise across core boundary."""
+"""Tagged failures: raise from add(); put on Result in handle/listen/poll.
+
+Same objects either way. Core interpreters still return Result; they do not raise.
+Match on `.tag` or `except ProvisionError`.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+class CaspianError(Exception):
+    """Closed tagged failure. Match on `.tag` or except a subclass."""
 
+    tag: str = ""
 
-class DecodeError(BaseModel):
-    """Failed to parse inbound bytes into an Event."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["DecodeError"] = "DecodeError"
-    reason: str
+    def __init__(self, reason: str = "") -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
-class AdapterError(BaseModel):
-    """Adapter failed to execute a command."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["AdapterError"] = "AdapterError"
-    reason: str
-    command_tag: str = ""
+class DecodeError(CaspianError):
+    tag = "DecodeError"
 
 
-class OverlapFull(BaseModel):
-    """Overlap queue is at its bound — event was dropped."""
+class AdapterError(CaspianError):
+    tag = "AdapterError"
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["OverlapFull"] = "OverlapFull"
-    thread_id: str
-    bound: int
-
-
-class ProvisionError(BaseModel):
-    """Provisioning failed (missing secret, invalid token, etc.)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["ProvisionError"] = "ProvisionError"
-    reason: str
+    def __init__(self, reason: str, command_tag: str = "") -> None:
+        super().__init__(reason)
+        self.command_tag = command_tag
 
 
-class AuthRequired(BaseModel):
-    """Hosted gateway rejected credentials or none were provided (401/403)."""
+class OverlapFull(CaspianError):
+    tag = "OverlapFull"
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["AuthRequired"] = "AuthRequired"
-    reason: str = ""
-
-
-class AccountRequired(BaseModel):
-    """Hosted gateway requires an account/project that does not exist yet."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["AccountRequired"] = "AccountRequired"
-    reason: str = ""
+    def __init__(self, thread_id: str, bound: int, reason: str = "") -> None:
+        super().__init__(reason or f"overlap full for {thread_id} (bound {bound})")
+        self.thread_id = thread_id
+        self.bound = bound
 
 
-class InsufficientCredit(BaseModel):
-    """Hosted gateway rejected the call for lack of billing credit (402)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["InsufficientCredit"] = "InsufficientCredit"
-    reason: str = ""
-    balance_cents: int = 0
+class ProvisionError(CaspianError):
+    tag = "ProvisionError"
 
 
-class RateLimited(BaseModel):
-    """A platform or the gateway rate-limited the call (429)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["RateLimited"] = "RateLimited"
-    reason: str = ""
-    retry_after_seconds: float = 0.0
+class AuthRequired(CaspianError):
+    tag = "AuthRequired"
 
 
-class GatewayError(BaseModel):
-    """Hosted gateway returned an unexpected error (5xx / unclassified 4xx)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    tag: Literal["GatewayError"] = "GatewayError"
-    reason: str
-    status_code: int = 0
+class AccountRequired(CaspianError):
+    tag = "AccountRequired"
 
 
-CaspianError = Annotated[
-    DecodeError
-    | AdapterError
-    | OverlapFull
-    | ProvisionError
-    | AuthRequired
-    | AccountRequired
-    | InsufficientCredit
-    | RateLimited
-    | GatewayError,
-    Field(discriminator="tag"),
-]
+class InsufficientCredit(CaspianError):
+    tag = "InsufficientCredit"
+
+    def __init__(self, reason: str = "", balance_cents: int = 0) -> None:
+        super().__init__(reason)
+        self.balance_cents = balance_cents
+
+
+class RateLimited(CaspianError):
+    tag = "RateLimited"
+
+    def __init__(self, reason: str = "", retry_after_seconds: float = 0.0) -> None:
+        super().__init__(reason)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class GatewayError(CaspianError):
+    tag = "GatewayError"
+
+    def __init__(self, reason: str, status_code: int = 0) -> None:
+        super().__init__(reason)
+        self.status_code = status_code

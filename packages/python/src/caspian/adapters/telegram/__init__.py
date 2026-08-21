@@ -16,11 +16,11 @@ A shared HttpTransport dispatches http_json/http_form/http_multipart payloads.
 
 from __future__ import annotations
 
-import hmac
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import header_equals
 from caspian.core.commands import (
     Call,
     Command,
@@ -60,22 +60,7 @@ API_BASE = "https://api.telegram.org"
 _MDV2_SPECIAL = r"_*[]()~`>#+-=|{}.!"
 
 
-class TelegramAdapter:
-    """Adapter for Telegram Bot API."""
-
-    @property
-    def name(self) -> str:
-        return "telegram"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the webhook secret token (constant-time)."""
-        expected = conn.config.get("webhook_secret", "")
-        if not expected:
-            return True
-        got = raw.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        return hmac.compare_digest(expected, got)
+class _Telegram:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a Telegram Update into kernel Events.
@@ -382,12 +367,6 @@ class TelegramAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """Escape text for Telegram MarkdownV2."""
         out = []
@@ -475,3 +454,18 @@ class TelegramAdapter:
                 "native": method,
             }
         )
+
+
+_impl = _Telegram()
+TelegramAdapter = pack(
+    channel="telegram",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=header_equals(
+        header="X-Telegram-Bot-Api-Secret-Token", secret_key="webhook_secret"
+    ),
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+    acknowledge=_impl.acknowledge,
+    poll=_impl.poll,
+)

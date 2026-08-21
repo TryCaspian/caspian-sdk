@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import discord_ed25519
 from caspian.core.commands import (
     Command,
     Delete,
@@ -61,30 +62,7 @@ _CALLBACK_MODAL = 9
 _BUTTON_STYLE = {"default": 2, "primary": 1, "danger": 4}
 
 
-class DiscordAdapter:
-    """Adapter for the Discord API (interactions webhook + gateway shapes)."""
-
-    @property
-    def name(self) -> str:
-        return "discord"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify a Discord interaction signature.
-
-        Discord signs requests with Ed25519 (headers X-Signature-Ed25519 and
-        X-Signature-Timestamp, checked against conn.config["public_key"]).
-        Full Ed25519 verification requires PyNaCl, which is not available here;
-        it is left as a follow-up. We stay non-failing: with no public_key we
-        accept, and when configured we still accept (see note above).
-        """
-        public_key = conn.config.get("public_key", "")
-        if not public_key:
-            return True
-        # NOTE: Ed25519 signature verification requires PyNaCl (follow-up).
-        # Until it is wired in, do not reject otherwise-valid webhooks.
-        return True
+class _Discord:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a Discord payload into kernel Events.
@@ -317,12 +295,6 @@ class DiscordAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """Format text for Discord markdown (mostly passthrough).
 
@@ -414,3 +386,16 @@ class DiscordAdapter:
         if body is not None:
             raw["json"] = body
         return Sent(raw=raw)
+
+
+_impl = _Discord()
+DiscordAdapter = pack(
+    channel="discord",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=discord_ed25519,
+    format=_impl.format,
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+    acknowledge=_impl.acknowledge,
+)

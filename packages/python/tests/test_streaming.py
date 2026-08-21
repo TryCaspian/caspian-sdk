@@ -24,7 +24,9 @@ def _update(text: str = "hi", chat: int = 555) -> bytes:
 
 def _cx(transport):
     cx = Caspian(transport=transport)
-    cx.channels.add("telegram", via="self-host", bot_token="123:ABC")
+    cx.channels.add(
+        "telegram", via="self-host", bot_token="123:ABC", webhook_secret="s3cr3t"
+    )
     return cx
 
 
@@ -41,7 +43,11 @@ class TestStreamingLive:
                 for chunk in ("Hello", " there", " friend"):
                     out.append(chunk)
 
-        cx.handle("telegram", _update())
+        cx.handle(
+            "telegram",
+            _update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
 
         methods = [s.raw.get("native") or s.raw.get("url", "").rsplit("/", 1)[-1]
                    for s in rec.dispatched]
@@ -60,7 +66,11 @@ class TestStreamingLive:
                 out.append("alpha ")
                 out.append("beta")
 
-        cx.handle("telegram", _update())
+        cx.handle(
+            "telegram",
+            _update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         texts = [s.raw.get("json", {}).get("text") for s in rec.dispatched]
         assert "alpha beta" in [t for t in texts if t], texts
 
@@ -76,7 +86,11 @@ class TestStreamingLive:
             out.append("x")
             out.close()
 
-        cx.handle("telegram", _update())
+        cx.handle(
+            "telegram",
+            _update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         assert seen["live"] is True
 
 
@@ -85,7 +99,9 @@ class TestStreamingDegrades:
 
     def test_buffers_into_one_post_without_transport(self) -> None:
         cx = Caspian(dispatch=False)
-        cx.channels.add("telegram", via="self-host", bot_token="123:ABC")
+        cx.channels.add(
+        "telegram", via="self-host", bot_token="123:ABC", webhook_secret="s3cr3t"
+    )
         captured = {}
 
         @cx.on_message({"channel": "telegram"})
@@ -97,13 +113,19 @@ class TestStreamingDegrades:
             captured["cmds"] = [c.tag for c in thread.commands]
             captured["text"] = [getattr(c, "text", None) for c in thread.commands]
 
-        cx.handle("telegram", _update())
+        cx.handle(
+            "telegram",
+            _update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         assert captured["cmds"].count("Post") == 1
         assert "one two" in captured["text"]
 
     def test_empty_stream_sends_nothing(self) -> None:
         cx = Caspian(dispatch=False)
-        cx.channels.add("telegram", via="self-host", bot_token="123:ABC")
+        cx.channels.add(
+        "telegram", via="self-host", bot_token="123:ABC", webhook_secret="s3cr3t"
+    )
         captured = {}
 
         @cx.on_message({"channel": "telegram"})
@@ -112,5 +134,9 @@ class TestStreamingDegrades:
                 pass  # nothing appended
             captured["n"] = len(thread.commands)
 
-        cx.handle("telegram", _update())
+        cx.handle(
+            "telegram",
+            _update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         assert captured["n"] == 0

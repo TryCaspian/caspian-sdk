@@ -153,7 +153,7 @@ class TestIMessageMisc:
     def test_verify_true_when_unconfigured(self) -> None:
         adapter = IMessageAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="imessage", config={})
-        assert adapter.verify(RawInbound(body=b"{}"), conn) is True
+        assert adapter.verify(RawInbound(body=b"{}"), conn) is False
 
     def test_capabilities(self) -> None:
         adapter = IMessageAdapter()

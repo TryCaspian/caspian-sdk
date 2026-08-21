@@ -137,9 +137,9 @@ class TestLinearMisc:
         expected = frozenset({"receive", "reply", "send", "threading"})
         assert adapter.capabilities() == expected
 
-    def test_verify_true_when_unconfigured(self) -> None:
+    def test_verify_false_when_unconfigured(self) -> None:
         adapter = LinearAdapter()
-        assert adapter.verify(RawInbound(body=b"{}"), _conn()) is True
+        assert adapter.verify(RawInbound(body=b"{}"), _conn()) is False
 
     def test_verify_checks_signature(self) -> None:
         adapter = LinearAdapter()

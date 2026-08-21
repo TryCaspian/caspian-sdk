@@ -1,8 +1,8 @@
 """ChannelManager — the composition seam between provisioning, adapters, and the runtime.
 
 This lives in the facade (B surface): it is allowed to import core, adapters, and
-provision. It turns `cx.channels.add("telegram", ...)` into a Result wrapping a
-domain Connection (or a tagged ProvisionError). Nothing here raises for paperwork.
+provision. Paperwork failures raise the tagged error itself (usually ProvisionError).
+handle()/listen() stay Result-shaped for per-event failure.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from typing import Any
 from caspian.adapters import REGISTRY, get_adapter
 from caspian.connection import Connection, Via, overlay_remote
 from caspian.core.errors import ProvisionError
-from caspian.core.ports import Result
 from caspian.provision import Channels
 
 
@@ -29,7 +28,7 @@ class ChannelManager:
         self._adapters: dict[str, Any] = {}
         self._connections: dict[str, Connection] = {}
 
-    def add(self, channel: str, **options: Any) -> Result:
+    def add(self, channel: str, **options: Any) -> Connection:
         """Add a channel. `via` defaults to hosted; self-host requires the secret.
 
         A local adapter is required only for `via="self-host"`, because that is
@@ -38,21 +37,20 @@ class ChannelManager:
         gateway event, so any channel the gateway supports works here even
         without a local adapter (bluesky, zulip, gmeet, rcs, ...).
 
-        Returns Result.ok(Connection) or Result.err(ProvisionError).
+        Raises ProvisionError (or another CaspianError from the gateway) if
+        paperwork or the gateway refuses.
         """
         built = self._provision.add(channel, **options)
         if isinstance(built, str):
-            return Result.err(ProvisionError(reason=built))
+            raise ProvisionError(reason=built)
         conn = built
 
         if conn.via == Via.SELF_HOST and channel not in REGISTRY:
-            return Result.err(
-                ProvisionError(
-                    reason=(
-                        f"No adapter for channel {channel!r}, so it cannot be self-hosted. "
-                        f"Self-host supports: {', '.join(sorted(REGISTRY))}. "
-                        f"Use via='hosted' to let the gateway handle {channel!r}."
-                    )
+            raise ProvisionError(
+                reason=(
+                    f"No adapter for channel {channel!r}, so it cannot be self-hosted. "
+                    f"Self-host supports: {', '.join(sorted(REGISTRY))}. "
+                    f"Use via='hosted' to let the gateway handle {channel!r}."
                 )
             )
 
@@ -62,10 +60,9 @@ class ChannelManager:
             provisioned = HostedProvisioning(self._gateway_client).add_connection(
                 channel, options
             )
-            # Swallowing this made a failed connect look successful: the local
-            # record still said "added" while the gateway had nothing.
             if not provisioned.is_ok:
-                return provisioned
+                err = provisioned.error or ProvisionError(reason="gateway refused")
+                raise err
             conn = overlay_remote(conn, provisioned.value)
 
         if not conn.id:
@@ -74,7 +71,7 @@ class ChannelManager:
         # Hosted-only channels have no local adapter; that is expected.
         self._adapters[channel] = get_adapter(channel) if channel in REGISTRY else None
         self._connections[channel] = conn
-        return Result.ok(conn)
+        return conn
 
     def adapter_for(self, channel: str) -> Any:
         if channel not in self._adapters:

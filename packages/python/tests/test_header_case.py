@@ -91,5 +91,5 @@ def test_telegram_secret_token_verifies_in_any_header_case(case: str) -> None:
         sent = {k.lower(): v for k, v in sent.items()}
 
     adapter = TelegramAdapter()
-    connection = Connection(id="c", channel="telegram", config={"secret_token": "tok"})
+    connection = Connection(id="c", channel="telegram", config={"webhook_secret": "tok"})
     assert adapter.verify(RawInbound(b"{}", sent), connection) is True

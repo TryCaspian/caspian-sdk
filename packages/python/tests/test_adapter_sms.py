@@ -134,4 +134,4 @@ class TestSmsMisc:
     def test_verify_true_when_unconfigured(self) -> None:
         adapter = SmsAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="sms", config={})
-        assert adapter.verify(_inbound({"From": "+1"}), conn) is True
+        assert adapter.verify(_inbound({"From": "+1"}), conn) is False

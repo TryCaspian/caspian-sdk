@@ -20,13 +20,11 @@ thread-id prefix parts.
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import hmac_b64
 from caspian.core.commands import Command, Post, Reply
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -35,29 +33,7 @@ from caspian.core.types import Event, Message, ThreadId
 API_BASE = "https://api.twitter.com/2"
 
 
-class XAdapter:
-    """Adapter for the X (Twitter) API v2 + Account Activity webhooks."""
-
-    @property
-    def name(self) -> str:
-        return "x"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Best-effort Account Activity signature check (HMAC-SHA256).
-
-        X signs webhook bodies as ``sha256=<base64>`` using the app's consumer
-        secret. When no consumer_secret is configured we cannot verify, so we
-        accept (the runner/transport layer may enforce stricter checks).
-        """
-        secret = conn.config.get("consumer_secret", "")
-        if not secret:
-            return True
-        got = raw.headers.get("X-Twitter-Webhooks-Signature", "")
-        digest = hmac.new(secret.encode(), raw.body, hashlib.sha256).digest()
-        expected = "sha256=" + base64.b64encode(digest).decode()
-        return hmac.compare_digest(expected, got)
+class _X:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse an X Account Activity payload into kernel Events.
@@ -158,12 +134,6 @@ class XAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """X has no markup; text is sent verbatim."""
         return text
@@ -208,3 +178,16 @@ class XAdapter:
                 "native": "createDm",
             }
         )
+
+
+_impl = _X()
+XAdapter = pack(
+    channel="x",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=hmac_b64(
+        header="X-Twitter-Webhooks-Signature", secret_key="consumer_secret"
+    ),
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)

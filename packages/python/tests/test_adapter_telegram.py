@@ -258,7 +258,7 @@ class TestTelegramVerifyAck:
     def test_verify_ok_when_no_secret(self) -> None:
         adapter = TelegramAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="telegram", config={})
-        assert adapter.verify(RawInbound(body=b"{}"), conn) is True
+        assert adapter.verify(RawInbound(body=b"{}"), conn) is False
 
     def test_verify_checks_secret(self) -> None:
         adapter = TelegramAdapter()

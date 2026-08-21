@@ -16,13 +16,12 @@ A shared HttpTransport dispatches the http_json payload.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import urllib.parse
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import hmac_slack
 from caspian.core.commands import (
     Call,
     Command,
@@ -55,27 +54,7 @@ from caspian.core.types import (
 API_BASE = "https://slack.com/api"
 
 
-class SlackAdapter:
-    """Adapter for the Slack Web API + Events API."""
-
-    @property
-    def name(self) -> str:
-        return "slack"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the Slack request signature (HMAC-SHA256, constant-time)."""
-        secret = conn.config.get("signing_secret", "")
-        if not secret:
-            return True
-        timestamp = raw.headers.get("X-Slack-Request-Timestamp", "")
-        body = self._text(raw.body)
-        base = f"v0:{timestamp}:{body}"
-        digest = hmac.new(secret.encode(), base.encode(), hashlib.sha256).hexdigest()
-        expected = f"v0={digest}"
-        got = raw.headers.get("X-Slack-Signature", "")
-        return hmac.compare_digest(expected, got)
+class _Slack:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a Slack Events API / interactive payload into kernel Events.
@@ -306,12 +285,6 @@ class SlackAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """Escape text for Slack mrkdwn (& < > are the reserved characters)."""
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -387,3 +360,15 @@ class SlackAdapter:
                 "native": method,
             }
         )
+
+
+_impl = _Slack()
+SlackAdapter = pack(
+    channel="slack",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=hmac_slack,
+    format=_impl.format,
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)

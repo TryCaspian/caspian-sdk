@@ -182,7 +182,7 @@ class TestMessengerVerify:
     def test_verify_ok_when_no_secret(self) -> None:
         adapter = MessengerAdapter()
         conn = Connection(id=ConnectionId("c"), channel="messenger", config={})
-        assert adapter.verify(RawInbound(body=b"{}"), conn) is True
+        assert adapter.verify(RawInbound(body=b"{}"), conn) is False
 
     def test_verify_checks_signature(self) -> None:
         adapter = MessengerAdapter()

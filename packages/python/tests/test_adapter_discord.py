@@ -183,7 +183,7 @@ class TestDiscordVerifyAck:
     def test_verify_true_when_no_public_key(self) -> None:
         adapter = DiscordAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="discord", config={})
-        assert adapter.verify(RawInbound(body=b"{}"), conn) is True
+        assert adapter.verify(RawInbound(body=b"{}"), conn) is False
 
     def test_acknowledge_returns_interaction_callback(self) -> None:
         adapter = DiscordAdapter()

@@ -20,12 +20,11 @@ not enforced here.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import hmac_hex
 from caspian.core.commands import Command, Post, Reply, SendMedia, Typing
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -52,23 +51,7 @@ _MEDIA_TYPES = {
 }
 
 
-class MessengerAdapter:
-    """Adapter for the Facebook Messenger Platform (Send API)."""
-
-    @property
-    def name(self) -> str:
-        return "messenger"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the Meta X-Hub-Signature-256 payload signature (constant-time)."""
-        secret = conn.config.get("app_secret", "")
-        if not secret:
-            return True
-        got = raw.headers.get("X-Hub-Signature-256", "")
-        digest = hmac.new(secret.encode(), raw.body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest("sha256=" + digest, got)
+class _Messenger:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a Messenger webhook into kernel Events.
@@ -189,12 +172,6 @@ class MessengerAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """Messenger renders plain text; nothing to escape."""
         return text
@@ -237,6 +214,19 @@ class MessengerAdapter:
                 "native": native,
             }
         )
+
+
+_impl = _Messenger()
+MessengerAdapter = pack(
+    channel="messenger",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=hmac_hex(
+        header="X-Hub-Signature-256", secret_key="app_secret", prefix="sha256="
+    ),
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)
 
 
 def _as_list(value: Any) -> list[Any]:  # noqa: ANN401

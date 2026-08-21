@@ -20,12 +20,11 @@ This adapter does not enforce that window — it is a runner/policy concern.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 from typing import Any
 
-from caspian.catalog import capabilities_of
+from caspian.adapters.pack import pack
+from caspian.adapters.verify import hmac_hex
 from caspian.core.commands import Command, Post, React, Reply, SendMedia
 from caspian.core.errors import AdapterError, DecodeError
 from caspian.core.ports import Connection, RawInbound, Result, Sent
@@ -52,23 +51,7 @@ _MEDIA_TYPES = {
 }
 
 
-class WhatsAppAdapter:
-    """Adapter for the WhatsApp Cloud API (Graph)."""
-
-    @property
-    def name(self) -> str:
-        return "whatsapp"
-
-    # ─── Inbound ─────────────────────────────────────────────────────────────
-
-    def verify(self, raw: RawInbound, conn: Connection) -> bool:
-        """Verify the Meta X-Hub-Signature-256 payload signature (constant-time)."""
-        secret = conn.config.get("app_secret", "")
-        if not secret:
-            return True
-        got = raw.headers.get("X-Hub-Signature-256", "")
-        digest = hmac.new(secret.encode(), raw.body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest("sha256=" + digest, got)
+class _WhatsApp:
 
     def parse(self, raw: RawInbound) -> Result:
         """Parse a WhatsApp webhook into kernel Events.
@@ -213,12 +196,6 @@ class WhatsAppAdapter:
                     )
                 )
 
-    def overlap_key(self, event: Event) -> str:
-        return str(event.thread_id)
-
-    def capabilities(self) -> frozenset[str]:
-        return capabilities_of(self.name)
-
     def format(self, text: str) -> str:
         """WhatsApp accepts a light markdown dialect verbatim; no escaping needed."""
         return text
@@ -295,6 +272,19 @@ class WhatsAppAdapter:
                 "native": native,
             }
         )
+
+
+_impl = _WhatsApp()
+WhatsAppAdapter = pack(
+    channel="whatsapp",
+    parse=_impl.parse,
+    plan=_impl.execute,
+    verify=hmac_hex(
+        header="X-Hub-Signature-256", secret_key="app_secret", prefix="sha256="
+    ),
+    encode_thread=_impl.encode_thread,
+    decode_thread=_impl.decode_thread,
+)
 
 
 def _as_list(value: Any) -> list[Any]:  # noqa: ANN401

@@ -46,7 +46,7 @@ class TestProcessInterpreterDispatch:
             b'{"message": {"message_id": 1, "from": {"id": 9}, '
             b'"chat": {"id": 555, "type": "private"}, "text": "hi"}}'
         )
-        results = interp.handle_webhook(RawInbound(body=update))
+        results = interp.handle_webhook(RawInbound(body=update), trusted=True)
 
         assert all(r.is_ok for r in results)
         # typing + post both dispatched

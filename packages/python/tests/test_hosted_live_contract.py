@@ -189,7 +189,12 @@ class TestTypingIsSentBeforeTheHandler:
 
         rec = RecordingTransport()
         cx = Caspian(transport=rec)
-        cx.channels.add("telegram", via="self-host", bot_token="1:A")
+        cx.channels.add(
+            "telegram",
+            via="self-host",
+            bot_token="1:A",
+            webhook_secret="s3cr3t",
+        )
 
         @cx.on_message({"channel": "telegram"})
         def handler(thread, msg, ctx):  # noqa: ANN001
@@ -199,7 +204,11 @@ class TestTypingIsSentBeforeTheHandler:
         update = json.dumps({"update_id": 1, "message": {
             "message_id": 1, "from": {"id": 1},
             "chat": {"id": 5, "type": "private"}, "text": "hi"}}).encode()
-        cx.handle("telegram", update)
+        cx.handle(
+            "telegram",
+            update,
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
 
         order = [s.raw.get("url", "").rsplit("/", 1)[-1] for s in rec.dispatched]
         assert order, "nothing was dispatched"
@@ -284,7 +293,12 @@ class TestInstantAck:
 
         rec = RecordingTransport()
         cx = Caspian(transport=rec)
-        cx.channels.add("telegram", via="self-host", bot_token="1:A")
+        cx.channels.add(
+            "telegram",
+            via="self-host",
+            bot_token="1:A",
+            webhook_secret="s3cr3t",
+        )
         return cx, rec
 
     def _update(self) -> bytes:
@@ -301,7 +315,11 @@ class TestInstantAck:
             order.append("handler")
             thread.post("the real answer")
 
-        cx.handle("telegram", self._update())
+        cx.handle(
+            "telegram",
+            self._update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         texts = [s.raw.get("json", {}).get("text") for s in rec.dispatched]
         sent = [t for t in texts if t]
         assert sent[0] == "On it, one moment…", f"ack must be first, got {sent}"
@@ -315,7 +333,11 @@ class TestInstantAck:
         def handler(thread, msg, ctx):  # noqa: ANN001
             thread.post("answer")
 
-        cx.handle("telegram", self._update())
+        cx.handle(
+            "telegram",
+            self._update(),
+            {"X-Telegram-Bot-Api-Secret-Token": "s3cr3t"},
+        )
         texts = [s.raw.get("json", {}).get("text") for s in rec.dispatched if s.raw.get("json")]
         assert [t for t in texts if t] == ["answer"]
 

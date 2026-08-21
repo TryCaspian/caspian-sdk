@@ -44,10 +44,13 @@ class ProcessInterpreter:
         self._state = StepState()
         self._pending: dict[str, Event] = {}
 
-    def handle_webhook(self, raw: RawInbound) -> list[Result]:
-        """Process one raw inbound payload end-to-end. Returns per-command results."""
-        verify = getattr(self._adapter, "verify", None)
-        if callable(verify) and not verify(raw, self._connection):
+    def handle_webhook(self, raw: RawInbound, *, trusted: bool = False) -> list[Result]:
+        """Process one raw inbound payload end-to-end. Returns per-command results.
+
+        `trusted=True` skips signature checks: poll and socket inbound are
+        already authenticated by the bot token / gateway session.
+        """
+        if not trusted and not self._adapter.verify(raw, self._connection):
             return [Result.err(DecodeError(reason="Webhook signature verification failed"))]
 
         parse_result = self._adapter.parse(raw)

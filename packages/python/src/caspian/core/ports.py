@@ -92,7 +92,10 @@ class Sent:
 
 
 class AdapterPort(Protocol):
-    """Port: translate between platform wire format and kernel Events/Commands."""
+    """Port: translate between platform wire format and kernel Events/Commands.
+
+    Adapters are a codec: parse inbound, plan outbound. Transport sends.
+    """
 
     @property
     def name(self) -> str: ...
@@ -100,6 +103,8 @@ class AdapterPort(Protocol):
     def parse(self, raw: RawInbound) -> Result: ...
 
     def execute(self, cmd: Command, conn: Connection) -> Result: ...
+
+    def verify(self, raw: RawInbound, conn: Connection) -> bool: ...
 
     def overlap_key(self, event: Event) -> str: ...
 

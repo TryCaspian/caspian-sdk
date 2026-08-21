@@ -2,7 +2,7 @@
 
 This module CANNOT import caspian.core (enforced by import-linter).
 It is paperwork, not behavior. Failures are a reason string; the facade
-maps them to core.errors.ProvisionError on a Result. Nothing here raises.
+raises core.errors.ProvisionError. Nothing here raises.
 """
 
 from __future__ import annotations

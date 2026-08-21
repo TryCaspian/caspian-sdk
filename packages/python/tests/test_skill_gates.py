@@ -93,6 +93,9 @@ class TestQueueDrainsLatest:
 
                 return Result.ok(Sent(raw={"transport": "noop", "native": getattr(cmd, "tag", "")}))
 
+            def verify(self, raw: RawInbound, conn: Connection) -> bool:
+                return True
+
             def overlap_key(self, event: Event) -> str:
                 return str(event.thread_id)
 
@@ -295,17 +298,25 @@ class TestReliabilityGates:
         from pydantic import BaseModel
 
         import caspian.core.commands as commands
-        import caspian.core.errors as errors
         import caspian.core.overlap as overlap
         import caspian.core.predicates as predicates
         import caspian.core.types as types
 
-        for mod in (types, commands, errors, overlap, predicates):
+        for mod in (types, commands, overlap, predicates):
             for name in dir(mod):
                 obj = getattr(mod, name)
                 if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel:
                     frozen = obj.model_config.get("frozen")
                     assert frozen is True, f"{mod.__name__}.{name} is not frozen"
+
+    def test_every_caspian_error_is_an_exception(self) -> None:
+        import caspian.core.errors as errors
+        from caspian.core.errors import CaspianError
+
+        for name in dir(errors):
+            obj = getattr(errors, name)
+            if isinstance(obj, type) and issubclass(obj, CaspianError):
+                assert issubclass(obj, Exception), f"{name} is not an Exception"
 
     def test_chaos_transport_returns_error_value(self) -> None:
         from caspian.core.ports import Sent
@@ -337,23 +348,24 @@ class TestHostedOnlyChannels:
 
         cm = ChannelManager()
         for channel in ("bluesky", "zulip", "gmeet", "rcs", "instagram"):
-            result = cm.add(channel)  # hosted is the default
-            assert result.is_ok
-            record = result.value
+            record = cm.add(channel)  # hosted is the default
             assert record.channel == channel
             assert record.inbound_owner == "gateway"
         assert cm.self_hostable("bluesky") is False
         assert cm.self_hostable("telegram") is True
 
     def test_self_host_without_adapter_fails_loudly(self) -> None:
+        from caspian.core.errors import ProvisionError
         from caspian.facade.channels import ChannelManager
 
         cm = ChannelManager()
-        result = cm.add("bluesky", via="self-host", bot_token="t")
-        assert not result.is_ok
-        assert result.error is not None
-        assert result.error.tag == "ProvisionError"
-        assert "cannot be self-hosted" in result.error.reason
+        try:
+            cm.add("bluesky", via="self-host", bot_token="t")
+        except ProvisionError as exc:
+            assert exc.tag == "ProvisionError"
+            assert "cannot be self-hosted" in exc.reason
+        else:
+            raise AssertionError("self-host without adapter must throw")
 
     def test_hosted_only_channel_points_at_the_gateway_pipeline(self) -> None:
         import pytest

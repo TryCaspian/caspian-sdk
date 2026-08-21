@@ -136,7 +136,7 @@ class TestPollingRunner:
         runner = PollingRunner(
             TelegramAdapter(),
             _conn(),
-            interp.handle_webhook,
+            lambda raw: interp.handle_webhook(raw, trusted=True),
             transport=transport,
             sleep=lambda _: None,
         )
