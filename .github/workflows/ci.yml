@@ -13,6 +13,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
   python:
     name: Python SDK
     runs-on: ubuntu-latest
@@ -33,9 +52,6 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Lint (ruff)
-        run: uv run ruff check .
-
       - name: Test
         run: uv run pytest
 
@@ -44,30 +60,62 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdks/typescript
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: ["18", "20", "22"]
+        working-directory: packages/typescript
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: sdks/typescript/package-lock.json
+          bun-version: "1.3.14"
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Core dependency gates
+        run: bun run lint:deps
 
       - name: Test
-        run: npm test
+        run: bun test
 
-      - name: Build
-        run: npm run build
+  typescript-cli:
+    name: TypeScript CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # The CLI depends on caspian via file:../typescript (source exports).
+      # tsc follows into packages/typescript/src, so that package must have its
+      # own node_modules (effect) installed — CLI install alone is not enough.
+      - name: Install TypeScript SDK dependencies
+        working-directory: packages/typescript
+        run: bun install --frozen-lockfile
+
+      - name: Install CLI dependencies
+        working-directory: packages/cli
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: packages/cli
+        run: bun run typecheck
+
+      - name: Lint
+        working-directory: packages/cli
+        run: bun run lint
+
+      - name: Test
+        working-directory: packages/cli
+        run: bun test

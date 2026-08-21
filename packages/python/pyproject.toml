@@ -1,0 +1,125 @@
+[project]
+name = "caspian"
+version = "0.1.0"
+description = "Caspian Python SDK — one bot program across channels"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "httpx>=0.27,<1",
+]
+
+[project.optional-dependencies]
+# Discord needs a held-open socket (no webhook exists); Slack can use one
+# instead of a public URL. Kept optional so the base SDK stays two dependencies.
+discord = ["websockets>=12,<16"]
+# Slack Socket Mode: inbound over a socket instead of a public webhook URL.
+slack-socket = ["websockets>=12,<16"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.4",
+    "import-linter>=2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caspian"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["tests/"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The version block and the str+Enum base are the point of the shim: on 3.10
+# enum.StrEnum does not exist.
+"src/caspian/_compat.py" = ["UP036", "UP042"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["../.."]
+asyncio_mode = "auto"
+
+[tool.importlinter]
+root_packages = ["caspian"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core must not import I/O or adapters or provision or hosted"
+type = "forbidden"
+source_modules = ["caspian.core"]
+forbidden_modules = [
+    "httpx",
+    "asyncio",
+    "time",
+    "random",
+    "os",
+    "datetime",
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+    "caspian.hosted",
+]
+
+[[tool.importlinter.contracts]]
+name = "connection record must not import I/O or core"
+type = "forbidden"
+source_modules = ["caspian.connection"]
+forbidden_modules = [
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+    "caspian.hosted",
+    "caspian.interpreters",
+    "caspian.core",
+    "httpx",
+]
+
+[[tool.importlinter.contracts]]
+name = "catalog must not import I/O or core"
+type = "forbidden"
+source_modules = ["caspian.catalog"]
+forbidden_modules = [
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+    "caspian.hosted",
+    "caspian.interpreters",
+    "caspian.core",
+    "httpx",
+]
+
+[[tool.importlinter.contracts]]
+name = "provision must not import core"
+type = "forbidden"
+source_modules = ["caspian.provision"]
+forbidden_modules = ["caspian.core"]
+
+[[tool.importlinter.contracts]]
+name = "hosted must not import adapters or provision or facade"
+type = "forbidden"
+source_modules = ["caspian.hosted"]
+forbidden_modules = [
+    "caspian.adapters",
+    "caspian.provision",
+    "caspian.facade",
+]
+
+[[tool.importlinter.contracts]]
+name = "interpreters must not import facade"
+type = "forbidden"
+source_modules = ["caspian.interpreters"]
+forbidden_modules = ["caspian.facade"]

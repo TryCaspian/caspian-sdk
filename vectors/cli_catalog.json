@@ -1,0 +1,22 @@
+[
+  {
+    "id": "post",
+    "tool": "post_message",
+    "command_tag": "Post",
+    "summary": "Post text to a thread id (telegram:… / slack:…)."
+  },
+  {
+    "id": "send-dm",
+    "tool": "send_dm",
+    "command_tag": "Initiate",
+    "summary": "Send a DM to a thread id (telegram:… / slack:…), never a chat id."
+  },
+  {
+    "id": "telegram.send-photo",
+    "tool": "send_media",
+    "command_tag": "SendMedia",
+    "channel": "telegram",
+    "method": "sendPhoto",
+    "summary": "Send a photo. Same as call; this id is the catalog name."
+  }
+]

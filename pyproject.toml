@@ -3,29 +3,29 @@ name = "caspian-sdk-workspace"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-  "caspian-cli",
-  "caspian-sdk",
+  "caspian",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-caspian-cli = { workspace = true }
-caspian-sdk = { workspace = true }
+caspian = { workspace = true }
 
 [tool.uv.workspace]
-members = ["apps/cli", "sdks/python"]
+members = ["packages/python"]
 
 [dependency-groups]
 dev = [
   "pytest>=9.0.3,<10",
+  "pytest-asyncio>=0.23",
   "pytest-cov>=6,<7",
   "ruff>=0.12,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["apps/cli/tests", "sdks/python/tests"]
+testpaths = ["packages/python/tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 
@@ -41,7 +41,9 @@ select = ["E", "F", "I", "UP", "B"]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Cookie", "fastapi.Body", "fastapi.Form", "fastapi.File", "fastapi.Security"]
 
 [tool.ruff.lint.per-file-ignores]
+# The version block is the point: ruff targets py312, but the SDK supports 3.10,
+# where enum.StrEnum does not exist.
+"packages/python/src/caspian/_compat.py" = ["UP036", "UP042"]
 # Long lines here are content, not code: guide prose and an inline HTML/JS auth page.
 "server/src/comm_gateway/channel_guides.py" = ["E501"]
 "server/src/comm_gateway/routes/device.py" = ["E501"]
-
