@@ -12,7 +12,7 @@
   ·
   <a href="https://www.npmjs.com/package/caspian-sdk">npm</a>
   ·
-  <a href="./llms.txt">面向 AI 编程助手的 llms.txt</a>
+  <a href="https://api.trycaspianai.com/SKILL.md">面向 AI 编程助手的 SKILL.md</a>
   ·
   <a href="./CONTRIBUTING.md">参与贡献</a>
 </p>
@@ -41,45 +41,96 @@
 
 ---
 
-你的智能体的推理决定**说什么**。Caspian 决定它**如何存在**于 **Slack、Discord、Telegram、Instagram、邮件、X** 等每一个渠道上——每个渠道一次 connect 调用，所有渠道共用一个 handler，线程回复与 webhook 签名校验全部内置。
+你的智能体的推理决定**说什么**。Caspian 决定它**如何存在**于 **Slack、Discord、Telegram、邮件、WhatsApp、X、Linear** 等每一个渠道上——每个渠道一次 `channels.add()`，所有渠道共用一套声明式规则，线程回复与 webhook 签名校验全部内置。
+
+**1.0 版本**是一次完整重写。公开 API 为 `Caspian`（不再是 0.6.x 的 legacy `CommClient`）。见下方[从 0.6.x 迁移](#从-06x-迁移)。
+
+## 30 秒上手
+
+**在用 AI 编程助手？** 粘贴下面这段——它会读取实时指南并完成整个接入：
+
+```text
+Integrate Caspian so my agent can message people on email, Slack, Discord, Telegram, and more.
+Read https://api.trycaspianai.com/SKILL.md and follow it end to end.
+```
+
+**或手动安装：**
 
 ```bash
-pip install caspian-sdk      # Python
-npm install caspian-sdk      # TypeScript / Node 18+
+pip install caspian-sdk      # Python 3.10+
+npm install caspian-sdk      # TypeScript / Node 18+ / Bun
 ```
 
-**Python：**
+在 [dashboard.trycaspianai.com](https://dashboard.trycaspianai.com) 获取 API Key，然后：
+
+**托管模式** — 网关负责入站，你的进程轮询事件：
 
 ```python
-from caspian_sdk import CommClient
+from caspian import Caspian
 
-client = CommClient()  # 从 .env 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
-email = client.connect_email(display_name="My Agent")
-print("Agent email:", email["address"])
+cx = Caspian(api_key="...")                          # 或 .env 中的 CASPIAN_API_KEY
+cx.channels.add("telegram", bot_token="...")         # Telegram 需自备 BotFather token
 
-@client.on_message
-def handle(message):
-    message.reply(f"You said: {message.text}")
+@cx.on_message({"overlap": "queue", "ack": "收到，稍等…"})
+def handle(thread, msg, ctx):
+    thread.post(f"你说：{msg.text}")
 
-client.listen()  # 一个循环，覆盖所有渠道
+cx.run()   # 轮询网关 — Ctrl+C 停止
 ```
 
-**TypeScript**——同一套契约，零运行时依赖：
+**自托管** — 你的进程、你的 token、无需网关轮询：
+
+```python
+cx = Caspian()
+cx.channels.add("telegram", via="self-host", bot_token="...",
+                webhook_url="https://your.server/telegram")
+
+@cx.on_message({"channel": "telegram"})
+def handle(thread, msg, ctx):
+    thread.post(f"你说：{msg.text}")
+
+# 在你的 HTTP 路由中：
+results = cx.handle("telegram", request_body, request_headers)
+```
+
+Discord 和 Slack 可通过长连接 socket 接收消息，无需公网 URL — `cx.listen("discord")`（需可选依赖 `caspian-sdk[discord]`）。
+
+**TypeScript** — 同一套契约：
 
 ```ts
-import { CommClient } from "caspian-sdk";
+import { Caspian } from "caspian-sdk"
 
-const client = new CommClient();  // 读取 CASPIAN_API_KEY / CASPIAN_BASE_URL
-const inbox = await client.connectEmail({ displayName: "My Agent" });
+const cx = new Caspian()
 
-client.onMessage(async (message) => {
-  await message.reply(`You said: ${message.text}`);
-});
+await cx.channels.add("telegram", {
+  via: "self-host",
+  botToken: process.env.TELEGRAM_BOT_TOKEN!,
+  webhookUrl: "https://your.server/telegram",
+})
 
-await client.listen();
+cx.onMessage({ channel: "telegram", overlap: "queue" }, async (thread, msg) => {
+  await thread.post(`你说：${msg.text}`)
+})
+
+// POST webhook 路由 → cx.webhooks.telegram(req)
 ```
 
-新增一个渠道只是多一次 `connect_*()` 调用——永远不用写新的 handler 代码。
+新增渠道只需多一次 `channels.add()` — handler 规则不变。
+
+### CLI
+
+重写版 CLI 位于 [`packages/cli`](./packages/cli)（TypeScript + Bun）。它是同一 SDK 表面的薄客户端 — catalog 发现能力，`call` 执行操作：
+
+```bash
+caspian init                 # 生成 key → ~/.caspian/.env 或项目 .env
+caspian channels add telegram
+caspian channels add telegram --via self-host --bot-token "$TG" \
+  --webhook-url https://myapp.example.com/hook
+caspian call post --thread telegram:123:456 --text "已发货"
+caspian threads tail telegram:123:456
+```
+
+完整命令说明见 [`packages/cli/README.md`](./packages/cli/README.md)。
 
 ## 删掉你的适配器层
 
@@ -107,39 +158,39 @@ await client.listen();
 <td>
 
 ```python
-client.connect_email(...)
-client.connect_telegram(...)
-client.install_slack(...)
-client.install_discord(...)
+cx.channels.add("email", via="self-host", ...)
+cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
+cx.channels.add("slack", via="self-host", bot_token=SLACK, ...)
 
-@client.on_message
-def handle(message):
-    message.reply(agent(message.text))
+@cx.on_message({"overlap": "queue"})
+def handle(thread, msg, ctx):
+    thread.post(agent(msg.text))
 
-client.listen()
+cx.run()          # 托管
+# 或 cx.listen("slack") / cx.handle(channel, body, headers)
 ```
 
 </td>
 </tr>
 </table>
 
-> **在用 AI 编程助手？** 把 [`llms.txt`](./llms.txt) 喂给它——或者对着运行中的网关 `GET /SKILL.md`——它就能替你完成整个接入。
+> **在用 AI 编程助手？** 把 [`SKILL.md`](https://api.trycaspianai.com/SKILL.md) 喂给它——它就能替你完成整个接入。
 
 ## 问题所在
 
 每个智能体团队最终都在重复造同样的四个轮子——而它们没有一个能让智能体变得更聪明。
 
-**1. 你背上了从没想要的基础设施。** 写一个 Slack 机器人只要一个周末，养它却是一辈子的事：会话/鉴权失步、断线重连循环、静默的连接失败、平台每次升版带来的 payload 变化。痛点从来不是 `send()`——发送早已是被解决的一次调用，痛的是**生命周期**。最大的几个开源智能体框架各自在仓库里维护着 25+ 个渠道适配器，issue 区仍有 8–15% 被渠道管道问题占据。（在写下第一行代码之前，我们对 42 个开源智能体项目做了量化调研。）
+**1. 你背上了从没想要的基础设施。** 写一个 Slack 机器人只要一个周末，养它却是一辈子的事：会话/鉴权失步、断线重连循环、静默的连接失败、平台每次升版带来的 payload 变化。痛点从来不是 `send()`——发送早已是被解决的一次调用，痛的是**生命周期**。
 
-**2. 沟通不在智能体的决策范围之内。** 一对一硬编码的渠道集成，意味着“在哪说、怎么说”是开发者在构建时定死的。智能体自己无法推理“这件事应该现在发条 Telegram 快讯，稍后再补一封邮件总结”——每个渠道都是一个独立的机器人、独立的代码、独立的身份。沟通始终是写死的管道，而不是模型可以真正决策的能力。
+**2. 沟通不在智能体的决策范围之内。** 一对一硬编码的渠道集成，意味着"在哪说、怎么说"是开发者在构建时定死的。智能体自己无法推理"这件事应该现在发条 Telegram 快讯，稍后再补一封邮件总结"。
 
-**3. 每一个人，你都要维护 N 份身份。** 同一个人今天在 Instagram 上私信你的智能体，明天又发来邮件。于是*你的*数据库必须自己发明“这是同一个人、同一段关系、同一场进行中的对话”这个概念——谁在哪个渠道说了什么，流程接下来该怎么走。每个团队都在从零重建这层连续性，按平台各写一份，而且永远维护不完。
+**3. 每一个人，你都要维护 N 份身份。** 同一个人今天在 Instagram 上私信你的智能体，明天又发来邮件。于是*你的*数据库必须自己发明"这是同一个人、同一段关系、同一场进行中的对话"这个概念。
 
-**4. 单渠道智能体在竞争中就是劣势。** 如果竞品的智能体在五个渠道都能被找到，而你的只有一个，用户会去有回应的那边。开源数据也印证了这一点：人们真正依赖的智能体，恰恰是部署在几十个人类渠道上的那些——而这份触达能力，恰恰吞掉了它们的工程时间。
+**4. 单渠道智能体在竞争中就是劣势。** 如果竞品的智能体在五个渠道都能被找到，而你的只有一个，用户会去有回应的那边。
 
 ## Caspian 的答案
 
-**渠道是传输层，不是身份。** 智能体是同一个身份；每个渠道都通过同一个小巧的适配器接口绑定到它，你的 handler 代码永远不需要知道自己在哪个平台上。无论来自哪种传输，消息都以同一套归一化的会话/消息模型到达，线程由这一层负责，`message.reply()` 永远回到正确的位置——跨渠道的连续性只存在于一个地方，而不是五个数据库。每个渠道的沟通礼仪由 `client.behavior_prompt()` 提供，“在哪该怎么说”从此是模型可以推理的对象，而不是你硬编码的逻辑。
+**渠道是传输层，不是身份。** 智能体是同一个程序（`cx.app.rules` 是可检查的数据）；每个渠道通过同一适配器接口绑定，handler 代码面向归一化的 `Thread` / `Message` 模型。无论来自哪种传输，消息都以 kernel 事件到达；重叠策略（`queue` / `debounce` / `drop` / `parallel`）串行化并发会话；`thread.post()` / `thread.reply()` 永远回到正确的位置。
 
 ```mermaid
 flowchart LR
@@ -147,12 +198,14 @@ flowchart LR
     D[Discord] --> A
     T[Telegram] --> A
     E[邮件] --> A
-    M[Instagram · Messenger] --> A
+    W[WhatsApp · Messenger] --> A
     X[X] --> A
-    A["caspian-adapters<br/>签名校验 · 归一化 · 线程"] --> I["同一个智能体身份"]
-    I --> H["你的 on_message handler"]
-    H -->|"message.reply()"| I
+    A["渠道适配器<br/>校验 · 归一化 · 线程"] --> I["同一个智能体程序"]
+    I --> H["你的 on_message 规则"]
+    H -->|"thread.post()"| I
 ```
+
+**托管或自托管，同一套代码。** `via="hosted"`（默认）使用 `https://api.trycaspianai.com` 上的 Caspian 网关 — 设置 `CASPIAN_API_KEY`，可选 `CASPIAN_BASE_URL`。`via="self-host"` 在你的进程中用平台 token 运行适配器。切换模式无需重写 handler。
 
 ## 功能特性
 
@@ -160,8 +213,8 @@ flowchart LR
 <tr>
 <td width="50%" valign="top">
 
-**🧵 一个 handler，所有渠道**<br/>
-`message.reply()` 自动在消息来源平台的正确线程里回复。
+**🧵 声明式规则，一个程序**<br/>
+`@cx.on_message({"channel": "telegram", "command": "help"})` — 按渠道、会话类型、命令、重叠策略和即时 ack 过滤。你的 bot 是数据：`cx.app.rules` 可离线检查和测试。
 
 </td>
 <td width="50%" valign="top">
@@ -174,42 +227,42 @@ Slack signing secret、Meta `X-Hub-Signature-256`、Telegram secret header、X C
 <tr>
 <td valign="top">
 
-**🎚 能力协商**<br/>
-适配器声明渠道物理上支持的能力；智能体永远不会被授予超出传输层支持的权限。
+**☁️ 托管或自托管**<br/>
+`cx.run()` 轮询网关，或 `via="self-host"` 自带 token 和 webhook/socket。handler 规则完全相同。
 
 </td>
 <td valign="top">
 
 **🧪 每个渠道的离线 fake**<br/>
-fake 消费各平台*真实*的入站消息格式——Python + TS 共 98 个测试，零网络请求。
+适配器消费各平台*真实*的入站消息格式 — Python + TypeScript 共 650+ 个测试，CI 零网络请求。
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**⌨️ 输入指示与即时回执**<br/>
-Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到，稍等…")`。
+**⌨️ 输入指示、流式输出、富媒体**<br/>
+`thread.typing()`、`thread.stream()`（发一条再边写边改）、`thread.send_media()`、`thread.send_blocks()`、表情、置顶、转发和冷启动 DM。
 
 </td>
 <td valign="top">
 
-**🧭 平台行为指南**<br/>
-`client.behavior_prompt()` 返回各渠道的礼仪规范，直接注入你的系统提示词。
+**🤖 模型工具与 handler 同一表面**<br/>
+`cx.tools(thread)` 暴露 Command catalog（post、react、send-photo 等），schema 从 kernel 推导 — 与 handler 使用同一 API。
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**♻️ 幂等连接**<br/>
-重启安全：`connect_email()` 返回同一个收件箱，绝不重复创建。
+**🔌 分渠道包（TypeScript）**<br/>
+导入 `caspian-sdk/telegram`、`caspian-sdk/discord`、`caspian-sdk/slack` 等，单独 parse/plan/execute，无需拉取整个 facade。
 
 </td>
 <td valign="top">
 
-**🔌 可插拔注册表**<br/>
-任何 provider 包都可以通过 `caspian.providers` entry-point 注册。无需 fork。
+**📡 Socket 入站（Discord、Slack）**<br/>
+无需公网 URL — `cx.listen("discord")` 或 `cx.listen("slack")` 通过 websocket 长连接（可选 extras）。
 
 </td>
 </tr>
@@ -217,34 +270,32 @@ Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到�
 
 ## 渠道
 
-| 渠道 | 本仓库（自带凭证） | Caspian 托管 |
+下方渠道的自托管适配器已内置在 SDK 中。托管模式覆盖网关支持的任何渠道（包括 Bluesky、Instagram 以及没有本地适配器的渠道）。
+
+| 渠道 | 自托管 (`via="self-host"`) | 托管 (`via="hosted"`) |
 |---|:---:|:---:|
+| <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram（机器人） | ✅ webhook 或 poll | ✅ 自备 bot token |
+| <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ socket | ✅ |
+| <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ socket 或 webhook | ✅ |
 | <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;邮件 | ✅ | ✅ 即时收件箱 |
-| <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram（机器人） | ✅ | ✅ |
-| <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ 一键安装 |
-| <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ 一键安装 |
-| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
-| <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram 私信 | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | ✅ | ✅ 一键接入 |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
-| <img src="https://cdn.simpleicons.org/googlemeet" width="14"/> &nbsp;Google Meet | ✅ | ✅ |
-| 📶 短信（GSM 模块） | ✅ * | ✅ 无需硬件 |
-| <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram（个人账号） | ⚠️ 需显式开启 * | — |
-| <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | — | ✅ 一键接入 |
-| <img src="https://cdn.simpleicons.org/apple/6c7078/9ea3ad" width="14"/> &nbsp;电话 / 语音 · iMessage · RCS | — | ✅ |
+| 📶 短信 · 语音（Twilio） | ✅ | ✅ 无需硬件 |
+| <img src="https://cdn.simpleicons.org/apple/6c7078/9ea3ad" width="14"/> &nbsp;iMessage | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/linear" width="14"/> &nbsp;Linear | ✅ | — |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | — | ✅ |
+| <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram 私信 | — | ✅ |
 
 <p align="center">
   <a href="https://trycaspianai.com"><img alt="获取托管渠道" src="https://img.shields.io/badge/%E9%9C%80%E8%A6%81_WhatsApp%E3%80%81%E7%94%B5%E8%AF%9D%E6%88%96_iMessage%3F-Caspian_%E6%89%98%E7%AE%A1_→-fc2c83?style=for-the-badge" /></a>
 </p>
-
-托管渠道使用完全相同的 API——不用买号码，不用过平台审核：**[trycaspianai.com](https://trycaspianai.com)**。任何 provider 包都能通过 `caspian.providers` entry-point 接入同一个注册表。
 
 <details>
 <summary><b>* 注意事项</b>——在向别人承诺功能之前请先读一遍</summary>
 <br/>
 
 - **X 不是免费渠道**：私信收发需要你的 X 开发者应用开通付费 API 订阅（免费档只写不读且限额很低）。
-- **Telegram 个人账号自动化处于 ToS 灰色地带**：它通过 MTProto 驱动个人账号，需要显式开启配置；封号风险自负。绝不可用于骚扰信息。
 - **GSM 模块短信**：需要你自己的模块和 SIM 卡；运营商合规（A2P 规则）由你负责。
 
 </details>
@@ -258,71 +309,102 @@ Discord/Telegram 原生"正在输入…"；其他渠道用 `listen(ack="收到�
 - **个人 / 高管助理** —— 一个助理身份贯通你的邮件、Telegram 和 Slack，而不是三个互不相认的机器人。
 - **社区与产品机器人** —— 同一个智能体出现在你的 Discord、Slack 社区和成员的私信里。
 - **OpenClaw 智能体** —— [`openclaw-caspian`](./packages/openclaw) 一次插件安装，获得全部 Caspian 渠道。
-- **智能体舰队** —— 多租户作用域让每个客户拥有自己的智能体身份（见下方示例）。
+- **OpenCode 智能体** —— [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) 将 Caspian 邮件 / Telegram / Discord 桥接到 OpenCode 会话。详情：[`packages/opencode`](./packages/opencode)。
 
-以上每一种都是同样的三行代码：`connect_*()` 连接渠道，写一个 `on_message` handler，然后 `listen()`。可以从[可运行示例](./examples)开始。
+从[可运行示例](./examples)开始 — 每个渠道一个文件夹，共享 handler 在 `app.py` / `app.ts`。
 
 ## 使用示例
 
 **同一个智能体，三个渠道：**
 
 ```python
-client.connect_email(display_name="Acme Support")
-client.connect_telegram(bot_token=BOT_TOKEN)
-slack = client.install_slack(display_name="Acme Support")
-print("Add to Slack:", slack["authorize_url"])   # 一次点击即上线
-# 你已经写好的 @client.on_message handler 现在同时服务三个渠道
+cx.channels.add("email", display_name="Acme Support")
+cx.channels.add("telegram", bot_token=BOT_TOKEN)
+cx.channels.add("slack", bot_token=SLACK_TOKEN, signing_secret=SLACK_SECRET)
+# 你已经写好的 @cx.on_message 规则现在同时服务三个渠道
+cx.run()
 ```
 
-**让回复适配平台**——一行代码教会智能体每个渠道的礼仪：
+**按命令和会话类型过滤：**
 
 ```python
-system_prompt += "\n\n" + client.behavior_prompt()
+@cx.on_message({"channel": "telegram", "command": ["start", "help"]})
+def help_menu(thread, msg, ctx):
+    thread.post("命令：/help /status /ping")
+
+@cx.on_message({"channel": "telegram", "kind": "dm"})
+def dm_only(thread, msg, ctx):
+    thread.post(f"来自 {msg.sender} 的私信：{msg.text}")
 ```
 
-<details>
-<summary><b>多租户</b>——每个客户一个智能体，按作用域隔离</summary>
+**流式回复：**
 
 ```python
-acme = client.create_customer("Acme")
-agent = client.create_agent("Support")
-client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
+@cx.on_message({"channel": "telegram", "overlap": "stream"})
+def stream_story(thread, msg, ctx):
+    with thread.stream(min_chars=1, throttle=0.25) as out:
+        for chunk in ["从前 ", "有 ", "一个 bot…"]:
+            out.append(chunk)
 ```
 
-</details>
-
-<details>
-<summary><b>不经过 SDK 直接使用适配器</b></summary>
+**回调按钮：**
 
 ```python
-from caspian_adapters import Settings, build_providers
-
-providers = build_providers(Settings(
-    providers="instagram",
-    instagram_page_id="<page id>",
-    instagram_access_token="<page token>",
-    instagram_app_secret="<app secret>",
-))
+@cx.on_action({"channel": "telegram", "data": "help"})
+def on_help_button(thread, action, ctx):
+    thread.post("你点了帮助。")
 ```
 
-</details>
+## 富媒体消息
+
+通过 `thread.send_blocks()` 发送 blocks — 每个渠道渲染最佳原生形态（Slack Block Kit、Discord embed、Telegram 键盘），纯文本渠道自动降级。
+
+```python
+from caspian import Button
+
+thread.send_blocks(
+    (),
+    text="订单 #1024 已发货 — 预计周四送达。",
+    actions=(
+        Button(label="追踪包裹", url="https://example.com/track/1024"),
+        Button(label="获取帮助", data="help:1024"),
+    ),
+)
+```
 
 ## 仓库结构
 
 | 包 | |
 |---|---|
-| [`packages/adapters`](./packages/adapters) | `caspian-adapters`——渠道适配器。每个平台一个小巧接口（`provision` / `send` / `reply` / `parse_webhook`），真实的签名校验，每个渠道配一个离线 fake。 |
-| [`sdks/python`](./sdks/python) | `caspian-sdk`（PyPI）——Python 客户端：`on_message`、`connect_*()`、`message.reply()`、行为指南。 |
-| [`sdks/typescript`](./sdks/typescript) | `caspian-sdk`（npm）——TypeScript 客户端：同一契约，camelCase API，零运行时依赖，Node 18+。 |
-| [`apps/cli`](./apps/cli) | `caspian`——在终端里初始化项目、连接渠道、追踪事件。 |
-| [`examples`](./examples) | 最小可运行示例。 |
+| [`packages/python`](./packages/python) | `caspian-sdk`（PyPI）—— Python 客户端：`Caspian`、`channels.add()`、`@on_message` / `@on_action`、托管 + 自托管适配器。导入：`from caspian import Caspian`。 |
+| [`packages/typescript`](./packages/typescript) | `caspian-sdk`（npm）—— TypeScript 客户端：同一契约，camelCase API，分渠道子路径导出。 |
+| [`packages/cli`](./packages/cli) | `@caspian/cli` — Bun CLI：`init`、`channels add`、`catalog`、`call`、`threads tail`。 |
+| [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw 渠道插件。 |
+| [`packages/opencode`](./packages/opencode) | [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) — OpenCode 插件。 |
+| [`packages/clawhub-skill`](./packages/clawhub-skill) | ClawHub skill — 发布实时网关 SKILL.md。 |
+| [`examples`](./examples) | 每个适配器一个自托管示例；[`examples/telegram/hosted.py`](./examples/telegram/hosted.py) 为托管 Telegram。 |
+
+完整 API 见包内 README：[`packages/python/README.md`](./packages/python/README.md)、[`packages/typescript/README.md`](./packages/typescript/README.md)。
+
+## 从 0.6.x 迁移
+
+0.6.x 的 `CommClient` API（`from caspian_sdk import CommClient`、`connect_*()`、`message.reply()`）是另一套 SDK。它仍在 PyPI/npm 上发布；源码在本仓库中标记为 `legacy-sdk-0.6.x`。
+
+| 0.6.x | 1.0 |
+|---|---|
+| `CommClient()` | `Caspian()` |
+| `client.connect_telegram(...)` | `cx.channels.add("telegram", ...)` |
+| `@client.on_message` / `message.reply()` | `@cx.on_message({...})` / `thread.post()` |
+| `client.listen()` | `cx.run()`（托管）或 `cx.handle()` / `cx.listen()`（自托管） |
+
+没有直接迁移路径 — 新项目请从 1.0 开始。
 
 ## 路线图
 
 - **MCP 服务器**——任何支持 MCP 的智能体都能直接连接和收发渠道消息
 - **Reddit 与 LinkedIn 适配器**——下一批渠道
 - **智能体原生支付**——纯 API 的按量付费，兼容 x402，没有任何管理后台
-- **更多适配器**——接口刻意保持小巧；[来加一个](./CONTRIBUTING.md#adding-a-new-channel-adapter)
+- **更多适配器**——接口刻意保持小巧；[来加一个](./CONTRIBUTING.md)
 
 ## 社区与支持
 
@@ -336,11 +418,16 @@ providers = build_providers(Settings(
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 49 个 Python 测试，全部离线
+uv run pytest                              # Python SDK 测试（packages/python）
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 49 个 vitest 测试
+cd packages/typescript && bun install && bun run ci   # 类型检查 + lint + 235 个测试
+cd ../cli && bun install && bun run ci                # CLI 测试
 ```
 
 欢迎贡献——见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 **如果 Caspian 帮你省了时间，[一颗 star](https://github.com/TryCaspian/caspian-sdk/stargazers) 能帮助更多智能体开发者找到它。** ⭐
+
+## 许可证
+
+本仓库采用 Apache-2.0。PyPI 上的 `caspian-sdk` 包为 MIT。

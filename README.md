@@ -16,7 +16,7 @@
   ·
   <a href="https://www.npmjs.com/package/caspian-sdk">npm</a>
   ·
-  <a href="./llms.txt">llms.txt for agents</a>
+  <a href="https://api.trycaspianai.com/SKILL.md">SKILL.md for agents</a>
   ·
   <a href="./CONTRIBUTING.md">Contributing</a>
 </p>
@@ -45,9 +45,11 @@
 
 ---
 
-Caspian is an **agent communication** SDK. Your agent's reasoning decides **what** to say; Caspian is **how it exists** on **Slack, Discord, GitHub, Telegram, Instagram, email, X, Bluesky**, and beyond — one connect call per channel, one handler for all of them, threading, webhook verification, and platform quirks handled.
+Caspian is an **agent communication** SDK. Your agent's reasoning decides **what** to say; Caspian is **how it exists** on **Slack, Discord, Telegram, email, WhatsApp, X, Linear**, and beyond — one `channels.add()` per channel, declarative rules for all of them, threading, webhook verification, and platform quirks handled.
 
 Most agent communication work is agent-to-human, not agent-to-agent. Protocols like A2A and ACP connect agents to each other; Caspian connects your agent to the people it works for, on the channels they already use.
+
+**Version 1.0** is a full rewrite. The public surface is `Caspian` (not the legacy `CommClient` from 0.6.x). See [Migrating from 0.6.x](#migrating-from-06x) below.
 
 ## Get started in 30 seconds
 
@@ -58,63 +60,85 @@ Integrate Caspian so my agent can message people on email, Slack, Discord, Teleg
 Read https://api.trycaspianai.com/SKILL.md and follow it end to end.
 ```
 
-That's the fastest path — the guide at [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md) is always current, so your agent installs the SDK, mints a key, connects a channel, and writes the handler itself.
+That's the fastest path — the guide at [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md) is always current.
 
 **Or set it up by hand:**
 
 ```bash
-cd your-project
-pip install caspian-sdk        # the library (import into your code)
-pipx install caspian-cli       # the CLI (gives the `caspian` command) — or: uvx caspian-cli
-caspian init                   # mints a key, writes CASPIAN_API_KEY + CASPIAN_BASE_URL to .env
-caspian connect email          # free, instant
+pip install caspian-sdk        # Python 3.10+
+npm install caspian-sdk        # TypeScript / Node 18+ / Bun
 ```
 
-Then in your code:
+Get an API key from [dashboard.trycaspianai.com](https://dashboard.trycaspianai.com), then:
+
+**Hosted** — Caspian's gateway owns inbound; your process polls for events:
 
 ```python
-from caspian_sdk import CommClient
+from caspian import Caspian
 
-client = CommClient()  # reads CASPIAN_API_KEY / CASPIAN_BASE_URL from .env
-email = client.connect_email(username="example-agent")
-print(f"Agent email: {email['address']}")
-print("Listening (Ctrl+C to stop).")
+cx = Caspian(api_key="...")                          # or CASPIAN_API_KEY in .env
+cx.channels.add("telegram", bot_token="...")         # Telegram is BYO BotFather token
 
+@cx.on_message({"overlap": "queue", "ack": "On it…"})
+def handle(thread, msg, ctx):
+    thread.post(f"You said: {msg.text}")
 
-@client.on_message
-def handle(message):
-    sender = (message.sender or {}).get("address", "?")
-    print(f"<- {sender}: {message.text!r}")
-    message.reply(f"You said: {message.text}")
-
-
-client.listen()  # one loop, every channel
+cx.run()   # polls the gateway — Ctrl+C to stop
 ```
 
-> **Node / TypeScript:** the library is `npm install caspian-sdk`. The `caspian` CLI is a
-> standalone tool (Python) — run it with `uvx caspian-cli init` / `pipx install caspian-cli`,
-> or just use the SDK directly (below); nothing else about the flow changes.
+**Self-host** — your process, your tokens, no gateway polling:
 
-The SDK talks to the **hosted gateway at `https://api.trycaspianai.com`** by default (set `CASPIAN_BASE_URL` to point at a self-hosted one). **Free channels — email, Telegram, Slack, Discord, Bluesky — connect instantly, no sign-in.** Paid channels (X, WhatsApp, iMessage) prompt a one-time developer sign-in (`caspian login`, or `client.login()`) and run on prepaid credit you add in the dashboard.
+```python
+cx = Caspian()
+cx.channels.add("telegram", via="self-host", bot_token="...",
+                webhook_url="https://your.server/telegram")
 
-> **Hosted channels (Beta):** Google Meet voice — put your agent into a live Google Meet call as a real-time voice participant. Available on the managed gateway; see [`/SKILL.md`](https://api.trycaspianai.com/SKILL.md).
+@cx.on_message({"channel": "telegram"})
+def handle(thread, msg, ctx):
+    thread.post(f"You said: {msg.text}")
 
-**TypeScript** — same contract, zero runtime dependencies:
+# from your HTTP route:
+results = cx.handle("telegram", request_body, request_headers)
+```
+
+Discord and Slack can receive over a held-open socket instead of a public webhook — `cx.listen("discord")` (requires optional extra `caspian-sdk[discord]`).
+
+**TypeScript** — same contract:
 
 ```ts
-import { CommClient } from "caspian-sdk";
+import { Caspian } from "caspian-sdk"
 
-const client = new CommClient();  // reads CASPIAN_API_KEY / CASPIAN_BASE_URL
-const inbox = await client.connectEmail({ username: "my-agent" });
+const cx = new Caspian()
 
-client.onMessage(async (message) => {
-  await message.reply(`You said: ${message.text}`);
-});
+await cx.channels.add("telegram", {
+  via: "self-host",
+  botToken: process.env.TELEGRAM_BOT_TOKEN!,
+  webhookUrl: "https://your.server/telegram",
+})
 
-await client.listen();
+cx.onMessage({ channel: "telegram", overlap: "queue" }, async (thread, msg) => {
+  await thread.post(`You said: ${msg.text}`)
+})
+
+// POST your webhook route → cx.webhooks.telegram(req)
 ```
 
-Adding a channel is one more `connect_*()` call — never new handler code.
+Adding a channel is one more `channels.add()` call — handler rules stay the same.
+
+### CLI
+
+The rewrite CLI lives in [`packages/cli`](./packages/cli) (TypeScript + Bun). It is a thin client of the same SDK surface — catalog discovers, `call` invokes:
+
+```bash
+caspian init                 # mint a key → ~/.caspian/.env or project .env
+caspian channels add telegram
+caspian channels add telegram --via self-host --bot-token "$TG" \
+  --webhook-url https://myapp.example.com/hook
+caspian call post --thread telegram:123:456 --text "shipping now"
+caspian threads tail telegram:123:456
+```
+
+See [`packages/cli/README.md`](./packages/cli/README.md) for the full command map.
 
 ## Delete your adapter layer
 
@@ -142,23 +166,23 @@ Adding a channel is one more `connect_*()` call — never new handler code.
 <td>
 
 ```python
-client.connect_email(...)
-client.connect_telegram(...)
-client.install_slack(...)
-client.install_discord(...)
+cx.channels.add("email", via="self-host", ...)
+cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
+cx.channels.add("slack", via="self-host", bot_token=SLACK, ...)
 
-@client.on_message
-def handle(message):
-    message.reply(agent(message.text))
+@cx.on_message({"overlap": "queue"})
+def handle(thread, msg, ctx):
+    thread.post(agent(msg.text))
 
-client.listen()
+cx.run()          # hosted
+# or cx.listen("slack") / cx.handle(channel, body, headers)
 ```
 
 </td>
 </tr>
 </table>
 
-> **Using a coding agent?** Point it at [`llms.txt`](./llms.txt) — or, against a running gateway, `GET /SKILL.md` — and it can do the entire integration for you.
+> **Using a coding agent?** Point it at [`SKILL.md`](https://api.trycaspianai.com/SKILL.md) — it can do the entire integration for you.
 
 ## The problem
 
@@ -174,7 +198,7 @@ Every agent team ends up rebuilding the same four things — and none of them ma
 
 ## Caspian's answer
 
-**Channels are transports, not identities.** The agent is one identity; every channel binds to it through the same small adapter interface, and your handler code never learns which platform it's on. Messages arrive in one normalized conversation/message model regardless of transport, threading is owned by the layer, and `message.reply()` always answers in the right place — so cross-channel continuity lives in one place instead of five databases. Per-channel etiquette comes from `client.behavior_prompt()`, so *how to talk where* becomes something your model reasons about, not something you hardcode.
+**Channels are transports, not identities.** The agent is one program (`cx.app.rules` is inspectable data); every channel binds through the same adapter interface, and your handler code works against a normalized `Thread` / `Message` model. Messages arrive as kernel events regardless of transport, overlap policies (`queue` / `debounce` / `drop` / `parallel`) serialize concurrent chats, and `thread.post()` / `thread.reply()` always answer in the right place.
 
 ```mermaid
 flowchart LR
@@ -182,12 +206,14 @@ flowchart LR
     D[Discord] --> A
     T[Telegram] --> A
     E[Email] --> A
-    M[Instagram · Messenger] --> A
+    W[WhatsApp · Messenger] --> A
     X[X] --> A
-    A["caspian-adapters<br/>verify signatures · normalize · thread"] --> I["one agent identity"]
-    I --> H["your on_message handler"]
-    H -->|"message.reply()"| I
+    A["channel adapters<br/>verify · normalize · thread"] --> I["one agent program"]
+    I --> H["your on_message rules"]
+    H -->|"thread.post()"| I
 ```
+
+**Hosted or self-host, same code.** `via="hosted"` (default) uses the Caspian gateway at `https://api.trycaspianai.com` — set `CASPIAN_API_KEY` and optionally `CASPIAN_BASE_URL`. `via="self-host"` runs adapters in your process with your platform tokens. Switch modes without rewriting handlers.
 
 ## Features
 
@@ -195,8 +221,8 @@ flowchart LR
 <tr>
 <td width="50%" valign="top">
 
-**🧵 One handler, every channel**<br/>
-`message.reply()` answers in the right thread on whatever platform the message arrived from.
+**🧵 Declarative rules, one program**<br/>
+`@cx.on_message({"channel": "telegram", "command": "help"})` — filters for channel, chat kind, command, overlap, and instant ack. Your bot is data: `cx.app.rules` is inspectable and testable offline.
 
 </td>
 <td width="50%" valign="top">
@@ -209,53 +235,42 @@ Slack signing secret, Meta `X-Hub-Signature-256`, Telegram secret header, X CRC,
 <tr>
 <td valign="top">
 
-**🎚 Capability negotiation**<br/>
-Adapters declare what the channel can physically do; an agent can never be granted more than the transport supports.
+**☁️ Hosted or self-host**<br/>
+Gateway polling with `cx.run()`, or bring your own tokens and webhooks/sockets with `via="self-host"`. Same handler rules either way.
 
 </td>
 <td valign="top">
 
 **🧪 Offline fakes for every channel**<br/>
-Fakes consume each platform's *real* payload shapes — 98 tests across Python + TS, zero network.
+Adapters consume each platform's *real* payload shapes — 650+ tests across Python + TypeScript, zero network in CI.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**⌨️ Typing indicators & instant acks**<br/>
-Native "typing…" on Discord/Telegram; `listen(ack="On it…")` everywhere else.
+**⌨️ Typing, streaming, rich sends**<br/>
+`thread.typing()`, `thread.stream()` (post once, edit as it writes), `thread.send_media()`, `thread.send_blocks()`, reactions, pins, forwards, and cold DMs.
 
 </td>
 <td valign="top">
 
-**🧭 Behavior guides**<br/>
-`client.behavior_prompt()` returns per-channel etiquette to drop into your system prompt.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**♻️ Idempotent connects**<br/>
-Restart-safe: `connect_email()` returns the same inbox, never a duplicate.
-
-</td>
-<td valign="top">
-
-**🔌 Pluggable registry**<br/>
-Any provider package registers under the `caspian.providers` entry-point group. No forks.
+**🤖 Model tools from the same surface**<br/>
+`cx.tools(thread)` exposes the Command catalog (post, react, send-photo, …) with schemas derived from the kernel — same API your handlers use.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-**☁️ Serverless AI agents**<br/>
-No always-on server required: `handle_webhook()` lets your agent run on AWS Lambda, Vercel, or Cloudflare Workers — the gateway pushes events, you verify + dispatch, scale to zero. [Lambda + Bedrock example](./examples/serverless_lambda_bedrock).
+**🔌 Per-channel packs (TypeScript)**<br/>
+Import `caspian-sdk/telegram`, `caspian-sdk/discord`, `caspian-sdk/slack`, and the rest for parse/plan/execute without pulling the whole facade.
 
 </td>
 <td valign="top">
+
+**📡 Socket inbound (Discord, Slack)**<br/>
+No public URL required — `cx.listen("discord")` or `cx.listen("slack")` over a held-open websocket (optional extras).
 
 </td>
 </tr>
@@ -263,22 +278,22 @@ No always-on server required: `handle_webhook()` lets your agent run on AWS Lamb
 
 ## Channels
 
-| Channel | This repo (your credentials) | Caspian hosted |
+Self-host adapters ship in the SDK for the channels below. Hosted mode covers any channel the gateway supports (including Bluesky, Instagram, and channels with no local adapter).
+
+| Channel | Self-host (`via="self-host"`) | Hosted (`via="hosted"`) |
 |---|:---:|:---:|
+| <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ webhook or poll | ✅ BYO bot token |
+| <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ socket | ✅ |
+| <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ socket or webhook | ✅ |
 | <img src="https://cdn.simpleicons.org/gmail" width="14"/> &nbsp;Email | ✅ | ✅ instant inbox |
-| <img src="https://cdn.simpleicons.org/telegram" width="14"/> &nbsp;Telegram (bot) | ✅ | ✅ |
-| <img src="https://cdn.simpleicons.org/discord" width="14"/> &nbsp;Discord | ✅ | ✅ one-click |
-| <img src="https://cdn.simpleicons.org/slack" width="14"/> &nbsp;Slack | ✅ | ✅ one-click |
-| <img src="https://cdn.simpleicons.org/zulip" width="14"/> &nbsp;Zulip | ✅ | — |
-| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | ✅ | ✅ |
-| <img src="https://cdn.simpleicons.org/github/f5f5f5" width="14"/> &nbsp;GitHub issues / PRs | ✅ | — |
-| <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | ✅ | ✅ one-click |
 | <img src="https://cdn.simpleicons.org/messenger" width="14"/> &nbsp;Facebook Messenger | ✅ | ✅ |
 | <img src="https://cdn.simpleicons.org/x/0f1419/f5f5f5" width="14"/> &nbsp;X / Twitter | ✅ * | ✅ |
-| 📶 SMS (GSM modem) | ✅ * | ✅ no hardware |
-| <img src="https://cdn.simpleicons.org/telegram/6c7078" width="14"/> &nbsp;Telegram (user account) | ⚠️ opt-in * | — |
-| <img src="https://cdn.simpleicons.org/whatsapp" width="14"/> &nbsp;WhatsApp Business | — | ✅ one-click |
-| <img src="https://cdn.simpleicons.org/apple/6c7078/9ea3ad" width="14"/> &nbsp;Phone / voice · iMessage · RCS | — | ✅ |
+| 📶 SMS · voice (Twilio) | ✅ | ✅ no hardware |
+| <img src="https://cdn.simpleicons.org/apple/6c7078/9ea3ad" width="14"/> &nbsp;iMessage | ✅ | ✅ |
+| <img src="https://cdn.simpleicons.org/linear" width="14"/> &nbsp;Linear | ✅ | — |
+| <img src="https://cdn.simpleicons.org/bluesky" alt="Bluesky" width="14"/> &nbsp;Bluesky | — | ✅ |
+| <img src="https://cdn.simpleicons.org/instagram" width="14"/> &nbsp;Instagram DM | — | ✅ |
 
 <p align="center">
   <a href="https://trycaspianai.com"><img alt="Get hosted channels" src="https://img.shields.io/badge/Need_WhatsApp,_phone,_or_iMessage%3F-Caspian_hosted_→-fc2c83?style=for-the-badge" /></a>
@@ -289,7 +304,6 @@ No always-on server required: `handle_webhook()` lets your agent run on AWS Lamb
 <br/>
 
 - **X is not free**: DM send/receive needs a paid X API subscription on your X developer app (the free tier is write-only and capped).
-- **Telegram user-account automation is ToS-gray**: it drives a personal account over MTProto and requires explicit opt-in config; bans are your risk. Never for spam.
 - **GSM modem SMS**: your own modem + SIM; carrier compliance (A2P rules) is on you.
 
 </details>
@@ -303,132 +317,105 @@ If your agent needs to talk to humans, this is the layer under it:
 - **Personal / executive assistants** — one assistant identity across your email, Telegram, and Slack instead of three disconnected bots.
 - **Community & product bots** — the same agent in your Discord, your Slack community, and members' DMs.
 - **OpenClaw agents** — `clawhub install @trycaspian/caspian` ([the skill](./packages/clawhub-skill)) teaches your agent to wire itself up; [`openclaw-caspian`](./packages/openclaw) is the native channel plugin.
-- **OpenCode agents** — [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) bridges Caspian email / Telegram / Discord into OpenCode sessions:
+- **OpenCode agents** — [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) bridges Caspian email / Telegram / Discord into OpenCode sessions. Details: [`packages/opencode`](./packages/opencode).
 
-  ```bash
-  bunx caspian-opencode-plugin setup   # or: setup --project
-  # restart OpenCode
-  ```
-
-  Details: [`packages/opencode`](./packages/opencode).
-- **Fleets** — multi-tenant scoping gives each customer their own agent identity (see the recipe below).
-
-Each of these is the same three lines: `connect_*()` the channels, write one `on_message` handler, `listen()`. Start from a [runnable example](./examples).
+Start from a [runnable example](./examples) — one folder per channel, shared handlers in `app.py` / `app.ts`.
 
 ## Recipes
 
 **Same agent, three channels:**
 
 ```python
-client.connect_email(username="acme-support")
-client.connect_telegram(bot_token=BOT_TOKEN)
-slack = client.install_slack(display_name="Acme Support")
-print("Add to Slack:", slack["authorize_url"])   # one click, then it's live
-# the @client.on_message handler you already wrote now answers on all three
+cx.channels.add("email", display_name="Acme Support")
+cx.channels.add("telegram", bot_token=BOT_TOKEN)
+cx.channels.add("slack", bot_token=SLACK_TOKEN, signing_secret=SLACK_SECRET)
+# the @cx.on_message rules you already wrote now answer on all three
+cx.run()
 ```
 
-**Platform-aware replies** — teach the agent each channel's etiquette in one line:
+**Filter by command and chat kind:**
 
 ```python
-system_prompt += "\n\n" + client.behavior_prompt()
+@cx.on_message({"channel": "telegram", "command": ["start", "help"]})
+def help_menu(thread, msg, ctx):
+    thread.post("Commands: /help /status /ping")
+
+@cx.on_message({"channel": "telegram", "kind": "dm"})
+def dm_only(thread, msg, ctx):
+    thread.post(f"DM from {msg.sender}: {msg.text}")
 ```
 
-<details>
-<summary><b>Multi-tenant</b> — one agent per customer, isolated by scope</summary>
+**Streaming reply:**
 
 ```python
-acme = client.create_customer("Acme")
-agent = client.create_agent("Support")
-client.connect_slack(customer_id=acme["id"], agent_id=agent["id"], ...)
+@cx.on_message({"channel": "telegram", "overlap": "stream"})
+def stream_story(thread, msg, ctx):
+    with thread.stream(min_chars=1, throttle=0.25) as out:
+        for chunk in ["Once ", "upon ", "a time…"]:
+            out.append(chunk)
 ```
 
-</details>
-
-<details>
-<summary><b>Adapters without the SDK</b> — use the channel layer directly</summary>
+**Callback buttons:**
 
 ```python
-from caspian_adapters import Settings, build_providers
-
-providers = build_providers(Settings(
-    providers="instagram",
-    instagram_page_id="<page id>",
-    instagram_access_token="<page token>",
-    instagram_app_secret="<app secret>",
-))
+@cx.on_action({"channel": "telegram", "data": "help"})
+def on_help_button(thread, action, ctx):
+    thread.post("You tapped Help.")
 ```
-
-</details>
 
 ## Rich messages
 
-Send **one** provider-neutral `blocks` payload and every channel gets its best
-possible rendering: Slack (Block Kit), Discord (embeds + buttons) and Telegram
-(inline keyboards) render it natively, email gets rich HTML, and every text-only
-channel (SMS, voice, and the rest) degrades to clean, readable text — automatically.
-No per-channel branching in your handler.
-
-A block is a plain dict/object (`{ "type": ... }`): `heading`, `text`, `divider`,
-`image`, `fields`, `list`, `buttons`, `card`. A button with a `url` is a link; a
-button with a `value` is a callback that renders as a tappable action where the
-channel supports it, and as a "reply …" hint where it doesn't.
-
-**Python:**
+Send blocks through `thread.send_blocks()` — each channel renders its best native shape (Slack Block Kit, Discord embeds, Telegram keyboards) and text-only channels degrade automatically.
 
 ```python
-from caspian_sdk import blocks as b
+from caspian import Button
 
-message.reply(blocks=[
-    b.card(
-        title="Order #1024 shipped",
-        subtitle="Arriving Thursday",
-        text="Your package is on the way.",
-        buttons=[
-            {"label": "Track package", "url": "https://example.com/track/1024"},
-            {"label": "Get help", "value": "help:1024"},   # callback
-        ],
+thread.send_blocks(
+    (),
+    text="Order #1024 shipped — arriving Thursday.",
+    actions=(
+        Button(label="Track package", url="https://example.com/track/1024"),
+        Button(label="Get help", data="help:1024"),
     ),
-])
+)
 ```
-
-**TypeScript:**
 
 ```typescript
-import type { Block } from "caspian-sdk";
-
-const blocks: Block[] = [
-  {
-    type: "card",
-    title: "Order #1024 shipped",
-    subtitle: "Arriving Thursday",
-    text: "Your package is on the way.",
-    buttons: [
-      { label: "Track package", url: "https://example.com/track/1024" },
-      { label: "Get help", value: "help:1024" }, // callback
-    ],
-  },
-];
-
-await message.reply(undefined, undefined, blocks);
-// or proactively: await client.sendMessage(conversationId, null, null, blocks);
+await thread.sendBlocks([], {
+  text: "Order #1024 shipped — arriving Thursday.",
+  actions: [
+    { label: "Track package", url: "https://example.com/track/1024" },
+    { label: "Get help", data: "help:1024" },
+  ],
+})
 ```
-
-Blocks work anywhere text does — `message.reply(...)`, `send_message(...)` /
-`sendMessage(...)`. Pass `text` too and it's used as the fallback on channels
-that can't render blocks; omit it and a clean text fallback is generated for you.
 
 ## What's in this repo
 
 | Package | |
 |---|---|
-| [`packages/adapters`](./packages/adapters) | `caspian-adapters` — the channel adapters. One small interface per platform (`provision` / `send` / `reply` / `parse_webhook`), real signature verification, an offline fake per channel. |
-| [`sdks/python`](./sdks/python) | `caspian-sdk` (PyPI) — the Python client: `on_message`, `connect_*()`, `message.reply()`, behavior guides. |
-| [`sdks/typescript`](./sdks/typescript) | `caspian-sdk` (npm) — the TypeScript client: same contract, camelCase API, zero runtime deps, Node 18+. |
-| [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin: one install gives an OpenClaw agent every Caspian channel. |
-| [`packages/opencode`](./packages/opencode) | [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) — OpenCode plugin: Caspian inbox ↔ OpenCode sessions (email, Telegram, Discord). Install: `bunx caspian-opencode-plugin setup`. |
-| [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill (`clawhub install @trycaspian/caspian`) — publishes the live gateway SKILL.md. |
-| [`apps/cli`](./apps/cli) | `caspian` — init a project, connect channels, tail events from your terminal. |
-| [`examples`](./examples) | Minimal runnable agents. |
+| [`packages/python`](./packages/python) | `caspian-sdk` (PyPI) — Python client: `Caspian`, `channels.add()`, `@on_message` / `@on_action`, hosted + self-host adapters. Import: `from caspian import Caspian`. |
+| [`packages/typescript`](./packages/typescript) | `caspian-sdk` (npm) — TypeScript client: same contract, camelCase API, per-channel subpath exports. |
+| [`packages/cli`](./packages/cli) | `@caspian/cli` — Bun CLI: `init`, `channels add`, `catalog`, `call`, `threads tail`. |
+| [`packages/openclaw`](./packages/openclaw) | `openclaw-caspian` — OpenClaw channel plugin. |
+| [`packages/opencode`](./packages/opencode) | [`caspian-opencode-plugin`](https://www.npmjs.com/package/caspian-opencode-plugin) — OpenCode plugin. |
+| [`packages/clawhub-skill`](./packages/clawhub-skill) | The ClawHub skill — publishes the live gateway SKILL.md. |
+| [`examples`](./examples) | One self-host example per adapter; [`examples/telegram/hosted.py`](./examples/telegram/hosted.py) for hosted Telegram. |
+
+Package READMEs have the full API surface: [`packages/python/README.md`](./packages/python/README.md), [`packages/typescript/README.md`](./packages/typescript/README.md).
+
+## Migrating from 0.6.x
+
+The 0.6.x `CommClient` API (`from caspian_sdk import CommClient`, `connect_*()`, `message.reply()`) is a different SDK. It remains published on PyPI/npm; its source is tagged `legacy-sdk-0.6.x` in this repository.
+
+| 0.6.x | 1.0 |
+|---|---|
+| `CommClient()` | `Caspian()` |
+| `client.connect_telegram(...)` | `cx.channels.add("telegram", ...)` |
+| `@client.on_message` / `message.reply()` | `@cx.on_message({...})` / `thread.post()` |
+| `client.listen()` | `cx.run()` (hosted) or `cx.handle()` / `cx.listen()` (self-host) |
+
+There is no drop-in migration path — new projects should start on 1.0.
 
 ## Starter templates
 
@@ -447,7 +434,7 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 - **MCP server** — connect and message channels straight from any MCP-capable agent
 - **Reddit & LinkedIn adapters** — next channels in the pipeline
 - **Agent-native payments** — pay-as-you-go via API, x402-ready, no dashboard
-- **More adapters** — the interface is small on purpose; [add one](./CONTRIBUTING.md#adding-a-new-channel-adapter)
+- **More adapters** — the interface is small on purpose; [add one](./CONTRIBUTING.md)
 
 ## Community & support
 
@@ -461,9 +448,10 @@ Ready-to-run repos — click "Use this template", add a token, and your agent is
 ```bash
 git clone https://github.com/TryCaspian/caspian-sdk.git
 cd caspian-sdk && uv sync
-uv run pytest        # 49 Python tests, all offline
+uv run pytest                              # Python SDK tests (packages/python)
 uv run ruff check .
-cd sdks/typescript && npm ci && npm test   # 49 vitest tests
+cd packages/typescript && bun install && bun run ci   # typecheck + lint + 235 tests
+cd ../cli && bun install && bun run ci                # CLI tests
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
