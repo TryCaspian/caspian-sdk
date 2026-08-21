@@ -112,3 +112,50 @@ def test_voice_speech_plans_twiml() -> None:
     signature = base64.b64encode(digest).decode()
     results = cx.handle("voice", body, {"X-Twilio-Signature": signature})
     assert any(r.is_ok and "<Say>" in str(r.value.raw.get("twiml", "")) for r in results)
+
+
+def test_whatsapp_help_plans_send() -> None:
+    from examples.whatsapp.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    app_secret = "shh"
+    cx.channels.add(
+        "whatsapp",
+        via="self-host",
+        access_token="TKN",
+        phone_number_id="111222",
+        app_secret=app_secret,
+        bot_token="local",
+    )
+    register(cx)
+    body = json.dumps(
+        {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "id": "WABA",
+                    "changes": [
+                        {
+                            "field": "messages",
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "15551234567",
+                                        "id": "wamid.ABC",
+                                        "type": "text",
+                                        "text": {"body": "/help"},
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    digest = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    results = cx.handle(
+        "whatsapp", body, {"X-Hub-Signature-256": "sha256=" + digest}
+    )
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
