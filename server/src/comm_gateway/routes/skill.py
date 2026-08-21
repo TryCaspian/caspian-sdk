@@ -35,7 +35,9 @@ The developer may just say "add Caspian" without naming channels. Do this:
 
 Adding a channel is another `channels.add` — never a new handler.
 
+
 ## 1. Sign in
+
 
 If `CASPIAN_API_KEY` is already in the project's `.env`, SKIP this step.
 
@@ -70,13 +72,12 @@ Poll billing until `balance_cents` rises, then retry. Autopay:
 
 ## 2. Install
 
-Python: https://pypi.org/project/caspian-sdk/
-TypeScript: https://www.npmjs.com/package/caspian-sdk
 
 ```bash
-uv add caspian-sdk
-# or: pip install caspian-sdk
-# TypeScript: bun add caspian-sdk  (class Caspian, methods onMessage / channels.add / run)
+uv add caspian
+# or: pip install caspian
+# TypeScript: bun add caspian  (class Caspian, methods onMessage / channels.add / run)
+
 ```
 
 Hosted jobs need the key from step 1. `caspian channels add <channel>` is the
