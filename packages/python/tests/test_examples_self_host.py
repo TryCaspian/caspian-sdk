@@ -260,3 +260,24 @@ def test_linear_help_plans_send() -> None:
     digest = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
     results = cx.handle("linear", body, {"Linear-Signature": digest})
     assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
+
+
+def test_x_help_plans_send() -> None:
+    from examples.x.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    consumer_secret = "cons"
+    cx.channels.add(
+        "x",
+        via="self-host",
+        bearer_token="TOKEN",
+        consumer_secret=consumer_secret,
+        bot_token="local",
+    )
+    register(cx)
+    body = json.dumps({"dm": {"from": "999", "text": "/help"}}).encode()
+    digest = hmac.new(consumer_secret.encode(), body, hashlib.sha256).digest()
+    signature = "sha256=" + base64.b64encode(digest).decode()
+    results = cx.handle("x", body, {"X-Twitter-Webhooks-Signature": signature})
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)

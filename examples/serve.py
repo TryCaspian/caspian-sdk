@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -22,6 +26,18 @@ def challenge_response(
     return b"", 403, "text/plain"
 
 
+def crc_response(
+    token: str,
+    *,
+    consumer_secret: str,
+) -> tuple[bytes, int, str]:
+    digest = hmac.new(consumer_secret.encode(), token.encode(), hashlib.sha256).digest()
+    payload = json.dumps(
+        {"response_token": "sha256=" + base64.b64encode(digest).decode()}
+    )
+    return payload.encode(), 200, "application/json"
+
+
 def _twiml_of(results: list[Result]) -> str:
     for result in results:
         if result.is_ok and isinstance(result.value.raw, dict):
@@ -39,13 +55,20 @@ def serve(
     port: int = 8080,
     verify_token: str = "",
     twiml: bool = False,
+    consumer_secret: str = "",
 ) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             query = parse_qs(urlparse(self.path).query)
-            body, status, content_type = challenge_response(
-                query, verify_token=verify_token
-            )
+            crc_token = (query.get("crc_token") or [""])[0]
+            if crc_token:
+                body, status, content_type = crc_response(
+                    crc_token, consumer_secret=consumer_secret
+                )
+            else:
+                body, status, content_type = challenge_response(
+                    query, verify_token=verify_token
+                )
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
