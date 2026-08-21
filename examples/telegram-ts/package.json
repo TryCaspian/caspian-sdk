@@ -1,0 +1,8 @@
+{
+  "name": "caspian-example-telegram-ts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "caspian": "file:../../packages/typescript"
+  }
+}
