@@ -14,7 +14,7 @@ cd packages/python
 uv sync --extra discord
 ```
 
-Or: `pip install 'caspian[discord]'`.
+Or: `pip install 'caspian-sdk[discord]'`.
 
 ## Message Content Intent
 

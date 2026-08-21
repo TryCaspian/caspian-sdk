@@ -16,7 +16,7 @@ cd packages/python
 uv sync --extra slack-socket
 ```
 
-Or: `pip install 'caspian[slack-socket]'`.
+Or: `pip install 'caspian-sdk[slack-socket]'`.
 
 ## Socket Mode
 

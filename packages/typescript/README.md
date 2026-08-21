@@ -4,6 +4,13 @@ Rewrite of the Caspian TypeScript SDK. You write a Chat SDK-shaped API. It
 desugars into a small Effect kernel. This package is not the legacy
 `CommClient`.
 
+npm: https://www.npmjs.com/package/caspian-sdk
+
+```bash
+npm install caspian-sdk
+# or: bun add caspian-sdk
+```
+
 ```ts
 import { Caspian } from "caspian-sdk"
 
@@ -33,8 +40,8 @@ import { discord, discordHttpLayer } from "caspian-sdk/discord"
 import { slack, slackHttpLayer } from "caspian-sdk/slack"
 ```
 
-Also: `caspian/voice`, `caspian/email`, `caspian/sms`, `caspian/whatsapp`,
-`caspian/messenger`, `caspian/imessage`, `caspian/x`, `caspian/linear`.
+Also: `caspian-sdk/voice`, `caspian-sdk/email`, `caspian-sdk/sms`, `caspian-sdk/whatsapp`,
+`caspian-sdk/messenger`, `caspian-sdk/imessage`, `caspian-sdk/x`, `caspian-sdk/linear`.
 Each pack parses platform bytes into kernel Events, plans Commands into
 platform calls, and owns overlap keys / thread ids. Unsupported kernel
 commands fail as `AdapterError`. WhatsApp delivery receipts are not kernel

@@ -93,7 +93,7 @@ const PYPROJECT = [
   'version = "0.1.0"',
   'requires-python = ">=3.10"',
   "dependencies = [",
-  '  "caspian",',
+  '  "caspian-sdk",',
   '  "openai-agents",',
   "]",
   "",
@@ -200,14 +200,14 @@ const PACKAGE_JSON = (deps: Record<string, string>): string =>
       private: true,
       type: "module",
       scripts: { start: "bun index.ts" },
-      dependencies: { caspian: "^0.1.0", ...deps },
+      dependencies: { "caspian-sdk": "^1.0.0", ...deps },
     },
     null,
     2,
   )}\n`
 
 const TS_BOOT = [
-  'import { Caspian } from "caspian"',
+  'import { Caspian } from "caspian-sdk"',
   "",
   'const apiKey = process.env["CASPIAN_API_KEY"] || ""',
   'const baseUrl = process.env["CASPIAN_BASE_URL"] || ""',
