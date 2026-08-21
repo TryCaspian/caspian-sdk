@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Literal, TypeVar, overload
 
-from caspian.catalog import CHANNELS, ChannelName, SocketKind, socket_channels
+from caspian.catalog import ChannelName, socket_channels
 from caspian.core.errors import AuthRequired, ProvisionError
 from caspian.core.interpreter_memory import MemoryInterpreter
 from caspian.core.ports import RawInbound, Result, TransportPort
@@ -101,8 +101,7 @@ class Caspian:
     def _default_transport(self) -> TransportPort:
         from caspian.hosted.transport import GatewayTransport
         from caspian.interpreters.smtp import SmtpTransport
-        from caspian.interpreters.transport import HttpTransport, MultiplexTransport
-        from caspian.interpreters.voice import VoiceResponder
+        from caspian.interpreters.transport import HttpTransport, MultiplexTransport, TwimlTransport
 
         http = HttpTransport()
         routes: dict[str, Any] = {
@@ -111,7 +110,7 @@ class Caspian:
             "http_multipart": http,
             "noop": http,
             "smtp": SmtpTransport(),
-            "twiml": VoiceResponder(),
+            "twiml": TwimlTransport(),
         }
         if self._gateway_client is not None:
             routes["gateway"] = GatewayTransport(self._gateway_client)
@@ -230,40 +229,34 @@ class Caspian:
                     )
                 )
             ]
+        if self._transport is None:
+            return [
+                Result.err(
+                    ProvisionError(reason="listen() needs a transport; omit dispatch=False")
+                )
+            ]
         import asyncio
 
+        from caspian.interpreters.socket import SocketSession
+
         connection = self.channels.connection_for(channel)
+        adapter = self.channels.adapter_for(channel)
+        open_socket = getattr(adapter, "socket", None)
+        if not callable(open_socket):
+            return [
+                Result.err(
+                    ProvisionError(reason=f"{channel} does not listen on a socket")
+                )
+            ]
+        opened = open_socket(connection)
+        if not opened.is_ok:
+            return [opened]
         interp = self._interpreter_for(channel)
-        row = CHANNELS[channel]
-
-        if row.socket is SocketKind.SLACK:
-            from caspian.interpreters.slack_socket import SlackSocketRunner
-
-            app_token = connection.config.get("app_token", "")
-            if not app_token:
-                return [
-                    Result.err(
-                        ProvisionError(
-                            reason="slack socket mode needs an app_token (xapp-, scope "
-                            "connections:write) alongside the bot_token; without a "
-                            "public URL there is no webhook to fall back to"
-                        )
-                    )
-                ]
-            return asyncio.run(
-                SlackSocketRunner(
-                    app_token, lambda raw: interp.handle_webhook(raw, trusted=True)
-                ).run(max_events=max_events)
-            )
-
-        from caspian.interpreters.discord_gateway import DiscordGatewayRunner
-
-        token = connection.config.get("bot_token", "")
-        if not token:
-            return [Result.err(ProvisionError(reason="discord self-host needs a bot_token"))]
         return asyncio.run(
-            DiscordGatewayRunner(
-                token, lambda raw: interp.handle_webhook(raw, trusted=True)
+            SocketSession(
+                opened.value,
+                lambda raw: interp.handle_webhook(raw, trusted=True),
+                transport=self._transport,
             ).run(max_events=max_events)
         )
 

@@ -200,3 +200,8 @@ export const CHANNELS: { readonly [K in ChannelName]: ChannelRow } = {
 
 export const capabilitiesOf = (channel: ChannelName): ReadonlyArray<string> =>
   [...CHANNELS[channel].capabilities]
+
+export const socketChannels = (): ReadonlyArray<ChannelName> =>
+  (Object.keys(CHANNELS) as ChannelName[]).filter(
+    (name) => CHANNELS[name].socket !== undefined,
+  )

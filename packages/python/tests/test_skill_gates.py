@@ -346,6 +346,20 @@ class TestReliabilityGates:
             source = fh.read()
         assert "caspian.facade" not in source
 
+    def test_listen_does_not_name_discord_or_slack_runners(self) -> None:
+        """Inbound mode is a catalog dim. Facade starts SocketSession, not a vendor class."""
+        import caspian.facade.caspian as facade
+        import caspian.interpreters as interpreters
+
+        with open(facade.__file__) as fh:
+            source = fh.read()
+        assert "discord_gateway" not in source
+        assert "slack_socket" not in source
+        assert "DiscordGatewayRunner" not in source
+        assert "SlackSocketRunner" not in source
+        assert not hasattr(interpreters, "DiscordGatewayRunner")
+        assert not hasattr(interpreters, "SlackSocketRunner")
+
 
 class TestHostedOnlyChannels:
     """A channel the gateway supports must be usable even with no local adapter.

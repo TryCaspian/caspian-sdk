@@ -19,6 +19,7 @@ Format = Callable[[str], str]
 Ack = Callable[[Event, Connection], Result | None]
 Poll = Callable[[int, Connection], Result]
 Webhook = Callable[[Connection], Result]
+Socket = Callable[[Connection], Result]
 Encode = Callable[..., ThreadId]
 Decode = Callable[[ThreadId], str | tuple[str, ...]]
 PostedId = Callable[[Sent], str]
@@ -66,6 +67,7 @@ def pack(
     acknowledge: Ack | None = None,
     poll: Poll | None = None,
     webhook: Webhook | None = None,
+    socket: Socket | None = None,
     posted_id: PostedId | None = None,
 ) -> type:
     """Return an AdapterPort class. Overlap, capabilities, and thread codec are defaults."""
@@ -117,6 +119,15 @@ def pack(
             if webhook is None:
                 return Result.ok(Sent(raw={"transport": "noop", "native": ""}))
             return webhook(conn)
+
+        def socket(self, conn: Connection) -> Result:
+            if socket is None:
+                from caspian.core.errors import AdapterError
+
+                return Result.err(
+                    AdapterError(reason=f"{channel} does not listen on a socket")
+                )
+            return socket(conn)
 
         def posted_id(self, sent: Sent) -> str:
             return posted(sent)

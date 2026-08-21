@@ -9,8 +9,8 @@ import {
   HttpTransport,
   MultiplexTransport,
   RecordingTransport,
+  TwimlTransport,
 } from "../src/interpreters/transport.ts"
-import { VoiceResponder } from "../src/interpreters/voice.ts"
 
 const sent = (raw: JsonObject): Sent => ({
   ok: true,
@@ -59,7 +59,7 @@ test("MultiplexTransport routes smtp and twiml", async () => {
         emails.push({ to: message.to })
       },
     }),
-    twiml: new VoiceResponder(),
+    twiml: new TwimlTransport(),
   })
   const mail = await Effect.runPromise(
     mux.dispatch(

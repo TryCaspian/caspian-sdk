@@ -3,13 +3,14 @@
 from caspian.interpreters.polling import PollingRunner, fetch_updates
 from caspian.interpreters.process import ProcessInterpreter
 from caspian.interpreters.smtp import SmtpTransport
+from caspian.interpreters.socket import SocketSession
 from caspian.interpreters.transport import (
     ChaosTransport,
     HttpTransport,
     MultiplexTransport,
     RecordingTransport,
+    TwimlTransport,
 )
-from caspian.interpreters.voice import VoiceResponder
 
 __all__ = [
     "ChaosTransport",
@@ -19,6 +20,7 @@ __all__ = [
     "ProcessInterpreter",
     "RecordingTransport",
     "SmtpTransport",
-    "VoiceResponder",
+    "SocketSession",
+    "TwimlTransport",
     "fetch_updates",
 ]

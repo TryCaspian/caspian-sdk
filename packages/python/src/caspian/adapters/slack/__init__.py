@@ -21,6 +21,7 @@ import urllib.parse
 from typing import Any
 
 from caspian.adapters.pack import from_response, pack
+from caspian.adapters.slack.socket import socket_driver
 from caspian.adapters.verify import hmac_slack
 from caspian.core.commands import (
     Call,
@@ -371,5 +372,6 @@ SlackAdapter = pack(
     format=_impl.format,
     encode_thread=_impl.encode_thread,
     decode_thread=_impl.decode_thread,
+    socket=socket_driver,
     posted_id=from_response("ts"),
 )

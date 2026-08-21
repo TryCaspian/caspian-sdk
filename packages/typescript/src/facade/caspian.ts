@@ -24,14 +24,14 @@ import {
 } from "../interpreters/process.ts"
 import { adapterLayerFor } from "../interpreters/registry.ts"
 import { SmtpTransport } from "../interpreters/smtp.ts"
+import { SocketSession, socketDriver } from "../interpreters/socket.ts"
 import {
   defaultMultiplex,
   type Transport,
+  TwimlTransport,
 } from "../interpreters/transport.ts"
-import { VoiceResponder } from "../interpreters/voice.ts"
 import { addChannel } from "../provision/add.ts"
-import { DiscordGatewayRunner } from "../interpreters/discord_gateway.ts"
-import { SlackSocketRunner } from "../interpreters/slack_socket.ts"
+import { socketChannels } from "../catalog.ts"
 import { deriveTools, splitToolsArgs, type ToolsOptions, type ToolSet } from "../tools/derive.ts"
 import { desugarOnAction, desugarOnMessage } from "./desugar.ts"
 import {
@@ -75,7 +75,7 @@ export class Caspian {
         : (options.transport ??
           defaultMultiplex(fetch, {
             smtp: new SmtpTransport(),
-            twiml: new VoiceResponder(),
+            twiml: new TwimlTransport(),
           }))
   }
 
@@ -327,12 +327,24 @@ export class Caspian {
    *     await cx.listen("slack")
    */
   listen(
-    channel: "discord" | "slack",
+    channel: string,
     options: {
       readonly maxEvents?: number
       readonly log?: (message: string) => void
     } = {},
   ): Promise<ReadonlyArray<HandleResult>> {
+    const allowed = socketChannels()
+    if (!(allowed as ReadonlyArray<string>).includes(channel)) {
+      const names = allowed.join(", ")
+      return Promise.resolve([
+        {
+          ok: false as const,
+          error: new ProvisionError({
+            reason: `listen() supports ${names}, not ${JSON.stringify(channel)}; use run() for hosted or handle() for webhook self-host`,
+          }),
+        },
+      ])
+    }
     return this.#withProcess(channel, (process) => {
       const connection = this.#connections.get(channel)
       if (connection === undefined) {
@@ -345,57 +357,28 @@ export class Caspian {
           },
         ])
       }
-      if (connection.via === "hosted") {
+      const transport = this.#transport
+      if (transport === undefined) {
         return Effect.succeed([
           {
             ok: false as const,
             error: new ProvisionError({
-              reason: `Inbound for ${JSON.stringify(channel)} is owned by the gateway; use runGateway()`,
+              reason: "listen() needs a transport; omit dispatch=false",
             }),
           },
         ])
       }
-      const config = connection.config as { readonly [key: string]: unknown }
+      const opened = socketDriver(connection)
+      if (opened instanceof ProvisionError) {
+        return Effect.succeed([{ ok: false as const, error: opened }])
+      }
       const sink = (body: unknown, headers?: { readonly [key: string]: string }) =>
         process.handleRaw(body, headers ?? {}) as Effect.Effect<ReadonlyArray<unknown>>
-
-      if (channel === "slack") {
-        const appToken = String(config.appToken ?? "")
-        if (appToken === "") {
-          return Effect.succeed([
-            {
-              ok: false as const,
-              error: new ProvisionError({
-                reason:
-                  "slack socket mode needs an app_token (xapp-, scope connections:write) " +
-                  "alongside the bot_token; without a public URL there is no webhook to fall back to",
-              }),
-            },
-          ])
-        }
-        const runner = new SlackSocketRunner(appToken, sink, {
-          ...(options.log === undefined ? {} : { log: options.log }),
-        })
-        return runner.run(
-          options.maxEvents === undefined ? {} : { maxEvents: options.maxEvents },
-        ) as Effect.Effect<ReadonlyArray<HandleResult>>
-      }
-
-      const botToken = String(config.botToken ?? "")
-      if (botToken === "") {
-        return Effect.succeed([
-          {
-            ok: false as const,
-            error: new ProvisionError({
-              reason: "discord self-host needs a bot_token",
-            }),
-          },
-        ])
-      }
-      const runner = new DiscordGatewayRunner(botToken, sink, {
+      const session = new SocketSession(opened, sink, {
+        transport,
         ...(options.log === undefined ? {} : { log: options.log }),
       })
-      return runner.run(
+      return session.run(
         options.maxEvents === undefined ? {} : { maxEvents: options.maxEvents },
       ) as Effect.Effect<ReadonlyArray<HandleResult>>
     })

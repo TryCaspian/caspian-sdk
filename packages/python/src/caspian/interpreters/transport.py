@@ -45,7 +45,8 @@ class HttpTransport:
             with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
                 kwargs: dict[str, Any] = {"headers": headers}
                 if transport == "http_json":
-                    kwargs["json"] = req.get("json", {})
+                    if "json" in req:
+                        kwargs["json"] = req.get("json", {})
                 elif transport == "http_form":
                     kwargs["data"] = req.get("form", {})
                 else:  # http_multipart
@@ -120,3 +121,14 @@ class MultiplexTransport:
             return Result.err(AdapterError(reason=f"No transport for {name!r}"))
         dispatched: Result = impl.dispatch(sent)
         return dispatched
+
+
+class TwimlTransport:
+    """Surfaces TwiML the voice webhook must return. Does not send."""
+
+    def dispatch(self, sent: Sent) -> Result:
+        if sent.raw.get("transport") != "twiml":
+            return Result.ok(sent)
+        return Result.ok(
+            Sent(raw={"native": "twiml", "twiml": sent.raw.get("twiml", "")})
+        )

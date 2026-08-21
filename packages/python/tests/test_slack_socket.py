@@ -1,8 +1,4 @@
-"""Slack Socket Mode runner: protocol handling, driven by a fake socket.
-
-No network and no websockets package: connect and apps.connections.open are
-both injected.
-"""
+"""Slack Socket Mode protocol lives on the adapter; SocketSession runs it."""
 
 from __future__ import annotations
 
@@ -12,13 +8,16 @@ import threading
 import pytest
 
 from caspian.adapters.slack import SlackAdapter
-from caspian.core.ports import RawInbound, Result
-from caspian.interpreters.slack_socket import SlackAuthError, SlackSocketRunner
+from caspian.adapters.slack.socket import SlackSocket
+from caspian.core.ports import RawInbound, Result, Sent
+from caspian.interpreters.socket import SocketSession
 
 
 class FakeSocket:
-    def __init__(self, frames: list[dict]) -> None:
-        self._frames = [json.dumps(f) for f in frames]
+    def __init__(self, frames: list[object]) -> None:
+        self._frames = [
+            f if isinstance(f, str) else json.dumps(f) for f in frames
+        ]
         self.sent: list[dict] = []
 
     async def __aenter__(self) -> FakeSocket:
@@ -56,20 +55,28 @@ def _event(text: str, *, envelope: str = "env-1") -> dict:
     }
 
 
-def _runner(
-    frames: list[dict], sink, *, open_fails: str = ""
-) -> tuple[SlackSocketRunner, FakeSocket]:
+class _UrlTransport:
+    def __init__(self, response: dict) -> None:
+        self.response = response
+
+    def dispatch(self, sent: Sent) -> Result:
+        return Result.ok(Sent(raw={"response": self.response}))
+
+
+def _session(
+    frames: list[object],
+    sink,
+    *,
+    response: dict | None = None,
+) -> tuple[SocketSession, FakeSocket]:
     socket = FakeSocket(frames)
-
-    async def open_url(token: str) -> str:
-        if open_fails:
-            raise SlackAuthError(open_fails)
-        return "wss://wss-primary.slack.com/link/?ticket=abc"
-
-    def connect(url: str, **kwargs: object) -> FakeSocket:
-        return socket
-
-    return SlackSocketRunner("xapp-test", sink, connect=connect, open_url=open_url), socket
+    session = SocketSession(
+        SlackSocket("xapp-test"),
+        sink,
+        connect=lambda url, **kw: socket,
+        transport=_UrlTransport(response or {"ok": True, "url": "wss://wss-primary.slack.com/link"}),
+    )
+    return session, socket
 
 
 @pytest.mark.asyncio
@@ -83,28 +90,20 @@ async def test_event_reaches_the_adapter_as_an_event() -> None:
             events.extend(parsed.value)
         return []
 
-    runner, _ = _runner([HELLO, _event("when was Delaware admitted")], sink)
-    await runner.run(max_events=1)
+    session, _ = _session([HELLO, _event("when was Delaware admitted")], sink)
+    await session.run(max_events=1)
     assert [e.text for e in events] == ["when was Delaware admitted"]
 
 
 @pytest.mark.asyncio
 async def test_envelope_is_acked_before_the_handler_runs() -> None:
-    """Slack redelivers anything unacked after ~3s, and handlers call an LLM.
-
-    Acking after the handler means the same message is processed repeatedly,
-    which on a slow model shows up as the bot answering three times.
-    """
     order: list[str] = []
-    socket_ref: list[FakeSocket] = []
 
     def slow_sink(raw: RawInbound) -> list[Result]:
         order.append("handler")
         return []
 
-    runner, socket = _runner([HELLO, _event("hi")], slow_sink)
-    socket_ref.append(socket)
-
+    session, socket = _session([HELLO, _event("hi")], slow_sink)
     original_send = socket.send
 
     async def recording_send(payload: str) -> None:
@@ -112,14 +111,13 @@ async def test_envelope_is_acked_before_the_handler_runs() -> None:
         await original_send(payload)
 
     socket.send = recording_send  # type: ignore[method-assign]
-    await runner.run(max_events=1)
+    await session.run(max_events=1)
     assert order == ["ack", "handler"], f"expected ack first, got {order}"
     assert socket.sent == [{"envelope_id": "env-1"}]
 
 
 @pytest.mark.asyncio
 async def test_sink_runs_off_the_event_loop() -> None:
-    """Handlers block on an LLM; on the loop that stalls acks and keepalive."""
     import asyncio
 
     loop_thread = threading.get_ident()
@@ -133,8 +131,8 @@ async def test_sink_runs_off_the_event_loop() -> None:
             return []
         raise RuntimeError("handler ran on the event loop")
 
-    runner, _ = _runner([HELLO, _event("hi")], sink)
-    await runner.run(max_events=1)
+    session, _ = _session([HELLO, _event("hi")], sink)
+    await session.run(max_events=1)
     assert ran_on and ran_on[0] != loop_thread
 
 
@@ -146,29 +144,36 @@ async def test_hello_is_not_treated_as_an_event() -> None:
         seen.append(json.loads(raw.body))
         return []
 
-    runner, socket = _runner([HELLO, _event("real")], sink)
-    await runner.run(max_events=1)
+    session, socket = _session([HELLO, _event("real")], sink)
+    await session.run(max_events=1)
     assert len(seen) == 1
     assert seen[0]["event"]["text"] == "real"
-    # hello carries no envelope_id, so nothing should have been acked for it
     assert socket.sent == [{"envelope_id": "env-1"}]
 
 
 @pytest.mark.asyncio
 async def test_disconnect_frame_causes_a_reconnect_not_a_crash() -> None:
-    """Slack cycles sockets routinely; that must not look like a failure."""
-    runner, socket = _runner([HELLO, {"type": "disconnect", "reason": "refresh"}], lambda raw: [])
-    runner.stop()  # one pass, then stop so the test terminates
-    with pytest.raises(ConnectionError):
-        await runner._dispatch(socket, {"type": "disconnect"})
+    seen: list[dict] = []
+
+    def sink(raw: RawInbound) -> list[Result]:
+        seen.append(json.loads(raw.body))
+        return []
+
+    session, _ = _session(
+        [HELLO, {"type": "disconnect", "reason": "refresh"}, HELLO, _event("after")],
+        sink,
+    )
+    await session.run(max_events=1)
+    assert [s["event"]["text"] for s in seen] == ["after"]
 
 
 @pytest.mark.asyncio
 async def test_bad_app_token_is_fatal_and_does_not_retry() -> None:
-    """invalid_auth cannot be fixed by retrying, so the loop must exit."""
-    runner, _ = _runner([HELLO], lambda raw: [], open_fails="invalid_auth")
-    results = await runner.run(max_events=1)
-    assert results == []  # returned rather than spinning forever
+    session, _ = _session(
+        [HELLO], lambda raw: [], response={"ok": False, "error": "invalid_auth"}
+    )
+    results = await session.run(max_events=1)
+    assert results == []
 
 
 @pytest.mark.asyncio
@@ -179,14 +184,6 @@ async def test_malformed_frame_does_not_kill_the_socket() -> None:
         seen.append(json.loads(raw.body))
         return []
 
-    socket = FakeSocket([HELLO, _event("survived")])
-    socket._frames.insert(1, "not json at all")
-
-    async def open_url(token: str) -> str:
-        return "wss://x"
-
-    runner = SlackSocketRunner(
-        "xapp-test", sink, connect=lambda url, **kw: socket, open_url=open_url
-    )
-    await runner.run(max_events=1)
+    session, _ = _session([HELLO, "not json at all", _event("survived")], sink)
+    await session.run(max_events=1)
     assert [s["event"]["text"] for s in seen] == ["survived"]

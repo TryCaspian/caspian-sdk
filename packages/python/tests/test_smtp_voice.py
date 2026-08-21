@@ -1,6 +1,6 @@
-"""Tests for the SMTP transport and the Voice responder.
+"""Tests for SMTP and TwiML transports.
 
-No network: SmtpTransport uses a recording sender; the voice responder is pure.
+No network: SmtpTransport uses a recording sender; TwimlTransport is pure.
 Both are driven with the real adapters' execute() output.
 """
 
@@ -14,7 +14,7 @@ from caspian.core.commands import Post, Reply
 from caspian.core.ports import Connection, Sent
 from caspian.core.types import ConnectionId, ThreadId
 from caspian.interpreters.smtp import SmtpTransport
-from caspian.interpreters.voice import VoiceResponder
+from caspian.interpreters.transport import TwimlTransport
 
 
 class RecordingSender:
@@ -101,7 +101,7 @@ class TestSmtpTransport:
         assert result.error.tag == "AdapterError"
 
 
-class TestVoiceResponder:
+class TestTwimlTransport:
     def test_surfaces_twiml_from_voice_adapter(self) -> None:
         adapter = VoiceAdapter()
         conn = Connection(id=ConnectionId("c1"), channel="voice", config={})
@@ -110,7 +110,7 @@ class TestVoiceResponder:
         )
         assert exec_result.is_ok
 
-        result = VoiceResponder().dispatch(exec_result.value)
+        result = TwimlTransport().dispatch(exec_result.value)
 
         assert result.is_ok
         assert result.value.raw["native"] == "twiml"
@@ -118,7 +118,7 @@ class TestVoiceResponder:
 
     def test_non_twiml_passthrough(self) -> None:
         sent = Sent(raw={"transport": "http_json"})
-        result = VoiceResponder().dispatch(sent)
+        result = TwimlTransport().dispatch(sent)
 
         assert result.is_ok
         assert result.value is sent

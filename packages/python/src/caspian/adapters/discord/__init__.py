@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from caspian.adapters.discord.socket import socket_driver
 from caspian.adapters.pack import from_response, pack
 from caspian.adapters.verify import discord_ed25519
 from caspian.core.commands import (
@@ -398,5 +399,6 @@ DiscordAdapter = pack(
     encode_thread=_impl.encode_thread,
     decode_thread=_impl.decode_thread,
     acknowledge=_impl.acknowledge,
+    socket=socket_driver,
     posted_id=from_response("id"),
 )
