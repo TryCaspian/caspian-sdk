@@ -7,12 +7,13 @@ handle()/listen() stay Result-shaped for per-event failure.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from caspian.adapters import REGISTRY, get_adapter
+from caspian.catalog import ChannelName
 from caspian.connection import Connection, Via, overlay_remote
 from caspian.core.errors import ProvisionError
-from caspian.core.ports import AdapterPort
+from caspian.core.ports import AdapterPort, TransportPort
 from caspian.provision import Channels
 
 
@@ -23,17 +24,23 @@ class ChannelManager:
     adapter from the registry, and keeps one Connection per channel.
     """
 
-    def __init__(self, *, gateway_client: Any = None) -> None:  # noqa: ANN401
+    def __init__(
+        self,
+        *,
+        gateway_client: Any = None,  # noqa: ANN401
+        transport: TransportPort | None = None,
+    ) -> None:
         self._provision = Channels()
         self._gateway_client = gateway_client
+        self._transport = transport
         self._adapters: dict[str, AdapterPort | None] = {}
         self._connections: dict[str, Connection] = {}
 
     def add(
         self,
-        channel: str,
+        channel: ChannelName,
         *,
-        via: str = "hosted",
+        via: Literal["hosted", "self-host"] = "hosted",
         display_name: str = "",
         bot_token: str = "",
         webhook_url: str = "",
@@ -52,8 +59,9 @@ class ChannelManager:
             via: ``hosted`` (default) or ``self-host``.
             bot_token: Telegram always; Slack/Discord self-host. Hosted does
                 not mint a bot.
-            webhook_url: Public URL for self-host webhooks (Twilio also uses
-                this in the signature).
+            webhook_url: Public HTTPS URL the platform should POST to. Self-host
+                ``add()`` registers it when the adapter can (Telegram
+                ``setWebhook``). Hosted lets the gateway do it.
             webhook_secret: Telegram secret token header; Linear/iMessage HMAC.
             signing_secret: Slack request signing secret.
             app_secret: Meta HMAC (WhatsApp, Messenger).
@@ -121,7 +129,38 @@ class ChannelManager:
         # Hosted-only channels have no local adapter; that is expected.
         self._adapters[channel] = get_adapter(channel) if channel in REGISTRY else None
         self._connections[channel] = conn
+        self._bind_inbound(conn)
         return conn
+
+    def _bind_inbound(self, conn: Connection) -> None:
+        """Ask the adapter to point the platform at ``webhook_url``, then dispatch.
+
+        Paperwork-only provision cannot do I/O. Hosted add() already registered
+        at the gateway. Poll-only add (no URL) skips this.
+        """
+        if conn.via != Via.SELF_HOST or not conn.config.get("inbound", True):
+            return
+        if not conn.config.get("webhook_url") or self._transport is None:
+            return
+        adapter = self._adapters.get(conn.channel)
+        bind = getattr(adapter, "webhook", None)
+        if adapter is None or not callable(bind):
+            return
+        planned = bind(conn)
+        if not planned.is_ok:
+            err = planned.error or ProvisionError(reason="webhook register failed")
+            raise err
+        if planned.value.raw.get("transport") == "noop":
+            return
+        dispatched = self._transport.dispatch(planned.value)
+        if not dispatched.is_ok:
+            err = dispatched.error or ProvisionError(reason="webhook register failed")
+            raise err
+        payload = dispatched.value.raw.get("response")
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            raise ProvisionError(
+                reason=str(payload.get("description") or payload)
+            )
 
     def adapter_for(self, channel: str) -> AdapterPort:
         if channel not in self._adapters:

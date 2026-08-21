@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from caspian.core.commands import Command, Post, Reply, Typing
-from caspian.core.ports import Connection, RawInbound, Result
+from caspian.core.ports import Connection, RawInbound, Result, Sent
 from caspian.core.types import Event, ThreadId
 from caspian.hosted.inbound import GatewayEventParser, GatewaySignatureVerifier
 from caspian.hosted.outbound import GatewayOutbound
@@ -144,3 +144,13 @@ class GatewayAdapter:
     def decode_thread(self, thread_id: ThreadId) -> tuple[str, str]:
         channel, _, rest = str(thread_id).partition(":")
         return channel, rest
+
+    def posted_id(self, sent: Sent) -> str:
+        data = sent.raw.get("response")
+        if not isinstance(data, dict):
+            return ""
+        for key in ("message_id", "id"):
+            value = data.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return ""

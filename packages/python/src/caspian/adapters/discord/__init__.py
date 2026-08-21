@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from caspian.adapters.pack import pack
+from caspian.adapters.pack import from_response, pack
 from caspian.adapters.verify import discord_ed25519
 from caspian.core.commands import (
     Command,
@@ -398,4 +398,5 @@ DiscordAdapter = pack(
     encode_thread=_impl.encode_thread,
     decode_thread=_impl.decode_thread,
     acknowledge=_impl.acknowledge,
+    posted_id=from_response("id"),
 )

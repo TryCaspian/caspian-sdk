@@ -29,18 +29,24 @@ class HandlerContext:
 
 
 class MessageHandler(Protocol):
-    """``(thread, message, ctx)`` — what ``on_message`` registers."""
+    """``(thread, message, ctx)`` — what ``on_message`` registers.
+
+    Parameters are positional-only so the editor accepts ``msg`` / ``message``.
+    """
 
     def __call__(
-        self, thread: Thread, message: Message, ctx: HandlerContext
+        self, thread: Thread, message: Message, ctx: HandlerContext, /
     ) -> object | Awaitable[object]: ...
 
 
 class ActionHandler(Protocol):
-    """``(thread, action, ctx)`` — what ``on_action`` registers."""
+    """``(thread, action, ctx)`` — what ``on_action`` registers.
+
+    Parameters are positional-only so the editor accepts ``act`` / ``action``.
+    """
 
     def __call__(
-        self, thread: Thread, action: Action, ctx: HandlerContext
+        self, thread: Thread, action: Action, ctx: HandlerContext, /
     ) -> object | Awaitable[object]: ...
 
 

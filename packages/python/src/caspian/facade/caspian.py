@@ -6,11 +6,12 @@ Self-host, poll, and hosted all run the same App through ProcessInterpreter.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable
-from typing import Any, Literal, overload
+from typing import Any, Literal, TypeVar, overload
 
-from caspian.catalog import CHANNELS, SocketKind, socket_channels
+from caspian.catalog import CHANNELS, ChannelName, SocketKind, socket_channels
 from caspian.core.errors import AuthRequired, ProvisionError
 from caspian.core.interpreter_memory import MemoryInterpreter
 from caspian.core.ports import RawInbound, Result, TransportPort
@@ -18,8 +19,11 @@ from caspian.core.predicates import (
     And,
     MatchChannel,
     MatchChatKind,
+    MatchCommand,
+    MatchData,
     MatchKind,
     Predicate,
+    command_of,
 )
 from caspian.core.types import (
     App,
@@ -36,6 +40,8 @@ from caspian.interpreters.process import ProcessInterpreter
 from caspian.tools import ToolSet
 
 Handler = Callable[..., Any]
+_MsgH = TypeVar("_MsgH", bound=MessageHandler)
+_ActH = TypeVar("_ActH", bound=ActionHandler)
 
 
 class Caspian:
@@ -83,11 +89,14 @@ class Caspian:
             from caspian.hosted.client import HttpGatewayClient
 
             self._gateway_client = HttpGatewayClient(api_key=api_key, base_url=base_url)
-        self.channels = ChannelManager(gateway_client=self._gateway_client)
         self._interpreters: dict[str, ProcessInterpreter] = {}
         self._transport = transport
         if dispatch and transport is None:
             self._transport = self._default_transport()
+        self.channels: ChannelManager = ChannelManager(
+            gateway_client=self._gateway_client,
+            transport=self._transport if dispatch else None,
+        )
 
     def _default_transport(self) -> TransportPort:
         from caspian.hosted.transport import GatewayTransport
@@ -115,7 +124,7 @@ class Caspian:
 
     def handle(
         self,
-        channel: str,
+        channel: ChannelName | Literal["gateway"],
         body: bytes,
         headers: dict[str, str] | None = None,
     ) -> list[Result]:
@@ -146,16 +155,18 @@ class Caspian:
 
     def poll(
         self,
-        channel: str,
+        channel: ChannelName,
         *,
         transport: TransportPort | None = None,
         max_iterations: int | None = None,
         offset: int = 0,
+        interval: float = 1.0,
     ) -> list[Result]:
         """Self-host long-poll. Each update is fed to the same pipeline as handle().
 
         Use when the process has no public URL (Telegram getUpdates). The bot
         token authenticates the fetch, so webhook signatures are not checked.
+        Waits ``interval`` seconds between polls so the client does not spin.
         """
         owner = self.channels.inbound_owner(channel)
         if owner != "local":
@@ -175,9 +186,9 @@ class Caspian:
             lambda raw: interp.handle_webhook(raw, trusted=True),
             transport=transport or self._transport,  # type: ignore[arg-type]
             offset=offset,
-            sleep=lambda _s: None,
+            sleep=time.sleep,
         )
-        return runner.run_forever(max_iterations=max_iterations)
+        return runner.run_forever(max_iterations=max_iterations, sleep=interval)
 
     def listen(self, channel: str = "discord", *, max_events: int | None = None) -> list[Result]:
         """Self-host inbound over a held-open socket. No public URL needed.
@@ -329,29 +340,29 @@ class Caspian:
     @overload
     def on_message(
         self, options: OnMessageOptions | None = None
-    ) -> Callable[[MessageHandler], MessageHandler]: ...
+    ) -> Callable[[_MsgH], _MsgH]: ...
 
     @overload
     def on_message(
-        self, options: OnMessageOptions | None, handler: MessageHandler
+        self, options: OnMessageOptions | None, handler: _MsgH
     ) -> None: ...
 
     def on_message(
         self,
         options: OnMessageOptions | None = None,
-        handler: MessageHandler | None = None,
-    ) -> Callable[[MessageHandler], MessageHandler] | None:
+        handler: _MsgH | None = None,
+    ) -> Callable[[_MsgH], _MsgH] | None:
         """Register a message handler. Decorator or ``on_message(opts, fn)``.
 
-        Options: ``channel``, ``kind`` (dm/group/channel), ``overlap``
-        (queue/debounce/drop/parallel/stream), ``bound``, ``ack`` (instant
-        reply before the handler runs).
+        Options: ``channel``, ``kind`` (dm/group/channel), ``command``
+        (``/help``), ``overlap`` (queue/debounce/drop/parallel/stream),
+        ``bound``, ``ack`` (instant reply before the handler runs).
         """
         if handler is not None:
             self._register_message_handler(dict(options or {}), handler)
             return None
 
-        def decorator(fn: MessageHandler) -> MessageHandler:
+        def decorator(fn: _MsgH) -> _MsgH:
             self._register_message_handler(dict(options or {}), fn)
             return fn
 
@@ -360,24 +371,24 @@ class Caspian:
     @overload
     def on_action(
         self, options: OnActionOptions | None = None
-    ) -> Callable[[ActionHandler], ActionHandler]: ...
+    ) -> Callable[[_ActH], _ActH]: ...
 
     @overload
     def on_action(
-        self, options: OnActionOptions | None, handler: ActionHandler
+        self, options: OnActionOptions | None, handler: _ActH
     ) -> None: ...
 
     def on_action(
         self,
         options: OnActionOptions | None = None,
-        handler: ActionHandler | None = None,
-    ) -> Callable[[ActionHandler], ActionHandler] | None:
+        handler: _ActH | None = None,
+    ) -> Callable[[_ActH], _ActH] | None:
         """Register a button / callback handler. Same overlap options as on_message."""
         if handler is not None:
             self._register_action_handler(dict(options or {}), handler)
             return None
 
-        def decorator(fn: ActionHandler) -> ActionHandler:
+        def decorator(fn: _ActH) -> _ActH:
             self._register_action_handler(dict(options or {}), fn)
             return fn
 
@@ -451,6 +462,19 @@ class Caspian:
 
         if "kind" in options:
             pred = And(left=pred, right=MatchChatKind(chat_kind=options["kind"]))
+
+        if "command" in options:
+            raw = options["command"]
+            names = (raw,) if isinstance(raw, str) else tuple(raw)
+            pred = And(
+                left=pred,
+                right=MatchCommand(names=tuple(command_of(n) for n in names)),
+            )
+
+        if "data" in options:
+            raw = options["data"]
+            values = (raw,) if isinstance(raw, str) else tuple(raw)
+            pred = And(left=pred, right=MatchData(values=tuple(values)))
 
         return pred
 

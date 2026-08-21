@@ -168,7 +168,14 @@ class ProcessInterpreter:
             return exec_result
         sent = exec_result.value
         if isinstance(sent, Sent) and sent.raw.get("transport"):
-            return self._transport.dispatch(sent)
+            dispatched = self._transport.dispatch(sent)
+            if dispatched.is_ok:
+                read = getattr(self._adapter, "posted_id", None)
+                if callable(read):
+                    mid = read(dispatched.value)
+                    if mid:
+                        dispatched.value.message_id = mid
+            return dispatched
         return exec_result
 
 

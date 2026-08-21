@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from caspian.core.types import Message, ThreadId
+from caspian.core.types import Action, Message, ThreadId
 from caspian.facade.caspian import Caspian
 
 
@@ -68,6 +68,45 @@ class TestFacadeDesugar:
             thread.post("hello")
 
         assert len(cx.app.rules) == 1
+
+    def test_command_filter_matches_slash_and_bot_suffix(self) -> None:
+        from caspian.core.predicates import evaluate
+
+        cx = Caspian()
+        cx.on_message({"channel": "telegram", "command": ["start", "help"]}, lambda t, m, c: None)
+        pred = cx.app.rules[0].predicate
+        hit = Message(
+            thread_id=ThreadId("telegram:1"), text="/help@caspian_test_bot", chat_kind="dm"
+        )
+        miss = Message(thread_id=ThreadId("telegram:1"), text="hi", chat_kind="dm")
+        assert evaluate(pred, hit, channel_name="telegram")
+        assert not evaluate(pred, miss, channel_name="telegram")
+
+    def test_command_rule_wins_over_later_catchall(self) -> None:
+        from caspian.core.predicates import evaluate
+        from caspian.core.step import StepState, step
+
+        cx = Caspian()
+        cx.on_message({"channel": "telegram", "command": "help"}, lambda t, m, c: None)
+        cx.on_message({"channel": "telegram"}, lambda t, m, c: None)
+        event = Message(thread_id=ThreadId("telegram:1"), text="/help", chat_kind="dm")
+        first, catchall = cx.app.rules
+        assert evaluate(first.predicate, event, channel_name="telegram")
+        assert evaluate(catchall.predicate, event, channel_name="telegram")
+        result = step(StepState(), event, cx.app, channel_name="telegram")
+        assert result.matched_rule is not None
+        assert result.matched_rule.handler_id == first.handler_id
+
+    def test_action_data_filter(self) -> None:
+        from caspian.core.predicates import evaluate
+
+        cx = Caspian()
+        cx.on_action({"channel": "telegram", "data": "story"}, lambda t, a, c: None)
+        pred = cx.app.rules[0].predicate
+        hit = Action(thread_id=ThreadId("telegram:1"), data="story")
+        miss = Action(thread_id=ThreadId("telegram:1"), data="ok")
+        assert evaluate(pred, hit, channel_name="telegram")
+        assert not evaluate(pred, miss, channel_name="telegram")
 
 
 class TestThread:

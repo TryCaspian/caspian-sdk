@@ -73,11 +73,48 @@ def test_add_forwards_webhook_secret_into_connection_config() -> None:
     assert conn.config["bot_token"] == "123:ABC"
 
 
-def test_on_message_options_is_a_typeddict() -> None:
+def test_add_channel_is_a_catalog_literal() -> None:
+    """`channel: str` collapses in the editor; ChannelName is the completion list."""
+    from typing import Literal, get_args, get_origin, get_type_hints
+
+    from caspian.catalog import ChannelName
+
+    hints = get_type_hints(ChannelManager.add)
+    assert hints["channel"] is ChannelName
+    assert get_origin(hints["via"]) is Literal
+    assert set(get_args(hints["via"])) == {"hosted", "self-host"}
+
+
+def test_on_message_channel_is_a_catalog_literal() -> None:
+    from typing import get_args, get_type_hints
+
     from caspian import OnMessageOptions
+    from caspian.catalog import ChannelName
 
     keys = OnMessageOptions.__optional_keys__ | OnMessageOptions.__required_keys__
-    assert keys == {"channel", "kind", "overlap", "bound", "ack"}
+    assert keys == {"channel", "kind", "overlap", "bound", "ack", "command"}
+    hints = get_type_hints(OnMessageOptions)
+    assert ChannelName in get_args(hints["channel"])
+
+
+def test_on_action_options_include_data() -> None:
+    from caspian import OnActionOptions
+
+    keys = OnActionOptions.__optional_keys__ | OnActionOptions.__required_keys__
+    assert keys == {"channel", "overlap", "bound", "ack", "data"}
+
+
+def test_handler_protocol_allows_msg_not_message() -> None:
+    """Protocol params are positional-only; `msg` vs `message` must not error."""
+    from caspian.facade.host import MessageHandler
+
+    kinds = [
+        p.kind
+        for name, p in inspect.signature(MessageHandler.__call__).parameters.items()
+        if name != "self"
+    ]
+    assert kinds
+    assert all(k == inspect.Parameter.POSITIONAL_ONLY for k in kinds)
 
 
 def test_tools_returns_toolset() -> None:

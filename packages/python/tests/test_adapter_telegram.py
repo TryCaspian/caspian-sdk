@@ -296,3 +296,24 @@ class TestTelegramOverlapKey:
             chat_kind="dm",
         )
         assert adapter.overlap_key(event) == "telegram:555"
+
+
+class TestTelegramWebhook:
+    def test_webhook_plans_setWebhook(self) -> None:
+        adapter = TelegramAdapter()
+        conn = Connection(
+            id=ConnectionId("c1"),
+            channel="telegram",
+            config={
+                "bot_token": "123:ABC",
+                "webhook_url": "https://example.com/telegram",
+                "webhook_secret": "s3cr3t",
+            },
+        )
+        result = adapter.webhook(conn)
+        assert result.is_ok
+        assert result.value.raw["native"] == "setWebhook"
+        assert result.value.raw["json"] == {
+            "url": "https://example.com/telegram",
+            "secret_token": "s3cr3t",
+        }

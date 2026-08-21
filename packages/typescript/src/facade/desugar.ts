@@ -3,7 +3,7 @@ import * as Either from "effect/Either"
 import type { Overlap, Rule } from "../core/app.ts"
 import type { DecodeError } from "../core/errors.ts"
 import { decodeStrict } from "../core/parse.ts"
-import type { Predicate } from "../core/predicates.ts"
+import { commandOf, type Predicate } from "../core/predicates.ts"
 import {
   OnActionOptions,
   OnMessageOptions,
@@ -61,6 +61,11 @@ export const desugarOnMessage = (
   if (value.kind !== undefined) {
     parts.push({ op: "chat_kind", chat_kind: value.kind })
   }
+  if (value.command !== undefined) {
+    const names =
+      typeof value.command === "string" ? [value.command] : [...value.command]
+    parts.push({ op: "command", names: names.map(commandOf) })
+  }
   return {
     predicate: andAll(parts),
     overlap: overlapOf(value.overlap ?? "queue", value.bound),
@@ -78,6 +83,11 @@ export const desugarOnAction = (
   const channels = channelsOf(value.channel)
   if (channels !== undefined) {
     parts.push({ op: "channel", channels: [...channels] })
+  }
+  if (value.data !== undefined) {
+    const values =
+      typeof value.data === "string" ? [value.data] : [...value.data]
+    parts.push({ op: "data", values })
   }
   return {
     predicate: andAll(parts),

@@ -146,6 +146,27 @@ class TestHandle:
             "telegram", _tg_update(), headers={"X-Telegram-Bot-Api-Secret-Token": "wrong"}
         )
         assert len(results) == 1 and not results[0].is_ok
+        assert [s.raw.get("native") for s in transport.dispatched] == ["setWebhook"]
+
+    def test_add_registers_telegram_webhook(self) -> None:
+        transport = RecordingTransport()
+        cx = Caspian(transport=transport)
+        cx.channels.add(
+            "telegram",
+            via="self-host",
+            bot_token="123:ABC",
+            webhook_url="https://x/telegram",
+            webhook_secret=_TG_SECRET,
+        )
+        natives = [s.raw.get("native") for s in transport.dispatched]
+        assert natives == ["setWebhook"]
+        assert transport.dispatched[0].raw["json"]["url"] == "https://x/telegram"
+        assert transport.dispatched[0].raw["json"]["secret_token"] == _TG_SECRET
+
+    def test_add_skips_webhook_when_no_url(self) -> None:
+        transport = RecordingTransport()
+        cx = Caspian(transport=transport)
+        cx.channels.add("telegram", via="self-host", bot_token="123:ABC")
         assert transport.dispatched == []
 
     def test_overlap_state_persists_across_calls(self) -> None:

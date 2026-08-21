@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from caspian.adapters.pack import pack
+from caspian.adapters.pack import from_response, pack
 from caspian.adapters.verify import header_equals
 from caspian.core.commands import (
     Call,
@@ -261,6 +261,20 @@ class _Telegram:
             return Result.err(AdapterError(reason="No bot_token in connection config"))
         return Result.ok(self._req(token, "getUpdates", {"offset": offset, "timeout": 0}))
 
+    def webhook(self, conn: Connection) -> Result:
+        """Plan setWebhook from ``webhook_url`` / ``webhook_secret`` on the connection."""
+        token = conn.config.get("bot_token", "")
+        url = str(conn.config.get("webhook_url", "") or "")
+        if not token:
+            return Result.err(AdapterError(reason="No bot_token in connection config"))
+        if not url:
+            return Result.err(AdapterError(reason="No webhook_url in connection config"))
+        body: dict[str, Any] = {"url": url}
+        secret = str(conn.config.get("webhook_secret", "") or "")
+        if secret:
+            body["secret_token"] = secret
+        return Result.ok(self._req(token, "setWebhook", body))
+
     # ─── Outbound ────────────────────────────────────────────────────────────
 
     def execute(self, cmd: Command, conn: Connection) -> Result:
@@ -468,4 +482,6 @@ TelegramAdapter = pack(
     decode_thread=_impl.decode_thread,
     acknowledge=_impl.acknowledge,
     poll=_impl.poll,
+    webhook=_impl.webhook,
+    posted_id=from_response("result", "message_id"),
 )

@@ -95,8 +95,11 @@ class RawInbound:
 class Sent:
     """A planned outbound call, or the confirmation after transport dispatched it.
 
-    ``raw`` describes the call (transport, url, json, …). Adapters fill this;
-    HttpTransport reads it. ``message_id`` is set after a successful dispatch.
+    ``raw`` describes the call (transport, url, json, …) on the way out, and the
+    HTTP body (``body`` / ``response``) on the way back. Adapters fill the
+    request; HttpTransport returns the response. ``message_id`` is the
+    posted-message id the adapter reads from that response — not a transport
+    concern.
     """
 
     def __init__(self, message_id: str = "", raw: dict[str, Any] | None = None) -> None:

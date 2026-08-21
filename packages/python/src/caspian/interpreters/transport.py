@@ -18,8 +18,11 @@ from caspian.core.ports import Result, Sent, TransportPort
 class HttpTransport:
     """Dispatches http_json / http_form / http_multipart request descriptions via httpx."""
 
-    def __init__(self, *, timeout: float = 10.0) -> None:
+    def __init__(
+        self, *, timeout: float = 10.0, transport: httpx.BaseTransport | None = None
+    ) -> None:
         self._timeout = timeout
+        self._transport = transport
 
     def dispatch(self, sent: Sent) -> Result:
         """Send the request described in sent.raw. Returns Result[Sent, AdapterError]."""
@@ -39,7 +42,7 @@ class HttpTransport:
         headers = req.get("headers", {})
 
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
                 kwargs: dict[str, Any] = {"headers": headers}
                 if transport == "http_json":
                     kwargs["json"] = req.get("json", {})
@@ -61,22 +64,19 @@ class HttpTransport:
                 )
             )
 
-        message_id = self._extract_message_id(resp)
-        return Result.ok(Sent(message_id=message_id, raw={"status": resp.status_code}))
-
-    def _extract_message_id(self, resp: httpx.Response) -> str:
+        raw: dict[str, Any] = {
+            "status": resp.status_code,
+            "body": resp.content,
+            "native": req.get("native", ""),
+        }
         try:
-            data = resp.json()
+            parsed = resp.json()
         except (ValueError, httpx.HTTPError):
-            return ""
-        # Telegram: {"ok": true, "result": {"message_id": ...}}
-        if isinstance(data, dict):
-            result = data.get("result", data)
-            if isinstance(result, dict):
-                for key in ("message_id", "ts", "id"):
-                    if key in result:
-                        return str(result[key])
-        return ""
+            parsed = None
+        if isinstance(parsed, dict):
+            raw["response"] = parsed
+        return Result.ok(Sent(raw=raw))
+
 
 
 class RecordingTransport:

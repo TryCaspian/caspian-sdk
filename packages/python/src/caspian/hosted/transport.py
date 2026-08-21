@@ -37,15 +37,9 @@ class GatewayTransport:
             return result
 
         response = result.value
-        message_id = ""
-        if isinstance(response.json_body, dict):
-            for key in ("message_id", "id", "ts"):
-                if key in response.json_body:
-                    message_id = str(response.json_body[key])
-                    break
-        return Result.ok(
-            Sent(
-                message_id=message_id,
-                raw={"status": response.status_code, "native": raw.get("native", "")},
-            )
-        )
+        raw_out = {
+            "status": response.status_code,
+            "native": raw.get("native", ""),
+            "response": response.json_body if isinstance(response.json_body, dict) else {},
+        }
+        return Result.ok(Sent(raw=raw_out))

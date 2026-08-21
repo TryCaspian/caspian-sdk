@@ -10,7 +10,7 @@ import hashlib
 import hmac
 from urllib.parse import urlencode
 
-from caspian.adapters.pack import pack
+from caspian.adapters.pack import from_response, pack
 from caspian.adapters.plan import http_form, http_json, smtp, twiml
 from caspian.adapters.thread import decode_thread, encode_thread
 from caspian.adapters.verify import (
@@ -161,6 +161,25 @@ class TestPack:
             verify=hmac_hex(header="Linear-Signature", secret_key="webhook_secret"),
         )
         assert Adapter().verify(RawInbound(body=b"{}"), _conn()) is False
+
+    def test_posted_id_reads_the_response_path(self) -> None:
+        telegram = from_response("result", "message_id")
+        slack = from_response("ts")
+        assert (
+            telegram(Sent(raw={"response": {"ok": True, "result": {"message_id": 9}}}))
+            == "9"
+        )
+        assert slack(Sent(raw={"response": {"ts": "1.2"}})) == "1.2"
+        assert telegram(Sent(raw={"status": 200})) == ""
+
+    def test_packed_posted_id_defaults_empty(self) -> None:
+        Adapter = pack(
+            channel="linear",
+            parse=_empty_parse,
+            plan=_echo_plan,
+            verify=unsigned,
+        )
+        assert Adapter().posted_id(Sent(raw={"response": {"id": "x"}})) == ""
 
 
 class TestPlannedCall:

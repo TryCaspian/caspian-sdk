@@ -5,6 +5,7 @@ from __future__ import annotations
 from caspian.core.commands import Post, React, Typing
 from caspian.core.ports import Connection
 from caspian.core.types import ConnectionId, ThreadId
+from caspian.hosted.adapter import GatewayAdapter
 from caspian.hosted.client import (
     FakeGatewayClient,
     classify_status,
@@ -75,7 +76,9 @@ class TestGatewayTransport:
 
         result = transport.dispatch(sent)
         assert result.is_ok
-        assert result.value.message_id == "srv_1"
+        assert result.value.message_id == ""
+        assert result.value.raw["response"]["message_id"] == "srv_1"
+        assert GatewayAdapter().posted_id(result.value) == "srv_1"
         assert len(client.requests) == 1
         assert client.requests[0].path == "/v1/conversations/c/messages"
 

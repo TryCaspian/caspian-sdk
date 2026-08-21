@@ -20,7 +20,7 @@ import json
 import urllib.parse
 from typing import Any
 
-from caspian.adapters.pack import pack
+from caspian.adapters.pack import from_response, pack
 from caspian.adapters.verify import hmac_slack
 from caspian.core.commands import (
     Call,
@@ -371,4 +371,5 @@ SlackAdapter = pack(
     format=_impl.format,
     encode_thread=_impl.encode_thread,
     decode_thread=_impl.decode_thread,
+    posted_id=from_response("ts"),
 )
