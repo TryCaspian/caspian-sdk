@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { fakeGatewayClient } from "caspian"
+import { fakeGatewayClient } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import { parseArgv } from "../src/desugar.ts"
 import { runIntent } from "../src/run.ts"

@@ -1,7 +1,7 @@
 /* Shared Telegram handlers, TypeScript. The twin of ../telegram/app.py:
    same commands, same rules, so the two SDKs can be checked against each
    other with the same chat. */
-import type { Action, Caspian, Message, Thread } from "caspian"
+import type { Action, Caspian, Message, Thread } from "caspian-sdk"
 
 const PHOTO = "https://www.python.org/static/community_logos/python-logo.png"
 const STORY = ["Once ", "upon ", "a time, ", "a bot ", "learned ", "to stream."]

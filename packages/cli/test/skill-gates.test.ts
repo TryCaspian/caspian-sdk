@@ -7,7 +7,7 @@
  * illegal Call bags gone; the same Plan runs as dry-run or eval.
  */
 import { expect, test } from "bun:test"
-import { fakeGatewayClient } from "caspian"
+import { fakeGatewayClient } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import { getCatalog } from "../src/catalog.ts"

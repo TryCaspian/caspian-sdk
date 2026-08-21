@@ -3,7 +3,7 @@
    polls GET /v1/events and drives the same pipeline.
 
    Hosted does not mint a BotFather bot. You still pass TELEGRAM_BOT_TOKEN. */
-import { Caspian } from "caspian"
+import { Caspian } from "caspian-sdk"
 import { register } from "./app.ts"
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? "").trim()

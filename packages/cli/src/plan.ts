@@ -9,7 +9,7 @@ import {
   toRequest,
   type Command,
   type GatewayRequest,
-} from "caspian"
+} from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import { getCatalog, loadCatalog, searchCatalog, type CatalogEntry } from "./catalog.ts"
 import { UsageError } from "./errors.ts"

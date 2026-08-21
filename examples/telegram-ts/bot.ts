@@ -6,7 +6,7 @@
    Answer Telegram BEFORE running the handler: a response that only completes
    when the handler returns reads as a timeout, and Telegram redelivers the
    same update while a slow handler is still thinking. */
-import { Caspian } from "caspian"
+import { Caspian } from "caspian-sdk"
 import { register } from "./app.ts"
 
 const token = (process.env.TELEGRAM_BOT_TOKEN ?? "").trim()

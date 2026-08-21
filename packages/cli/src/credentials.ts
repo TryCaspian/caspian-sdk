@@ -15,7 +15,7 @@ import {
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import * as Effect from "effect/Effect"
-import { DEFAULT_BASE_URL } from "caspian"
+import { DEFAULT_BASE_URL } from "caspian-sdk"
 import { UsageError } from "./errors.ts"
 
 export type EnvValues = {

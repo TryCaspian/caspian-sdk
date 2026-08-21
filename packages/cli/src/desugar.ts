@@ -4,7 +4,7 @@
  * Rejected duplicate send/follow paths fail with the one command to use.
  * Tokenization returns UsageError data — it does not throw.
  */
-import { DEFAULT_BASE_URL } from "caspian"
+import { DEFAULT_BASE_URL } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import { UsageError } from "./errors.ts"
 import type { Intent, Via } from "./intent.ts"

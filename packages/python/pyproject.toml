@@ -1,6 +1,6 @@
 [project]
-name = "caspian"
-version = "0.1.0"
+name = "caspian-sdk"
+version = "1.0.0"
 description = "Caspian Python SDK — one bot program across channels"
 requires-python = ">=3.10"
 dependencies = [

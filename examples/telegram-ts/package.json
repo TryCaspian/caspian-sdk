@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "caspian": "file:../../packages/typescript"
+    "caspian-sdk": "file:../../packages/typescript"
   }
 }
