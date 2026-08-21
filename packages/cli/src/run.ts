@@ -4,7 +4,7 @@
  * planIntent is the denotation (pure). This is one interpreter. Chaos and
  * recording clients are the others — same Plan, different GatewayClient.
  */
-import type { GatewayClient, GatewayRequest, GatewayResponse } from "caspian"
+import type { GatewayClient, GatewayRequest, GatewayResponse } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import { hostedNeeded, UsageError } from "./errors.ts"
 import type { Intent } from "./intent.ts"

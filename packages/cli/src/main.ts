@@ -9,7 +9,7 @@ import {
   DEFAULT_BASE_URL,
   httpGatewayClient,
   type GatewayClient,
-} from "caspian"
+} from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import {

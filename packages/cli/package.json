@@ -1,7 +1,7 @@
 {
   "name": "@caspian/cli",
   "version": "0.1.0",
-  "description": "Caspian CLI — catalog discovers, call invokes, channels and threads are resources",
+  "description": "Caspian CLI \u2014 catalog discovers, call invokes, channels and threads are resources",
   "type": "module",
   "private": true,
   "bin": {
@@ -24,8 +24,8 @@
     "directory": "packages/cli"
   },
   "dependencies": {
-    "caspian": "file:../typescript",
-    "effect": "^3.22.1"
+    "effect": "^3.22.1",
+    "caspian-sdk": "file:../typescript"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

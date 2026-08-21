@@ -88,7 +88,14 @@ class Caspian:
         if self._gateway_client is None and api_key:
             from caspian.hosted.client import HttpGatewayClient
 
-            self._gateway_client = HttpGatewayClient(api_key=api_key, base_url=base_url)
+            # An empty base_url must fall through to the client's hosted default.
+            # Passing it verbatim overrode DEFAULT_BASE_URL with "", so the first
+            # thing every pip-installed user hit was 'Request URL is missing an
+            # http:// protocol' on Caspian(api_key=...).
+            if base_url:
+                self._gateway_client = HttpGatewayClient(api_key=api_key, base_url=base_url)
+            else:
+                self._gateway_client = HttpGatewayClient(api_key=api_key)
         self._interpreters: dict[str, ProcessInterpreter] = {}
         self._transport = transport
         if dispatch and transport is None:

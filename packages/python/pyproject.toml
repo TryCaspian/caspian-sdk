@@ -1,7 +1,8 @@
 [project]
-name = "caspian"
-version = "0.1.0"
+name = "caspian-sdk"
+version = "1.0.2"
 description = "Caspian Python SDK — one bot program across channels"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.7,<3",

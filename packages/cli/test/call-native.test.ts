@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
-import { fakeGatewayClient, toRequest } from "caspian"
+import { fakeGatewayClient, toRequest } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
-import type { Command } from "caspian"
+import type { Command } from "caspian-sdk"
 import { parseArgv } from "../src/desugar.ts"
 import { runIntent } from "../src/run.ts"
 
