@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from examples.serve import challenge_response
+from examples.serve import challenge_response  # noqa: E402
 
 
 def test_meta_subscribe_challenge_is_plain_text() -> None:

@@ -1,7 +1,7 @@
 import os
 
-from caspian import Caspian
 from app import register
+from caspian import Caspian
 
 token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
 if not token:

@@ -1,7 +1,7 @@
 import os
 
-from caspian import Caspian
 from app import register
+from caspian import Caspian
 
 token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 app_token = os.environ.get("SLACK_APP_TOKEN", "").strip()

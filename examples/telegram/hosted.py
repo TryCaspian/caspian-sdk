@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import os
 
-from caspian import Caspian
-
 from app import register
+from caspian import Caspian
 
 token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 api_key = os.environ.get("CASPIAN_API_KEY", "").strip()

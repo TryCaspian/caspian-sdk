@@ -7,9 +7,8 @@ import secrets
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
-from caspian import Caspian
-
 from app import register
+from caspian import Caspian
 
 token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "").strip()
