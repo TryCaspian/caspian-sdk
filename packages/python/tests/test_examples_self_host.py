@@ -87,3 +87,28 @@ def test_sms_help_plans_send() -> None:
     signature = base64.b64encode(digest).decode()
     results = cx.handle("sms", body, {"X-Twilio-Signature": signature})
     assert any(r.is_ok and r.value.raw.get("transport") == "http_form" for r in results)
+
+
+def test_voice_speech_plans_twiml() -> None:
+    from examples.voice.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    auth_token = "token"
+    webhook_url = "https://example.com/voice"
+    cx.channels.add(
+        "voice",
+        via="self-host",
+        account_sid="AC123",
+        auth_token=auth_token,
+        webhook_url=webhook_url,
+        bot_token="local",
+    )
+    register(cx)
+    form = {"CallSid": ["CA123"], "SpeechResult": ["hello"]}
+    body = urlencode(form, doseq=True).encode()
+    payload = webhook_url + "CallSidCA123SpeechResulthello"
+    digest = hmac.new(auth_token.encode(), payload.encode(), hashlib.sha1).digest()
+    signature = base64.b64encode(digest).decode()
+    results = cx.handle("voice", body, {"X-Twilio-Signature": signature})
+    assert any(r.is_ok and "<Say>" in str(r.value.raw.get("twiml", "")) for r in results)
