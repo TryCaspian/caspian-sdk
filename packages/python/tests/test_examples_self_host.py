@@ -229,3 +229,34 @@ def test_imessage_help_plans_send() -> None:
     digest = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
     results = cx.handle("imessage", body, {"X-Relay-Signature": digest})
     assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
+
+
+def test_linear_help_plans_send() -> None:
+    from examples.linear.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    webhook_secret = "shh"
+    cx.channels.add(
+        "linear",
+        via="self-host",
+        api_key="lin_key",
+        webhook_secret=webhook_secret,
+        bot_token="local",
+    )
+    register(cx)
+    body = json.dumps(
+        {
+            "type": "Comment",
+            "action": "create",
+            "data": {
+                "id": "comment-1",
+                "body": "/help",
+                "issue": {"id": "issue-9"},
+                "user": {"id": "user-3"},
+            },
+        }
+    ).encode()
+    digest = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    results = cx.handle("linear", body, {"Linear-Signature": digest})
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
