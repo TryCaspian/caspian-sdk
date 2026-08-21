@@ -59,7 +59,23 @@ def test_sandbox_rate_limit(app):
 def test_skill_md_served(client):
     response = client.get("/SKILL.md")
     assert response.status_code == 200
-    assert "connect_email" in response.text
-    assert "/v1/billing" in response.text  # balance check
-    assert "dashboard" in response.text.lower()  # credit is added in the dashboard
-    assert client.get("/llms.txt").status_code == 200
+    text = response.text
+    assert "from caspian import Caspian" in text
+    assert "channels.add" in text
+    assert "cx.run()" in text
+    assert "thread.post" in text
+    assert "/v1/channels" in text
+    assert "/v1/billing" in text
+    assert "dashboard" in text.lower()
+    assert "caspian init" in text
+    assert "caspian login" in text
+    assert "/v1/auth/device/start" in text
+    assert "sandbox" not in text.lower()
+    assert "no signup" not in text.lower()
+    assert "/v1/projects/sandbox" not in text
+    assert "from caspian_sdk import" not in text
+    assert "connect_email(" not in text
+    assert "connect_telegram(" not in text
+    llms = client.get("/llms.txt")
+    assert llms.status_code == 200
+    assert llms.text == text
