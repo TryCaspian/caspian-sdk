@@ -1,6 +1,10 @@
+import base64
+import hashlib
+import hmac
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 from caspian import Caspian
 from caspian.core.types import Message, ThreadId
@@ -57,3 +61,29 @@ def test_email_help_plans_smtp() -> None:
     ).encode()
     results = cx.handle("email", body, {})
     assert any(r.is_ok and r.value.raw.get("transport") == "smtp" for r in results)
+
+
+def test_sms_help_plans_send() -> None:
+    from examples.sms.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    auth_token = "token"
+    webhook_url = "https://example.com/sms"
+    cx.channels.add(
+        "sms",
+        via="self-host",
+        account_sid="AC123",
+        auth_token=auth_token,
+        from_number="+15559876543",
+        webhook_url=webhook_url,
+        bot_token="local",
+    )
+    register(cx)
+    form = {"From": ["+1"], "Body": ["/help"]}
+    body = urlencode(form, doseq=True).encode()
+    payload = webhook_url + "Body/helpFrom+1"
+    digest = hmac.new(auth_token.encode(), payload.encode(), hashlib.sha1).digest()
+    signature = base64.b64encode(digest).decode()
+    results = cx.handle("sms", body, {"X-Twilio-Signature": signature})
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_form" for r in results)
