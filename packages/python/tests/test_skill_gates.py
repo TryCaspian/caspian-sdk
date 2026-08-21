@@ -318,6 +318,18 @@ class TestReliabilityGates:
             if isinstance(obj, type) and issubclass(obj, CaspianError):
                 assert issubclass(obj, Exception), f"{name} is not an Exception"
 
+    def test_one_transport_port(self) -> None:
+        import caspian.facade.caspian as facade
+        import caspian.interpreters.polling as polling
+        import caspian.interpreters.process as process
+        from caspian.core.ports import TransportPort
+
+        assert hasattr(TransportPort, "dispatch")
+        assert not hasattr(TransportPort, "send")
+        assert not hasattr(process, "Transport")
+        assert not hasattr(polling, "_Transport")
+        assert not hasattr(facade, "Transport")
+
     def test_chaos_transport_returns_error_value(self) -> None:
         from caspian.core.ports import Sent
 

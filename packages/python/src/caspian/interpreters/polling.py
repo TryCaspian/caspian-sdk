@@ -3,7 +3,7 @@
 Some self-hosted bots cannot receive webhooks (no public URL) and must instead
 long-poll the platform for updates. Adapters stay pure: an adapter's poll()
 builds a request-description Sent (e.g. Telegram getUpdates); fetch_updates
-dispatches it via an injected Transport (a real HttpTransport in production, a
+dispatches it via an injected TransportPort (a real HttpTransport in production, a
 fake in tests) and parses the response into (updates, next_offset). The
 PollingRunner ties it together, wrapping each raw update as RawInbound and
 feeding it to a sink (typically ProcessInterpreter.handle_webhook).
@@ -16,25 +16,19 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any
 
 from caspian.core.errors import AdapterError
-from caspian.core.ports import AdapterPort, Connection, RawInbound, Result, Sent
+from caspian.core.ports import AdapterPort, Connection, RawInbound, Result, Sent, TransportPort
 
 Sink = Callable[[RawInbound], list[Result]]
-
-
-class _Transport(Protocol):
-    """Anything that can dispatch a request-description Sent (Transport shape)."""
-
-    def dispatch(self, sent: Sent) -> Result: ...
 
 
 def fetch_updates(
     adapter: AdapterPort,
     connection: Connection,
     offset: int,
-    transport: _Transport,
+    transport: TransportPort,
 ) -> Result:
     """Fetch one batch of raw updates via long-poll.
 
@@ -110,7 +104,7 @@ class PollingRunner:
         connection: Connection,
         sink: Sink,
         *,
-        transport: _Transport,
+        transport: TransportPort,
         offset: int = 0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:

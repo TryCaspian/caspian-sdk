@@ -1,6 +1,6 @@
 """GatewayTransport — dispatches transport="gateway" request-descriptions.
 
-Satisfies the same Transport protocol as HttpTransport, so the ProcessInterpreter
+Satisfies TransportPort like HttpTransport, so the ProcessInterpreter
 is unchanged: in hosted mode, execute() emits a gateway request-description and
 this transport sends it through the GatewayClient. Failure is returned as a
 CaspianError value, never raised.

@@ -7,21 +7,41 @@ Commands back. Thread lives here so interpreters/ cannot depend on facade.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
 from caspian.core.commands import Command
-from caspian.core.types import Event
+from caspian.core.types import Action, Event, Message
 from caspian.facade.thread import Thread
 
 Handler = Callable[..., Any]
 
 
 class HandlerContext:
-    """Context passed to handlers alongside the thread and event."""
+    """Per-turn context passed to handlers as the third argument.
+
+    ``skipped`` is how many inbound events overlap dropped or queued *before*
+    this turn ran. It is not a count of events your handler ignored.
+    """
 
     def __init__(self, *, skipped: int = 0) -> None:
         self.skipped = skipped
+
+
+class MessageHandler(Protocol):
+    """``(thread, message, ctx)`` — what ``on_message`` registers."""
+
+    def __call__(
+        self, thread: Thread, message: Message, ctx: HandlerContext
+    ) -> object | Awaitable[object]: ...
+
+
+class ActionHandler(Protocol):
+    """``(thread, action, ctx)`` — what ``on_action`` registers."""
+
+    def __call__(
+        self, thread: Thread, action: Action, ctx: HandlerContext
+    ) -> object | Awaitable[object]: ...
 
 
 class FacadeHost:

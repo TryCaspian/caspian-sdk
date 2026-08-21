@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Literal, overload
 
 from caspian.catalog import CHANNELS, SocketKind, socket_channels
 from caspian.core.errors import AuthRequired, ProvisionError
 from caspian.core.interpreter_memory import MemoryInterpreter
-from caspian.core.ports import RawInbound, Result, Sent
+from caspian.core.ports import RawInbound, Result, TransportPort
 from caspian.core.predicates import (
     And,
     MatchChannel,
@@ -29,14 +29,13 @@ from caspian.core.types import (
     Rule,
 )
 from caspian.facade.channels import ChannelManager
-from caspian.facade.host import FacadeHost, HandlerContext
+from caspian.facade.host import ActionHandler, FacadeHost, HandlerContext, MessageHandler
+from caspian.facade.options import OnActionOptions, OnMessageOptions
+from caspian.facade.thread import Thread
 from caspian.interpreters.process import ProcessInterpreter
+from caspian.tools import ToolSet
 
 Handler = Callable[..., Any]
-
-
-class Transport(Protocol):
-    def dispatch(self, sent: Sent) -> Result: ...
 
 
 class Caspian:
@@ -71,7 +70,7 @@ class Caspian:
         base_url: str = "",
         webhook_secret: str = "",
         gateway_client: Any = None,  # noqa: ANN401
-        transport: Transport | None = None,
+        transport: TransportPort | None = None,
         dispatch: bool = True,
     ) -> None:
         self._rules: list[Rule] = []
@@ -90,7 +89,7 @@ class Caspian:
         if dispatch and transport is None:
             self._transport = self._default_transport()
 
-    def _default_transport(self) -> Transport:
+    def _default_transport(self) -> TransportPort:
         from caspian.hosted.transport import GatewayTransport
         from caspian.interpreters.smtp import SmtpTransport
         from caspian.interpreters.transport import HttpTransport, MultiplexTransport
@@ -120,12 +119,14 @@ class Caspian:
         body: bytes,
         headers: dict[str, str] | None = None,
     ) -> list[Result]:
-        """Composition root: drive one raw inbound through the full pipeline.
+        """Drive one inbound webhook through verify → parse → step → handlers → send.
 
-        verify → parse → step → host → execute → transport.
+        Use this for self-host HTTP. ``channel`` must have been added with
+        ``via="self-host"``. Hosted inbound uses ``handle("gateway", ...)`` or
+        ``run()`` — not ``handle("telegram", ...)``.
 
-        `channel="gateway"` is the hosted inbound owner. A hosted platform
-        channel (inbound_owner=gateway) cannot be consumed via handle(channel).
+        Signatures are checked. Poll and socket inbound skip that check because
+        the bot token already authenticated the session.
         """
         if channel != "gateway":
             owner = self.channels.inbound_owner(channel)
@@ -147,11 +148,15 @@ class Caspian:
         self,
         channel: str,
         *,
-        transport: Transport | None = None,
+        transport: TransportPort | None = None,
         max_iterations: int | None = None,
         offset: int = 0,
     ) -> list[Result]:
-        """Self-host long-poll. Each update is fed to the same handle_webhook."""
+        """Self-host long-poll. Each update is fed to the same pipeline as handle().
+
+        Use when the process has no public URL (Telegram getUpdates). The bot
+        token authenticates the fetch, so webhook signatures are not checked.
+        """
         owner = self.channels.inbound_owner(channel)
         if owner != "local":
             return [
@@ -218,7 +223,7 @@ class Caspian:
 
         connection = self.channels.connection_for(channel)
         interp = self._interpreter_for(channel)
-        row = CHANNELS[channel]  # type: ignore[index]
+        row = CHANNELS[channel]
 
         if row.socket is SocketKind.SLACK:
             from caspian.interpreters.slack_socket import SlackSocketRunner
@@ -254,10 +259,10 @@ class Caspian:
     def run(
         self, *, max_iterations: int | None = None, interval: float = 1.0
     ) -> list[Result]:
-        """Hosted poll loop: GET /v1/events → handle('gateway', ...).
+        """Hosted poll loop: GET /v1/events then handle('gateway', ...).
 
-        Waits `interval` seconds between polls. Without it this spins as fast as
-        the network allows, which hammers the gateway for no benefit.
+        Requires ``Caspian(api_key=...)``. Waits ``interval`` seconds between
+        polls so the client does not spin.
         """
         if self._gateway_client is None:
             return [
@@ -321,41 +326,59 @@ class Caspian:
             transport=self._transport if self._dispatch else None,
         )
 
+    @overload
+    def on_message(
+        self, options: OnMessageOptions | None = None
+    ) -> Callable[[MessageHandler], MessageHandler]: ...
+
+    @overload
+    def on_message(
+        self, options: OnMessageOptions | None, handler: MessageHandler
+    ) -> None: ...
+
     def on_message(
         self,
-        options: dict[str, Any] | None = None,
-        handler: Handler | None = None,
-    ) -> Callable[[Handler], Handler] | None:
-        """Register a message handler. Can be used as a decorator or called directly.
+        options: OnMessageOptions | None = None,
+        handler: MessageHandler | None = None,
+    ) -> Callable[[MessageHandler], MessageHandler] | None:
+        """Register a message handler. Decorator or ``on_message(opts, fn)``.
 
-        Options:
-            channel: str | list[str] — filter by channel name(s)
-            kind: "dm" | "group" | "channel" — filter by chat kind
-            overlap: "queue" | "debounce" | "drop" | "parallel" | "stream"
-            bound: int — overlap queue bound (default 16)
+        Options: ``channel``, ``kind`` (dm/group/channel), ``overlap``
+        (queue/debounce/drop/parallel/stream), ``bound``, ``ack`` (instant
+        reply before the handler runs).
         """
         if handler is not None:
-            self._register_message_handler(options or {}, handler)
+            self._register_message_handler(dict(options or {}), handler)
             return None
 
-        def decorator(fn: Handler) -> Handler:
-            self._register_message_handler(options or {}, fn)
+        def decorator(fn: MessageHandler) -> MessageHandler:
+            self._register_message_handler(dict(options or {}), fn)
             return fn
 
         return decorator
 
+    @overload
+    def on_action(
+        self, options: OnActionOptions | None = None
+    ) -> Callable[[ActionHandler], ActionHandler]: ...
+
+    @overload
+    def on_action(
+        self, options: OnActionOptions | None, handler: ActionHandler
+    ) -> None: ...
+
     def on_action(
         self,
-        options: dict[str, Any] | None = None,
-        handler: Handler | None = None,
-    ) -> Callable[[Handler], Handler] | None:
-        """Register an action (button/callback) handler."""
+        options: OnActionOptions | None = None,
+        handler: ActionHandler | None = None,
+    ) -> Callable[[ActionHandler], ActionHandler] | None:
+        """Register a button / callback handler. Same overlap options as on_message."""
         if handler is not None:
-            self._register_action_handler(options or {}, handler)
+            self._register_action_handler(dict(options or {}), handler)
             return None
 
-        def decorator(fn: Handler) -> Handler:
-            self._register_action_handler(options or {}, fn)
+        def decorator(fn: ActionHandler) -> ActionHandler:
+            self._register_action_handler(dict(options or {}), fn)
             return fn
 
         return decorator
@@ -364,15 +387,17 @@ class Caspian:
         """Power-user escape: add a raw Rule directly (A-level API)."""
         self._rules.append(rule)
 
-    def tools(self, thread: Any = None, *, preset: str = "messenger") -> Any:  # noqa: ANN401
-        """Agent-callable tools derived from the Command types.
+    def tools(
+        self,
+        thread: Thread | None = None,
+        *,
+        preset: Literal["messenger", "outbound"] = "messenger",
+    ) -> ToolSet:
+        """Agent-callable tools derived from Command types.
 
-        Hands a model typed functions (post, reply, react, typing) that address
-        thread_ids rather than raw platform ids. Mirrors cx.tools() in the
-        TypeScript SDK.
+        Models address thread_ids, never raw platform chat ids. ``preset`` is
+        messenger (bound to the current thread) or outbound (must name a thread).
         """
-        from caspian.tools import ToolSet
-
         return ToolSet(thread, preset=preset)
 
     def interpret(self) -> MemoryInterpreter:

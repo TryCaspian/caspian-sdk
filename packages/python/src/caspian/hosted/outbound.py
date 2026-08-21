@@ -78,6 +78,19 @@ def _gateway_get(native: str, path: str, params: dict[str, str]) -> Sent:
     )
 
 
+def _no_gateway(cmd: Command) -> Result:
+    tag = getattr(cmd, "tag", "?")
+    return Result.err(
+        AdapterError(
+            reason=(
+                f"{tag} is not available in hosted mode: the gateway "
+                "exposes no endpoint for it. Use self-host for this."
+            ),
+            command_tag=tag,
+        )
+    )
+
+
 class GatewayOutbound:
     """Maps kernel Commands to gateway /v1 request-descriptions (hosted execute).
 
@@ -156,61 +169,6 @@ class GatewayOutbound:
                     )
                 )
 
-            case Delete():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "Delete is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="Delete",
-                    )
-                )
-
-            case Pin():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "Pin is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="Pin",
-                    )
-                )
-
-            case Unpin():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "Unpin is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="Unpin",
-                    )
-                )
-
-            case Forward():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "Forward is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="Forward",
-                    )
-                )
-
-            case MarkRead():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "MarkRead is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="MarkRead",
-                    )
-                )
-
             case ScheduleSend(thread_id=tid, text=text, send_at=send_at, actions=actions):
                 cid = conversation_id(tid)
                 return Result.ok(
@@ -237,17 +195,6 @@ class GatewayOutbound:
                     )
                 )
 
-            case OpenModal():
-                return Result.err(
-                    AdapterError(
-                        reason=(
-                            "OpenModal is not available in hosted mode: the gateway "
-                            "exposes no endpoint for it. Use self-host for this."
-                        ),
-                        command_tag="OpenModal",
-                    )
-                )
-
             case ListHistory(thread_id=tid, limit=limit, before=before):
                 cid = conversation_id(tid)
                 return Result.ok(
@@ -257,6 +204,9 @@ class GatewayOutbound:
                         {"limit": str(limit), "before": before},
                     )
                 )
+
+            case Delete() | Pin() | Unpin() | Forward() | MarkRead() | OpenModal() as unsupported:
+                return _no_gateway(unsupported)
 
             case _:
                 return Result.err(

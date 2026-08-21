@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from caspian.core.errors import AdapterError
-from caspian.core.ports import Result, Sent
+from caspian.core.ports import Result, Sent, TransportPort
 
 
 class HttpTransport:
@@ -107,8 +107,8 @@ class MultiplexTransport:
 
     def __init__(
         self,
-        routes: dict[str, Any],
-        default: Any = None,  # noqa: ANN401
+        routes: dict[str, TransportPort],
+        default: TransportPort | None = None,
     ) -> None:
         self._routes = routes
         self._default = default

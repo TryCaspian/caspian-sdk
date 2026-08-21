@@ -12,6 +12,7 @@ from typing import Any
 from caspian.adapters import REGISTRY, get_adapter
 from caspian.connection import Connection, Via, overlay_remote
 from caspian.core.errors import ProvisionError
+from caspian.core.ports import AdapterPort
 from caspian.provision import Channels
 
 
@@ -25,22 +26,59 @@ class ChannelManager:
     def __init__(self, *, gateway_client: Any = None) -> None:  # noqa: ANN401
         self._provision = Channels()
         self._gateway_client = gateway_client
-        self._adapters: dict[str, Any] = {}
+        self._adapters: dict[str, AdapterPort | None] = {}
         self._connections: dict[str, Connection] = {}
 
-    def add(self, channel: str, **options: Any) -> Connection:
-        """Add a channel. `via` defaults to hosted; self-host requires the secret.
+    def add(
+        self,
+        channel: str,
+        *,
+        via: str = "hosted",
+        display_name: str = "",
+        bot_token: str = "",
+        webhook_url: str = "",
+        inbound: bool = True,
+        webhook_secret: str = "",
+        signing_secret: str = "",
+        app_secret: str = "",
+        api_key: str = "",
+        **kwargs: Any,
+    ) -> Connection:
+        """Connect a channel. ``via`` defaults to hosted; self-host needs the secret.
 
-        A local adapter is required only for `via="self-host"`, because that is
-        the mode where this process speaks the platform's own protocol. In
-        hosted mode the gateway owns the protocol and inbound arrives as a
-        gateway event, so any channel the gateway supports works here even
-        without a local adapter (bluesky, zulip, gmeet, rcs, ...).
+        Args:
+            channel: Catalog name (telegram, slack, …) or a hosted-only name
+                the gateway speaks (bluesky, …).
+            via: ``hosted`` (default) or ``self-host``.
+            bot_token: Telegram always; Slack/Discord self-host. Hosted does
+                not mint a bot.
+            webhook_url: Public URL for self-host webhooks (Twilio also uses
+                this in the signature).
+            webhook_secret: Telegram secret token header; Linear/iMessage HMAC.
+            signing_secret: Slack request signing secret.
+            app_secret: Meta HMAC (WhatsApp, Messenger).
+            api_key: Linear GraphQL, iMessage relay, etc.
+
+        A local adapter is required only for ``via="self-host"``. Hosted inbound
+        arrives as a gateway event, so any channel the gateway supports works
+        even without a local adapter.
 
         Raises ProvisionError (or another CaspianError from the gateway) if
         paperwork or the gateway refuses.
         """
-        built = self._provision.add(channel, **options)
+        built = self._provision.add(
+            channel,
+            via=via,
+            display_name=display_name,
+            bot_token=bot_token,
+            webhook_url=webhook_url,
+            inbound=inbound,
+            webhook_secret=webhook_secret,
+            signing_secret=signing_secret,
+            app_secret=app_secret,
+            api_key=api_key,
+            **kwargs,
+        )
         if isinstance(built, str):
             raise ProvisionError(reason=built)
         conn = built
@@ -57,6 +95,18 @@ class ChannelManager:
         if conn.via == Via.HOSTED and self._gateway_client is not None:
             from caspian.hosted.provisioning import HostedProvisioning
 
+            options: dict[str, Any] = {
+                "via": via,
+                "display_name": display_name,
+                "bot_token": bot_token,
+                "webhook_url": webhook_url,
+                "inbound": inbound,
+                "webhook_secret": webhook_secret,
+                "signing_secret": signing_secret,
+                "app_secret": app_secret,
+                "api_key": api_key,
+                **kwargs,
+            }
             provisioned = HostedProvisioning(self._gateway_client).add_connection(
                 channel, options
             )
@@ -73,7 +123,7 @@ class ChannelManager:
         self._connections[channel] = conn
         return conn
 
-    def adapter_for(self, channel: str) -> Any:
+    def adapter_for(self, channel: str) -> AdapterPort:
         if channel not in self._adapters:
             raise KeyError(f"Channel {channel!r} was not added; call channels.add() first")
         adapter = self._adapters[channel]

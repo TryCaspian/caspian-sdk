@@ -24,7 +24,12 @@ class ConnectionStatus(StrEnum):
 
 
 class Connection:
-    """A provisioned channel connection."""
+    """A provisioned channel connection.
+
+    ``via`` is hosted (Caspian owns inbound) or self-host (this process does).
+    ``inbound_owner`` is ``gateway`` or ``local`` accordingly. ``authorize_url``
+    is set when the gateway needs the user to complete OAuth.
+    """
 
     def __init__(
         self,
@@ -47,6 +52,7 @@ class Connection:
 
     @property
     def inbound_owner(self) -> str:
+        """``local`` if this process receives inbound; ``gateway`` if Caspian hosted does."""
         return "local" if self.via == Via.SELF_HOST else "gateway"
 
 

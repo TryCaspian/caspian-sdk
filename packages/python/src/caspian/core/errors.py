@@ -18,10 +18,14 @@ class CaspianError(Exception):
 
 
 class DecodeError(CaspianError):
+    """Inbound bytes could not be parsed or the webhook signature failed."""
+
     tag = "DecodeError"
 
 
 class AdapterError(CaspianError):
+    """The channel cannot execute this command (missing token, unsupported)."""
+
     tag = "AdapterError"
 
     def __init__(self, reason: str, command_tag: str = "") -> None:
@@ -39,10 +43,14 @@ class OverlapFull(CaspianError):
 
 
 class ProvisionError(CaspianError):
+    """add() paperwork failed (missing bot_token, unknown self-host channel)."""
+
     tag = "ProvisionError"
 
 
 class AuthRequired(CaspianError):
+    """Hosted run() / gateway calls need an api_key."""
+
     tag = "AuthRequired"
 
 

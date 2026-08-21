@@ -5,18 +5,27 @@ Core imports these. Implementations live outside core.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Generic, Protocol
+
+from typing_extensions import TypeVar
 
 from caspian.connection import Connection
 from caspian.core.commands import Command
 from caspian.core.errors import CaspianError
 from caspian.core.types import Event, ThreadId
 
+T = TypeVar("T", default=Any)
 
-class Result:
-    """Simple Result type for core. Ok or Err."""
 
-    def __init__(self, value: Any = None, error: CaspianError | None = None) -> None:  # noqa: ANN401
+class Result(Generic[T]):
+    """Ok(value) or Err(error). Never both.
+
+    After ``execute``, ``value`` is a ``Sent`` (a planned call). After ``parse``,
+    it is a list of Events. On failure ``error`` is a CaspianError and
+    ``is_ok`` is False — do not read ``value``.
+    """
+
+    def __init__(self, value: T | None = None, error: CaspianError | None = None) -> None:
         self._value = value
         self._error = error
 
@@ -25,19 +34,19 @@ class Result:
         return self._error is None
 
     @property
-    def value(self) -> Any:  # noqa: ANN401
-        return self._value
+    def value(self) -> T:
+        return self._value  # type: ignore[return-value]
 
     @property
     def error(self) -> CaspianError | None:
         return self._error
 
     @classmethod
-    def ok(cls, value: Any = None) -> Result:  # noqa: ANN401
+    def ok(cls, value: T | None = None) -> Result[T]:
         return cls(value=value)
 
     @classmethod
-    def err(cls, error: CaspianError) -> Result:
+    def err(cls, error: CaspianError) -> Result[T]:
         return cls(error=error)
 
 
@@ -84,7 +93,11 @@ class RawInbound:
 
 
 class Sent:
-    """Confirmation that a command was executed."""
+    """A planned outbound call, or the confirmation after transport dispatched it.
+
+    ``raw`` describes the call (transport, url, json, …). Adapters fill this;
+    HttpTransport reads it. ``message_id`` is set after a successful dispatch.
+    """
 
     def __init__(self, message_id: str = "", raw: dict[str, Any] | None = None) -> None:
         self.message_id = message_id
@@ -118,13 +131,14 @@ class AdapterPort(Protocol):
 
 
 class TransportPort(Protocol):
-    """Port: performs the actual HTTP dispatch of an adapter-built payload.
+    """Port: perform the effect described by a Sent.
 
-    Adapters build platform payloads (pure); the transport sends them.
-    This keeps adapters testable and isolates all real I/O to one place.
+    Adapters build request-descriptions (pure). A transport reads `sent.raw`
+    and dispatches — HTTP, SMTP, TwiML, gateway, or a test fake. One method,
+    one fake.
     """
 
-    def send(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Result: ...
+    def dispatch(self, sent: Sent) -> Result: ...
 
 
 class StreamSink(Protocol):

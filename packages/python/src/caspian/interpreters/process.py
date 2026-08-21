@@ -8,20 +8,22 @@ not import the B-surface package (import-linter + skill layering).
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from caspian.catalog import Capability
 from caspian.core.commands import Command, Host, Typing
 from caspian.core.errors import DecodeError
 from caspian.core.overlap import OverlapDecision, drain_transition
-from caspian.core.ports import AdapterPort, Connection, HostPort, RawInbound, Result, Sent
+from caspian.core.ports import (
+    AdapterPort,
+    Connection,
+    HostPort,
+    RawInbound,
+    Result,
+    Sent,
+    TransportPort,
+)
 from caspian.core.predicates import evaluate
 from caspian.core.step import StepResult, StepState, step
 from caspian.core.types import App, Event, Rule
-
-
-class Transport(Protocol):
-    def dispatch(self, sent: Sent) -> Result: ...
 
 
 class ProcessInterpreter:
@@ -34,7 +36,7 @@ class ProcessInterpreter:
         connection: Connection,
         *,
         host: HostPort | None = None,
-        transport: Transport | None = None,
+        transport: TransportPort | None = None,
     ) -> None:
         self._app = app
         self._adapter = adapter

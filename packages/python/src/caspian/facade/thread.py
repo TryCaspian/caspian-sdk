@@ -71,16 +71,20 @@ class Thread:
         return Stream(self, min_chars=min_chars, throttle=throttle)
 
     def post(self, text: str, *, actions: tuple[Any, ...] = ()) -> None:
-        """Enqueue a Post command."""
+        """Answer the inbound message that started this turn.
+
+        Hosted email uses this as a threaded reply (In-Reply-To). For a new
+        conversation that must not thread, use ``send``.
+        """
         self._commands.append(
             Post(thread_id=self.thread_id, text=text, actions=_to_buttons(actions))
         )
 
     def send(self, text: str, *, actions: tuple[Any, ...] = ()) -> None:
-        """Send WITHOUT threading, even mid-conversation.
+        """Start a new message that is not a reply to the inbound turn.
 
-        post() answers the message that triggered the turn; use this for an
-        unprompted message that should start its own thread.
+        ``post`` answers the message that triggered the handler. Use ``send``
+        for an unprompted message that should start its own thread.
         """
         self._commands.append(
             Post(
@@ -92,7 +96,7 @@ class Thread:
         )
 
     def reply(self, reply_to: str, text: str, *, actions: tuple[Any, ...] = ()) -> None:
-        """Enqueue a Reply command (threaded reply to a specific message)."""
+        """Reply to a specific message id (platform thread / quote)."""
         self._commands.append(
             Reply(
                 thread_id=self.thread_id,

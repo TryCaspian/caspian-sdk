@@ -19,6 +19,7 @@ from caspian.adapters.voice import VoiceAdapter
 from caspian.adapters.whatsapp import WhatsAppAdapter
 from caspian.adapters.x import XAdapter
 from caspian.catalog import CHANNELS
+from caspian.core.ports import AdapterPort
 
 # Registry: channel name → adapter class. Used by the facade/runner to look up
 # the right pack for a connection.
@@ -44,9 +45,9 @@ if set(_ADAPTERS) != set(CHANNELS):
 REGISTRY: dict[str, type] = dict(_ADAPTERS)
 
 
-def get_adapter(channel: str) -> object:
+def get_adapter(channel: str) -> AdapterPort:
     """Instantiate the adapter for a channel name. Raises KeyError if unknown."""
-    return REGISTRY[channel]()
+    return REGISTRY[channel]()  # type: ignore[no-any-return]
 
 
 __all__ = [
