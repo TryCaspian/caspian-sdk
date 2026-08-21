@@ -89,5 +89,51 @@
         }
       ]
     }
+  },
+  {
+    "name": "onMessage command is first token",
+    "method": "onMessage",
+    "options": {"channel": "telegram", "command": "/help"},
+    "handler_id": "onMessage:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {
+            "op": "and",
+            "left": {
+              "op": "and",
+              "left": {"op": "kind", "kind": "message"},
+              "right": {"op": "channel", "channels": ["telegram"]}
+            },
+            "right": {"op": "command", "names": ["help"]}
+          },
+          "overlap": {"policy": "queue", "bound": 16},
+          "handler_id": "onMessage:0"
+        }
+      ]
+    }
+  },
+  {
+    "name": "onAction data matches callback payload",
+    "method": "onAction",
+    "options": {"channel": "telegram", "data": "story"},
+    "handler_id": "onAction:0",
+    "expected_app": {
+      "rules": [
+        {
+          "predicate": {
+            "op": "and",
+            "left": {
+              "op": "and",
+              "left": {"op": "kind", "kind": "action"},
+              "right": {"op": "channel", "channels": ["telegram"]}
+            },
+            "right": {"op": "data", "values": ["story"]}
+          },
+          "overlap": {"policy": "drop", "bound": 16},
+          "handler_id": "onAction:0"
+        }
+      ]
+    }
   }
 ]

@@ -1,0 +1,67 @@
+"""Adapters package — channel packs. The only code that knows a platform exists.
+
+Each channel is `pack(parse, plan, verify)`. Overlap, capabilities, and the
+colon thread codec come from `caspian.catalog`. Adding a channel = a catalog
+row plus parse + plan here.
+"""
+
+from __future__ import annotations
+
+from caspian.adapters.discord import DiscordAdapter
+from caspian.adapters.email import EmailAdapter
+from caspian.adapters.imessage import IMessageAdapter
+from caspian.adapters.linear import LinearAdapter
+from caspian.adapters.messenger import MessengerAdapter
+from caspian.adapters.slack import SlackAdapter
+from caspian.adapters.sms import SmsAdapter
+from caspian.adapters.telegram import TelegramAdapter
+from caspian.adapters.voice import VoiceAdapter
+from caspian.adapters.whatsapp import WhatsAppAdapter
+from caspian.adapters.x import XAdapter
+from caspian.catalog import CHANNELS
+from caspian.core.ports import AdapterPort
+
+# Registry: channel name → adapter class. Used by the facade/runner to look up
+# the right pack for a connection.
+_ADAPTERS: dict[str, type] = {
+    "telegram": TelegramAdapter,
+    "slack": SlackAdapter,
+    "discord": DiscordAdapter,
+    "email": EmailAdapter,
+    "whatsapp": WhatsAppAdapter,
+    "messenger": MessengerAdapter,
+    "sms": SmsAdapter,
+    "voice": VoiceAdapter,
+    "imessage": IMessageAdapter,
+    "x": XAdapter,
+    "linear": LinearAdapter,
+}
+
+if set(_ADAPTERS) != set(CHANNELS):
+    raise RuntimeError(
+        f"adapter map {sorted(_ADAPTERS)} != catalog {sorted(CHANNELS)}"
+    )
+
+REGISTRY: dict[str, type] = dict(_ADAPTERS)
+
+
+def get_adapter(channel: str) -> AdapterPort:
+    """Instantiate the adapter for a channel name. Raises KeyError if unknown."""
+    return REGISTRY[channel]()  # type: ignore[no-any-return]
+
+
+__all__ = [
+    "REGISTRY",
+    "DiscordAdapter",
+    "EmailAdapter",
+    "IMessageAdapter",
+    "LinearAdapter",
+    "MessengerAdapter",
+    "SlackAdapter",
+    "SmsAdapter",
+    "TelegramAdapter",
+    "VoiceAdapter",
+    "WhatsAppAdapter",
+    "XAdapter",
+    "get_adapter",
+]
