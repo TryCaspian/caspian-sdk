@@ -197,3 +197,35 @@ def test_messenger_help_plans_send() -> None:
         "messenger", body, {"X-Hub-Signature-256": "sha256=" + digest}
     )
     assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
+
+
+def test_imessage_help_plans_send() -> None:
+    from examples.imessage.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    webhook_secret = "shh"
+    cx.channels.add(
+        "imessage",
+        via="self-host",
+        api_key="sekret",
+        webhook_secret=webhook_secret,
+        relay_url="https://relay.example",
+        bot_token="local",
+    )
+    register(cx)
+    body = json.dumps(
+        {
+            "type": "new-message",
+            "data": {
+                "guid": "abc-123",
+                "text": "/help",
+                "handle": {"address": "+15551234567"},
+                "chats": [{"guid": "iMessage;-;+15551234567"}],
+                "isFromMe": False,
+            },
+        }
+    ).encode()
+    digest = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+    results = cx.handle("imessage", body, {"X-Relay-Signature": digest})
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
