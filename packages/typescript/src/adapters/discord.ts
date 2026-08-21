@@ -16,6 +16,7 @@ import {
 } from "./discord/ids.ts"
 import { parseDiscordUpdate } from "./discord/parse.ts"
 import { planAck, planCommand } from "./discord/execute.ts"
+import { capabilitiesOf } from "../catalog.ts"
 
 export const discord = () => ({
   name: "discord" as const,
@@ -25,20 +26,7 @@ export const discord = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => [
-    "receive",
-    "reply",
-    "send",
-    "media",
-    "buttons",
-    "embeds",
-    "react",
-    "edit",
-    "delete",
-    "typing",
-    "modals",
-    "pin",
-  ],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("discord"),
   format: (text: string): string => text.replaceAll("`", "\\`"),
   openModal: undefined as never,
 })

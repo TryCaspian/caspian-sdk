@@ -8,6 +8,7 @@ import { ThreadId } from "../core/ids.ts"
 import { httpLayer, type AdapterFetch } from "./http.ts"
 import type { HttpFormCall, PlannedCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
+import { capabilitiesOf } from "../catalog.ts"
 import {
   configString,
   messageDefaults,
@@ -145,7 +146,7 @@ export const sms = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => ["receive", "reply", "send", "media"],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("sms"),
   format: (text: string): string => text,
   openModal: undefined as never,
 })

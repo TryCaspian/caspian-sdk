@@ -7,6 +7,7 @@ import { ThreadId } from "../core/ids.ts"
 import { httpLayer, type AdapterFetch } from "./http.ts"
 import type { HttpJsonCall, PlannedCall } from "./plan.ts"
 import { recordingLayer, skippedCommand } from "./recording.ts"
+import { capabilitiesOf } from "../catalog.ts"
 import {
   asJsonObject,
   buttonData,
@@ -254,15 +255,7 @@ export const whatsapp = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => [
-    "receive",
-    "reply",
-    "send",
-    "media",
-    "buttons",
-    "react",
-    "receipts",
-  ],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("whatsapp"),
   format: (text: string): string => text,
   openModal: undefined as never,
 })

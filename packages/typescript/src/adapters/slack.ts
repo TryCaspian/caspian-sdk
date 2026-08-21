@@ -16,6 +16,7 @@ import {
 } from "./slack/ids.ts"
 import { parseSlackUpdate } from "./slack/parse.ts"
 import { planAck, planCommand } from "./slack/execute.ts"
+import { capabilitiesOf } from "../catalog.ts"
 
 export const slack = () => ({
   name: "slack" as const,
@@ -25,20 +26,7 @@ export const slack = () => ({
   decodeThreadId,
   planCommand,
   planAck,
-  capabilities: (): ReadonlyArray<string> => [
-    "receive",
-    "reply",
-    "send",
-    "media",
-    "buttons",
-    "blocks",
-    "react",
-    "edit",
-    "delete",
-    "threading",
-    "modals",
-    "history",
-  ],
+  capabilities: (): ReadonlyArray<string> => capabilitiesOf("slack"),
   format: (text: string): string =>
     text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
   openModal: undefined as never,
