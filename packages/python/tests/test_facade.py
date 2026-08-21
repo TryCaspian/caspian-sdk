@@ -137,3 +137,17 @@ class TestThread:
         t.post("hi")
         t.react("msg1", "👍")
         assert len(t.commands) == 3
+
+
+def test_hosted_defaults_to_the_real_gateway() -> None:
+    """Caspian(api_key=...) with no base_url must target the hosted gateway.
+
+    The facade's own empty-string default used to override the client's
+    DEFAULT_BASE_URL, so the minimal quickstart failed on its first request.
+    """
+    from caspian import Caspian
+    from caspian.hosted.client import DEFAULT_BASE_URL
+
+    cx = Caspian(api_key="k")
+    assert cx._gateway_client._base_url == DEFAULT_BASE_URL
+    assert cx._gateway_client._base_url.startswith("https://")
