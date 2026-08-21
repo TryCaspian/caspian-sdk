@@ -168,11 +168,19 @@ test("binary init project --path writes that folder, not cwd", async () => {
   )
 })
 
-test("binary init project --new is a TODO and does not write repo .env", async () => {
+test("binary init project --new --stack writes an app and .env", async () => {
   const secret = mkdtempSync(join(tmpdir(), "caspian-secret-"))
   const cwd = mkdtempSync(join(tmpdir(), "caspian-proj-"))
   const proc = Bun.spawn(
-    ["bun", join(import.meta.dir, "../src/main.ts"), "init", "project", "--new"],
+    [
+      "bun",
+      join(import.meta.dir, "../src/main.ts"),
+      "init",
+      "project",
+      "--new",
+      "--stack",
+      "openai-python",
+    ],
     {
       cwd,
       env: {
@@ -186,11 +194,23 @@ test("binary init project --new is a TODO and does not write repo .env", async (
     },
   )
   const out = await new Response(proc.stdout).text()
+  const err = await new Response(proc.stderr).text()
   expect(await proc.exited).toBe(0)
-  expect(out).toContain("TODO")
-  expect(out).toContain("TypeScript SDK")
-  expect(existsSync(join(cwd, ".env"))).toBe(false)
+  expect(err).toBe("")
+  expect(out).toContain("openai-python")
+  expect(existsSync(join(cwd, "main.py"))).toBe(true)
+  expect(existsSync(join(cwd, "pyproject.toml"))).toBe(true)
+  expect(readFileSync(join(cwd, "main.py"), "utf8")).toContain("from agents import")
+  expect(parseDotenv(readFileSync(join(cwd, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
+    "ck_test",
+  )
+  expect(parseDotenv(readFileSync(join(cwd, ".env"), "utf8"))["OPENAI_API_KEY"]).toBe(
+    "",
+  )
   expect(parseDotenv(readFileSync(join(secret, ".env"), "utf8"))["CASPIAN_API_KEY"]).toBe(
     "ck_test",
   )
+  expect(
+    parseDotenv(readFileSync(join(secret, ".env"), "utf8"))["OPENAI_API_KEY"],
+  ).toBeUndefined()
 })

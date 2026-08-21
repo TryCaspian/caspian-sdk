@@ -2,6 +2,7 @@
 /**
  * caspian — thin Effect client of the rewrite B surface.
  */
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import * as readline from "node:readline"
 import {
@@ -24,6 +25,7 @@ import {
   AGENT_PLAYBOOK_PATH,
   ASK_PROMPT,
   failAsk,
+  failStackAsk,
   parseInitChoice,
   parseProjectChoice,
   projectPathPrompt,
@@ -34,6 +36,7 @@ import type { InitKind } from "./intent.ts"
 import { runLogin, type LoginIO } from "./login.ts"
 import { planIntent } from "./plan.ts"
 import { runPlan } from "./run.ts"
+import { ASK_STACK, parseStackChoice, type InitStack, type ScaffoldFile } from "./scaffold.ts"
 
 const credsOf = (flagKey: string, flagGateway: string) =>
   resolveCredentials({
@@ -66,8 +69,28 @@ const writeProjectEnv = (
   values: {
     readonly CASPIAN_API_KEY: string
     readonly CASPIAN_BASE_URL: string
+    readonly OPENAI_API_KEY?: string
   },
-) => writeEnvFileEffect(join(dir, ".env"), values)
+) => {
+  const env: { [key: string]: string } = {
+    CASPIAN_API_KEY: values.CASPIAN_API_KEY,
+    CASPIAN_BASE_URL: values.CASPIAN_BASE_URL,
+  }
+  if (values.OPENAI_API_KEY !== undefined) {
+    env["OPENAI_API_KEY"] = values.OPENAI_API_KEY
+  }
+  return writeEnvFileEffect(join(dir, ".env"), env)
+}
+
+const writeFiles = (dir: string, files: ReadonlyArray<ScaffoldFile>) =>
+  Effect.gen(function* () {
+    for (const file of files) {
+      yield* writeTextFileEffect(join(dir, file.path), file.contents)
+    }
+  })
+
+const occupied = (dir: string): boolean =>
+  existsSync(join(dir, "package.json")) || existsSync(join(dir, "pyproject.toml"))
 
 const writePlaybook = (text: string) =>
   writeTextFileEffect(AGENT_PLAYBOOK_PATH, text)
@@ -104,10 +127,19 @@ const chooseKind = (): Effect.Effect<InitKind, UsageError> => {
 }
 
 const chooseProject = (cwd: string): Effect.Effect<ProjectTarget, UsageError> => {
-  if (!isTty()) return Effect.succeed({ _tag: "dir", path: cwd })
+  if (!isTty()) return Effect.succeed({ path: cwd, scaffold: false })
   return Effect.map(askLine(projectPathPrompt(cwd)), (answer) =>
     parseProjectChoice(answer, cwd),
   )
+}
+
+const chooseStack = (): Effect.Effect<InitStack, UsageError> => {
+  if (!isTty()) return Effect.fail(failStackAsk())
+  return Effect.gen(function* () {
+    const stack = parseStackChoice(yield* askLine(ASK_STACK))
+    if (stack === undefined) return yield* Effect.fail(failStackAsk())
+    return stack
+  })
 }
 
 const openUrl = (url: string): void => {
@@ -173,9 +205,12 @@ const program = Effect.gen(function* () {
       login: loginIO(creds.apiKey),
       writeCliSecret,
       writeProjectEnv,
+      writeFiles,
       writePlaybook,
       chooseKind,
       chooseProject,
+      chooseStack,
+      occupied,
       cwd: process.cwd(),
       cliSecretPath: cliSecretPath(),
       ...(creds.apiKey !== undefined && creds.apiKey !== ""

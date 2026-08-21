@@ -4,9 +4,8 @@
  *   caspian init          asks: cli, project, or agent
  *   caspian init cli      this machine: CLI secret in ~/.caspian/.env
  *   caspian init project  asks which folder (default: cwd) and writes .env there
- *   caspian init project --new
- *     TODO(init-project-scaffold): create a TypeScript SDK or Python SDK app
- *     (package files, sample bot). Not implemented yet.
+ *   caspian init project --new [--stack STACK] [--path DIR]
+ *     scaffold a hosted-email agent (openai-python / openai-ts / mastra / ai-sdk)
  *   caspian init agent    an AI agent: CLI secret + ./.env + .caspian/AGENT.md
  *
  * Sign-in is the same device-auth as caspian login.
@@ -17,10 +16,20 @@ import { DASHBOARD_URL, UsageError } from "./errors.ts"
 import { runLogin, type LoginIO, type LoginResult } from "./login.ts"
 import type { InitKind } from "./intent.ts"
 import type { InitPlan, LoginPlan } from "./plan.ts"
+import {
+  ASK_STACK_NEEDED,
+  filesFor,
+  occupiedReason,
+  parseStackChoice,
+  runHint,
+  type InitStack,
+  type ScaffoldFile,
+} from "./scaffold.ts"
 
 export type SecretValues = {
   readonly CASPIAN_API_KEY: string
   readonly CASPIAN_BASE_URL: string
+  readonly OPENAI_API_KEY?: string
 }
 
 export const AGENT_PLAYBOOK_PATH = ".caspian/AGENT.md"
@@ -69,9 +78,10 @@ export const parseInitChoice = (raw: string): InitKind | undefined => {
   return undefined
 }
 
-export type ProjectTarget =
-  | { readonly _tag: "dir"; readonly path: string }
-  | { readonly _tag: "new" }
+export type ProjectTarget = {
+  readonly path: string
+  readonly scaffold: boolean
+}
 
 export const projectPathPrompt = (cwd: string): string =>
   [
@@ -79,25 +89,17 @@ export const projectPathPrompt = (cwd: string): string =>
     "",
     `  Enter        this folder (${cwd})`,
     "  <path>       another folder",
-    "  new          scaffold TypeScript/Python SDK project (TODO — not yet)",
+    "  new          scaffold a hosted-email agent (asks stack)",
     "",
     `Project path [${cwd}]: `,
   ].join("\n")
 
 export const parseProjectChoice = (raw: string, cwd: string): ProjectTarget => {
   const token = raw.trim()
-  if (token === "" || token === ".") return { _tag: "dir", path: cwd }
-  if (token.toLowerCase() === "new") return { _tag: "new" }
-  return { _tag: "dir", path: resolve(cwd, token) }
+  if (token === "" || token === ".") return { path: cwd, scaffold: false }
+  if (token.toLowerCase() === "new") return { path: cwd, scaffold: true }
+  return { path: resolve(cwd, token), scaffold: false }
 }
-
-/** TODO(init-project-scaffold): TypeScript SDK / Python SDK app files. */
-export const NEW_PROJECT_TODO = [
-  "TODO: scaffold a new Caspian app (TypeScript SDK or Python SDK) is not implemented yet.",
-  "Use an existing folder for now:",
-  "  caspian init project              (asks; default is this folder)",
-  "  caspian init project --path DIR",
-].join("\n")
 
 export type InitIO = {
   readonly login: LoginIO
@@ -108,9 +110,15 @@ export type InitIO = {
     dir: string,
     values: SecretValues,
   ) => Effect.Effect<void, UsageError>
+  readonly writeFiles: (
+    dir: string,
+    files: ReadonlyArray<ScaffoldFile>,
+  ) => Effect.Effect<void, UsageError>
   readonly writePlaybook: (text: string) => Effect.Effect<void, UsageError>
   readonly chooseKind: () => Effect.Effect<InitKind, UsageError>
   readonly chooseProject: (cwd: string) => Effect.Effect<ProjectTarget, UsageError>
+  readonly chooseStack: () => Effect.Effect<InitStack, UsageError>
+  readonly occupied: (dir: string) => boolean
   readonly cwd: string
   readonly cliSecretPath: string
   readonly existingApiKey?: string
@@ -123,7 +131,7 @@ export type InitResult = {
   readonly api_key: string
   readonly project_id: string
   readonly projectPath: string
-  readonly scaffoldTodo: boolean
+  readonly stack: InitStack | ""
   readonly lines: ReadonlyArray<string>
 }
 
@@ -140,7 +148,7 @@ const nextSteps = (
   kind: InitKind,
   cliPath: string,
   projectPath: string,
-  scaffoldTodo: boolean,
+  stack: InitStack | "",
 ): ReadonlyArray<string> => {
   switch (kind) {
     case "cli":
@@ -150,10 +158,13 @@ const nextSteps = (
         `Add credit:  ${DASHBOARD_URL}`,
       ]
     case "project":
-      if (scaffoldTodo) {
+      if (stack !== "") {
         return [
-          `CLI secret stored in ${cliPath}.`,
-          NEW_PROJECT_TODO,
+          `Wrote a ${stack} app in ${projectPath}.`,
+          `Set OPENAI_API_KEY in ${projectPath}/.env`,
+          `Next: ${runHint(stack)}`,
+          "Then: caspian channels add email",
+          `Add credit:  ${DASHBOARD_URL}`,
         ]
       }
       return [
@@ -187,14 +198,39 @@ const projectTargetOf = (
   kind: InitKind,
 ): Effect.Effect<ProjectTarget, UsageError> => {
   if (kind !== "project") {
-    return Effect.succeed({ _tag: "dir", path: io.cwd })
+    return Effect.succeed({ path: io.cwd, scaffold: false })
   }
-  if (plan.fresh) return Effect.succeed({ _tag: "new" })
+  if (plan.fresh) {
+    const path = plan.path !== "" ? resolve(io.cwd, plan.path) : io.cwd
+    return Effect.succeed({ path, scaffold: true })
+  }
   if (plan.path !== "") {
     return Effect.succeed(parseProjectChoice(plan.path, io.cwd))
   }
   return io.chooseProject(io.cwd)
 }
+
+const stackOf = (
+  plan: InitPlan,
+  io: InitIO,
+  scaffold: boolean,
+): Effect.Effect<InitStack | "", UsageError> => {
+  if (!scaffold) return Effect.succeed("")
+  if (plan.stack !== "") {
+    const parsed = parseStackChoice(plan.stack)
+    if (parsed === undefined) {
+      return Effect.fail(new UsageError({ reason: ASK_STACK_NEEDED }))
+    }
+    return Effect.succeed(parsed)
+  }
+  return io.chooseStack()
+}
+
+const envFor = (
+  values: SecretValues,
+  stack: InitStack | "",
+): SecretValues =>
+  stack === "" ? values : { ...values, OPENAI_API_KEY: "" }
 
 export const runInit = (
   plan: InitPlan,
@@ -203,9 +239,20 @@ export const runInit = (
   Effect.gen(function* () {
     const kind: InitKind =
       plan.kind === "ask" ? yield* io.chooseKind() : plan.kind
+    if (plan.fresh && kind !== "project") {
+      return yield* Effect.fail(
+        new UsageError({ reason: "use: caspian init project --new" }),
+      )
+    }
     const target = yield* projectTargetOf(plan, io, kind)
-    const scaffoldTodo = kind === "project" && target._tag === "new"
-    const projectPath = target._tag === "dir" ? target.path : ""
+    const projectPath = target.path
+    const stack = yield* stackOf(plan, io, target.scaffold)
+
+    if (stack !== "" && io.occupied(projectPath) && !plan.force) {
+      return yield* Effect.fail(
+        new UsageError({ reason: occupiedReason(projectPath) }),
+      )
+    }
 
     const haveKey =
       io.existingApiKey !== undefined && io.existingApiKey !== ""
@@ -233,9 +280,12 @@ export const runInit = (
       CASPIAN_BASE_URL: baseUrl,
     }
     yield* io.writeCliSecret(values)
-    if ((kind === "project" || kind === "agent") && !scaffoldTodo) {
+    if (kind === "project" || kind === "agent") {
       const dir = kind === "agent" ? io.cwd : projectPath
-      yield* io.writeProjectEnv(dir, values)
+      yield* io.writeProjectEnv(dir, envFor(values, stack))
+    }
+    if (stack !== "") {
+      yield* io.writeFiles(projectPath, filesFor(stack))
     }
     if (kind === "agent") {
       yield* io.writePlaybook(AGENT_PLAYBOOK)
@@ -246,7 +296,7 @@ export const runInit = (
       "",
       signedIn ? "Signed in." : "Using existing CASPIAN_API_KEY.",
       ...(projectId !== "" ? [`Project ${projectId}`] : []),
-      ...nextSteps(kind, io.cliSecretPath, projectPath, scaffoldTodo),
+      ...nextSteps(kind, io.cliSecretPath, projectPath, stack),
     ]
     return {
       kind,
@@ -254,9 +304,11 @@ export const runInit = (
       api_key: apiKey,
       project_id: projectId,
       projectPath,
-      scaffoldTodo,
+      stack,
       lines,
     }
   })
 
 export const failAsk = (): UsageError => new UsageError({ reason: ASK_NEEDED })
+export const failStackAsk = (): UsageError =>
+  new UsageError({ reason: ASK_STACK_NEEDED })

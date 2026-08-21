@@ -80,6 +80,27 @@ class TestExecute:
         assert commands[0].text == "hello"  # type: ignore[union-attr]
         assert commands[0].thread_id == "tg:1"  # type: ignore[union-attr]
 
+    def test_bound_execute_enqueues_on_the_handler_thread(self) -> None:
+        """Parity with TypeScript: execute() must land on the handler thread.
+
+        Hosted turns collect Commands from the handler's Thread. A throwaway
+        Thread that is only returned from execute() is never sent.
+        """
+        handler = Thread(thread_id=ThreadId("tg:1"))
+        tools = ToolSet(thread=handler)
+        returned = tools.execute("post_message", {"text": "hello"})
+        assert handler.commands == returned
+        assert handler.commands[0].text == "hello"  # type: ignore[union-attr]
+
+    def test_send_dm_enqueues_on_the_handler_thread_with_the_named_id(self) -> None:
+        handler = Thread(thread_id=ThreadId("email:1"))
+        tools = ToolSet(thread=handler)
+        tools.execute("send_dm", {"thread_id": "email:other", "text": "secret"})
+        assert len(handler.commands) == 1
+        assert handler.commands[0].tag == "Initiate"  # type: ignore[union-attr]
+        assert handler.commands[0].thread_id == "email:other"  # type: ignore[union-attr]
+        assert handler.commands[0].text == "secret"  # type: ignore[union-attr]
+
     def test_unbound_takes_the_thread_id_from_the_model(self) -> None:
         tools = ToolSet()
         commands = tools.execute("post_message", {"text": "hi", "thread_id": "slack:C1"})
