@@ -12,6 +12,7 @@ export type { OnActionOptions, OnMessageOptions } from "./facade/options.ts"
 export type { Action, Attachment, Block, Command, Event, Message } from "./core/index.ts"
 export type { HandleResult } from "./interpreters/process.ts"
 export type { Thread, Stream } from "./facade/thread.ts"
+export { AdapterError, DecodeError, ProvisionError } from "./core/errors.ts"
 export type { ToolPreset, ToolSet, ToolsOptions } from "./tools/derive.ts"
 export {
   hostedHttpLayer,

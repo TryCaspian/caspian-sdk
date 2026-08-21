@@ -72,3 +72,38 @@ jobs:
 
       - name: Test
         run: bun test
+
+  typescript-cli:
+    name: TypeScript CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # The CLI depends on caspian via file:../typescript (source exports).
+      # tsc follows into packages/typescript/src, so that package must have its
+      # own node_modules (effect) installed — CLI install alone is not enough.
+      - name: Install TypeScript SDK dependencies
+        working-directory: packages/typescript
+        run: bun install --frozen-lockfile
+
+      - name: Install CLI dependencies
+        working-directory: packages/cli
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: packages/cli
+        run: bun run typecheck
+
+      - name: Lint
+        working-directory: packages/cli
+        run: bun run lint
+
+      - name: Test
+        working-directory: packages/cli
+        run: bun test
