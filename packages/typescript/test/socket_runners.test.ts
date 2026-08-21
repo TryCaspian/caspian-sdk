@@ -9,7 +9,6 @@ import * as Effect from "effect/Effect"
 import { DiscordSocket, INTENTS } from "../src/adapters/discord/socket.ts"
 import { SlackSocket } from "../src/adapters/slack/socket.ts"
 import type { JsonObject } from "../src/core/json.ts"
-import type { Sent } from "../src/core/ports.ts"
 import { SocketSession, type GatewaySocket } from "../src/interpreters/socket.ts"
 import type { Transport } from "../src/interpreters/transport.ts"
 
@@ -42,7 +41,7 @@ const collect = (into: unknown[]) => (body: unknown) =>
   })
 
 const urlTransport = (response: JsonObject): Transport => ({
-  dispatch: (_sent: Sent) =>
+  dispatch: () =>
     Effect.succeed({
       ok: true as const,
       message_id: "",

@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [main, feat/rewrite, feat/rewrite-ts, feat/sdk-rewrite-latest]
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -13,12 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  python-lint:
+    name: Python lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
   python:
     name: Python SDK
-    # No job-level `if` here. hashFiles() is unavailable in jobs.<id>.if (only
-    # github, needs, vars, inputs and the status functions are), so a condition
-    # using it makes the whole workflow fail to compile: every run ends in 0s
-    # with no jobs created and no log to read.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -36,9 +51,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync
-
-      - name: Lint (ruff)
-        run: uv run ruff check .
 
       - name: Test
         run: uv run pytest

@@ -2,13 +2,8 @@ import base64
 import hashlib
 import hmac
 import json
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))
-
-from examples.serve import challenge_response
+from examples.serve import challenge_response, crc_response
 
 
 def test_meta_subscribe_challenge_is_plain_text() -> None:
@@ -22,8 +17,6 @@ def test_meta_subscribe_challenge_is_plain_text() -> None:
 
 
 def test_x_crc_response_token() -> None:
-    from examples.serve import crc_response
-
     secret = "cons"
     token = "crc"
     body, status, content_type = crc_response(token, consumer_secret=secret)
@@ -35,8 +28,6 @@ def test_x_crc_response_token() -> None:
 
 
 def test_crc_response_empty_secret_is_forbidden() -> None:
-    from examples.serve import crc_response
-
     body, status, content_type = crc_response("crc", consumer_secret="")
     assert status == 403
     assert body == b""
