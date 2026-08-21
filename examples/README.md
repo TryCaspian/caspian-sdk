@@ -32,7 +32,7 @@ See the [self-host adapter examples plan](../docs/superpowers/plans/2026-08-21-s
 | [linear](linear/) | `bot.py` | `handle("linear", …)` via `serve()` | `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `PORT` |
 | [x](x/) | `bot.py` | `handle("x", …)` via `serve(consumer_secret=…)` | `X_BEARER_TOKEN`, `X_CONSUMER_SECRET`, `PORT` |
 
-Run from `packages/python` so the `caspian` package resolves:
+Run from `packages/python` so the `caspian-sdk` package resolves (`from caspian import …`):
 
 ```bash
 cd packages/python

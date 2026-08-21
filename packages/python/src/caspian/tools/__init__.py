@@ -150,25 +150,35 @@ class ToolSet:
         return tools
 
     def execute(self, tool_name: str, args: dict[str, Any]) -> list[Command]:
-        """Execute a tool call, returning Commands (not platform HTTP)."""
+        """Execute a tool call, returning Commands (not platform HTTP).
+
+        When a thread is bound, commands are also enqueued there so a hosted
+        turn actually sends them — same as TypeScript ``tool.execute()``.
+        ``send_dm`` still names a different ``Command.thread_id``; it lands on
+        the handler thread's list, not a throwaway Thread.
+        """
         thread_id = ThreadId(
             args.get("thread_id", "")
             or (str(self._thread.thread_id) if self._thread else "")
         )
-        thread = Thread(thread_id=thread_id)
+        scratch = Thread(thread_id=thread_id)
 
         match tool_name:
             case "post_message":
-                thread.post(args["text"])
+                scratch.post(args["text"])
             case "edit_message":
-                thread.edit(args["message_id"], args["text"])
+                scratch.edit(args["message_id"], args["text"])
             case "add_reaction":
-                thread.react(args["message_id"], args["emoji"])
+                scratch.react(args["message_id"], args["emoji"])
             case "start_typing":
-                thread.typing()
+                scratch.typing()
             case "send_dm":
-                thread.initiate(args["text"])
+                scratch.initiate(args["text"])
             case _:
                 pass
 
-        return thread.commands
+        commands = scratch.commands
+        if self._thread is not None:
+            for command in commands:
+                self._thread.enqueue(command)
+        return commands

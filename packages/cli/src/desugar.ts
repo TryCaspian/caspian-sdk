@@ -8,6 +8,7 @@ import { DEFAULT_BASE_URL } from "caspian-sdk"
 import * as Effect from "effect/Effect"
 import { UsageError } from "./errors.ts"
 import type { Intent, Via } from "./intent.ts"
+import { INIT_STACKS, STACK_USAGE } from "./scaffold.ts"
 
 export { UsageError } from "./errors.ts"
 
@@ -28,7 +29,7 @@ export const helpText = (): string =>
   `${USAGE}
 
   caspian init [cli|project|agent] [--open] [--gateway URL] [--force]
-  caspian init project [PATH] [--path PATH] [--new]
+  caspian init project [PATH] [--path PATH] [--new] [--stack STACK]
   caspian login [--open] [--gateway URL]
   caspian channels add <channel> [--via hosted|self-host] [--name NAME]
   caspian channels ls
@@ -42,7 +43,8 @@ export const helpText = (): string =>
 init asks cli / project / agent. Pass a kind to skip the question.
 init cli stores the key in ~/.caspian/.env — not this repo's .env.
 init project asks which folder (default: this one) and writes .env there.
-  --new scaffolds a TypeScript/Python SDK app (TODO — not yet).
+  --new scaffolds a hosted-email agent (openai-python / openai-ts / mastra / ai-sdk).
+  --stack skips the stack question.
 init agent writes CLI secret, ./.env, and .caspian/AGENT.md.
 
 Hosted jobs (channels add/ls, call, threads) need a key:
@@ -222,8 +224,15 @@ const toIntent = (
     if (fresh && kind !== "project" && kind !== "ask") {
       return fail("use: caspian init project --new")
     }
-    if (fresh && path !== "") {
-      return fail("use: caspian init project --new   or a path, not both")
+    const stack = str(options, "stack")
+    if (stack !== "" && !fresh) {
+      return fail(STACK_USAGE)
+    }
+    if (
+      stack !== "" &&
+      !(INIT_STACKS as ReadonlyArray<string>).includes(stack)
+    ) {
+      return fail(STACK_USAGE)
     }
     return Effect.succeed({
       _tag: "Init",
@@ -233,6 +242,7 @@ const toIntent = (
       force: flag(options, "force"),
       path,
       fresh,
+      stack,
     })
   }
 

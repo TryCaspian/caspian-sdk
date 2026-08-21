@@ -13,7 +13,7 @@ caspian init                 # asks: cli, project, or agent
 caspian init cli             # CLI secret → ~/.caspian/.env
 caspian init project         # asks which folder (default: this one); writes .env
 caspian init project --path DIR
-caspian init project --new   # TODO: scaffold TypeScript/Python SDK app
+caspian init project --new --stack openai-python   # or openai-ts / mastra / ai-sdk
 caspian init agent           # CLI secret + ./.env + .caspian/AGENT.md
 caspian login                # sign in only; writes the CLI secret
 

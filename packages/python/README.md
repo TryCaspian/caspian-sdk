@@ -9,6 +9,8 @@ tokens.
 pip install caspian-sdk
 ```
 
+PyPI: https://pypi.org/project/caspian-sdk/
+
 Version 1.0.0 is a new API. It replaces the legacy `CommClient` (0.6.x); see
 the migration note below.
 
@@ -76,6 +78,8 @@ here; there is no drop-in path between the two.
 
 ## Links
 
+- PyPI: https://pypi.org/project/caspian-sdk/
+- npm (TypeScript): https://www.npmjs.com/package/caspian-sdk
 - Integration guide (written for coding agents): https://api.trycaspianai.com/SKILL.md
 - Docs: https://www.trycaspianai.com/docs/
 - Source and runnable examples for every channel:
