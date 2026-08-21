@@ -20,3 +20,13 @@ def test_discord_help_posts_menu() -> None:
     )
     result = cx.interpret().run(cx.app, event, channel_name="discord")
     assert any(getattr(c, "tag", "") == "Host" for c in result.commands)
+
+
+def test_slack_help_posts_menu() -> None:
+    from examples.slack.app import register
+
+    cx = Caspian(dispatch=False)
+    register(cx)
+    event = Message(thread_id=ThreadId("slack:C1"), text="/help", chat_kind="channel")
+    result = cx.interpret().run(cx.app, event, channel_name="slack")
+    assert any(getattr(c, "tag", "") == "Host" for c in result.commands)
