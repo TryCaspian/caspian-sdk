@@ -1,11 +1,11 @@
-# caspian (TypeScript)
+# caspian-sdk (TypeScript)
 
 Rewrite of the Caspian TypeScript SDK. You write a Chat SDK-shaped API. It
 desugars into a small Effect kernel. This package is not the legacy
 `CommClient`.
 
 ```ts
-import { Caspian } from "caspian"
+import { Caspian } from "caspian-sdk"
 
 const cx = new Caspian()
 
@@ -23,14 +23,14 @@ already means “message events.”
 
 `thread.post` enqueues a `Post` command. It does not call Telegram.
 
-Telegram lives in `caspian/telegram`: `parseTelegramUpdate` turns an Update
+Telegram lives in `caspian-sdk/telegram`: `parseTelegramUpdate` turns an Update
 into Events; `planTurn` turns Commands into Bot API method bodies.
 
 The other channels are the same shape — import the pack, not the facade:
 
 ```ts
-import { discord, discordHttpLayer } from "caspian/discord"
-import { slack, slackHttpLayer } from "caspian/slack"
+import { discord, discordHttpLayer } from "caspian-sdk/discord"
+import { slack, slackHttpLayer } from "caspian-sdk/slack"
 ```
 
 Also: `caspian/voice`, `caspian/email`, `caspian/sms`, `caspian/whatsapp`,

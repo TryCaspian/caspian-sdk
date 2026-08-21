@@ -1,6 +1,6 @@
 {
   "name": "caspian-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Caspian TypeScript SDK \u2014 one bot program across channels",
   "type": "module",
   "exports": {
