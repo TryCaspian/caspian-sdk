@@ -2,7 +2,8 @@
 
 Gives an [OpenClaw](https://github.com/openclaw/openclaw) agent real communication
 channels — Slack, Discord, Telegram, email, X, SMS — behind one `on_message`
-handler, via [caspian-sdk](https://github.com/TryCaspian/caspian-sdk).
+handler, via [caspian-sdk](https://pypi.org/project/caspian-sdk/)
+([npm](https://www.npmjs.com/package/caspian-sdk)).
 
 ## Install
 

@@ -70,6 +70,9 @@ Poll billing until `balance_cents` rises, then retry. Autopay:
 
 ## 2. Install
 
+Python: https://pypi.org/project/caspian-sdk/
+TypeScript: https://www.npmjs.com/package/caspian-sdk
+
 ```bash
 uv add caspian-sdk
 # or: pip install caspian-sdk
