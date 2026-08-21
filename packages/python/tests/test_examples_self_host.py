@@ -159,3 +159,41 @@ def test_whatsapp_help_plans_send() -> None:
         "whatsapp", body, {"X-Hub-Signature-256": "sha256=" + digest}
     )
     assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
+
+
+def test_messenger_help_plans_send() -> None:
+    from examples.messenger.app import register
+
+    rec = RecordingTransport()
+    cx = Caspian(transport=rec)
+    app_secret = "shh"
+    cx.channels.add(
+        "messenger",
+        via="self-host",
+        page_access_token="PTKN",
+        app_secret=app_secret,
+        bot_token="local",
+    )
+    register(cx)
+    body = json.dumps(
+        {
+            "object": "page",
+            "entry": [
+                {
+                    "id": "PAGE",
+                    "messaging": [
+                        {
+                            "sender": {"id": "PSID1"},
+                            "recipient": {"id": "PAGE"},
+                            "message": {"mid": "mid.1", "text": "/help"},
+                        }
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    digest = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    results = cx.handle(
+        "messenger", body, {"X-Hub-Signature-256": "sha256=" + digest}
+    )
+    assert any(r.is_ok and r.value.raw.get("transport") == "http_json" for r in results)
