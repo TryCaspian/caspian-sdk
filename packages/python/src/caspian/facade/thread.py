@@ -203,6 +203,10 @@ class Thread:
         """Enqueue a SetState command."""
         self._commands.append(SetState(thread_id=self.thread_id, key=key, value=value))
 
+    def enqueue(self, command: Command) -> None:
+        """Append a Command already built (tools). Handlers should use post/send/…."""
+        self._commands.append(command)
+
 
 class Stream:
     """A reply that is sent while it is still being written.

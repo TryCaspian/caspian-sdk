@@ -6,7 +6,6 @@ import { parseArgv } from "../src/desugar.ts"
 import { UsageError } from "../src/errors.ts"
 import {
   AGENT_PLAYBOOK,
-  NEW_PROJECT_TODO,
   parseInitChoice,
   parseProjectChoice,
   runInit,
@@ -14,6 +13,7 @@ import {
 } from "../src/init.ts"
 import type { LoginFetch } from "../src/login.ts"
 import { planIntent, type InitPlan } from "../src/plan.ts"
+import { occupiedReason } from "../src/scaffold.ts"
 
 const sync = <A, E>(effect: Effect.Effect<A, E>): A => Effect.runSync(effect)
 
@@ -34,6 +34,7 @@ const initPlan = (over: Partial<InitPlan> & Pick<InitPlan, "kind">): InitPlan =>
   force: false,
   path: "",
   fresh: false,
+  stack: "",
   ...over,
 })
 
@@ -63,16 +64,40 @@ test("init project path can be positional or --path", () => {
   }
 })
 
-test("init project --new is the scaffold TODO, not a path", () => {
-  const plan = sync(planIntent(sync(parseArgv(["init", "project", "--new"]))))
+test("init project --new takes --path and --stack", () => {
+  const plan = sync(
+    planIntent(
+      sync(
+        parseArgv([
+          "init",
+          "project",
+          "--new",
+          "--path",
+          "/tmp/app",
+          "--stack",
+          "openai-ts",
+        ]),
+      ),
+    ),
+  )
   expect(plan._tag).toBe("Init")
   if (plan._tag === "Init") {
     expect(plan.fresh).toBe(true)
-    expect(plan.path).toBe("")
+    expect(plan.path).toBe("/tmp/app")
+    expect(plan.stack).toBe("openai-ts")
   }
+})
+
+test("init project --stack without --new is rejected", () => {
+  expect(left(parseArgv(["init", "project", "--stack", "openai-ts"])).reason).toContain(
+    "--stack",
+  )
+})
+
+test("init project --new --stack rejects an unknown stack", () => {
   expect(
-    left(parseArgv(["init", "project", "--new", "--path", "/tmp"])).reason,
-  ).toContain("not both")
+    left(parseArgv(["init", "project", "--new", "--stack", "langchain"])).reason,
+  ).toContain("openai-python")
 })
 
 test("init project and agent are Plans", () => {
@@ -103,12 +128,15 @@ test("parseInitChoice accepts numbers and names", () => {
 })
 
 test("parseProjectChoice defaults to cwd, new is scaffold, else a path", () => {
-  expect(parseProjectChoice("", "/work")).toEqual({ _tag: "dir", path: "/work" })
-  expect(parseProjectChoice(".", "/work")).toEqual({ _tag: "dir", path: "/work" })
-  expect(parseProjectChoice("new", "/work")).toEqual({ _tag: "new" })
+  expect(parseProjectChoice("", "/work")).toEqual({ path: "/work", scaffold: false })
+  expect(parseProjectChoice(".", "/work")).toEqual({ path: "/work", scaffold: false })
+  expect(parseProjectChoice("new", "/work")).toEqual({
+    path: "/work",
+    scaffold: true,
+  })
   expect(parseProjectChoice("apps/bot", "/work")).toEqual({
-    _tag: "dir",
     path: resolve("/work", "apps/bot"),
+    scaffold: false,
   })
 })
 
@@ -147,9 +175,13 @@ const ioOf = (
     writeEnv: () => Effect.void,
   },
   writePlaybook: () => Effect.void,
+  writeFiles: () => Effect.void,
   chooseKind: () =>
     Effect.fail(new UsageError({ reason: "should not ask" })),
-  chooseProject: () => Effect.succeed({ _tag: "dir", path: "/tmp/proj" }),
+  chooseProject: () => Effect.succeed({ path: "/tmp/proj", scaffold: false }),
+  chooseStack: () =>
+    Effect.fail(new UsageError({ reason: "should not ask stack" })),
+  occupied: () => false,
   cwd: "/tmp/proj",
   cliSecretPath: "/tmp/caspian-secret/.env",
   existingApiKey: "ck_existing",
@@ -227,24 +259,53 @@ test("init project writes CLI secret and .env in the chosen folder", async () =>
   expect(result.lines.join("\n")).toContain("/srv/bot/.env")
 })
 
-test("init project --new records the SDK scaffold TODO and does not write .env", async () => {
-  const project: Array<unknown> = []
+test("init project --new writes the stack files and .env with OPENAI_API_KEY", async () => {
+  const project: Array<{ dir: string; values: Record<string, string | undefined> }> =
+    []
+  const files: Array<{ dir: string; paths: string[] }> = []
   const result = await Effect.runPromise(
     runInit(
-      initPlan({ kind: "project", fresh: true }),
+      initPlan({ kind: "project", fresh: true, stack: "openai-python" }),
       ioOf({
         writeCliSecret: () => Effect.void,
         writeProjectEnv: (dir, values) =>
           Effect.sync(() => {
             project.push({ dir, values })
           }),
+        writeFiles: (dir, written) =>
+          Effect.sync(() => {
+            files.push({ dir, paths: written.map((file) => file.path) })
+          }),
       }),
     ),
   )
-  expect(result.scaffoldTodo).toBe(true)
-  expect(project).toEqual([])
-  expect(result.lines.join("\n")).toContain(NEW_PROJECT_TODO)
-  expect(result.lines.join("\n")).toContain("TypeScript SDK")
+  expect(result.stack).toBe("openai-python")
+  expect(result.projectPath).toBe("/tmp/proj")
+  expect(project[0]?.values["OPENAI_API_KEY"]).toBe("")
+  expect(files[0]?.paths).toContain("main.py")
+  expect(files[0]?.paths).toContain("pyproject.toml")
+  expect(result.lines.join("\n")).toContain("openai-python")
+  expect(result.lines.join("\n")).toContain("uv run main.py")
+})
+
+test("init project --new refuses an occupied folder unless --force", async () => {
+  const files: unknown[] = []
+  const error = left(
+    runInit(
+      initPlan({ kind: "project", fresh: true, stack: "openai-ts" }),
+      ioOf({
+        writeCliSecret: () => Effect.void,
+        writeProjectEnv: () => Effect.void,
+        writeFiles: (_dir, written) =>
+          Effect.sync(() => {
+            files.push(written)
+          }),
+        occupied: () => true,
+      }),
+    ),
+  )
+  expect(error.reason).toBe(occupiedReason("/tmp/proj"))
+  expect(files).toEqual([])
 })
 
 test("init agent writes CLI secret, repo .env, and the agent playbook", async () => {
