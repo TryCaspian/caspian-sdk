@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from caspian.connection import Connection
 from caspian.core.commands import Command
 from caspian.core.errors import CaspianError
-from caspian.core.types import ConnectionId, Event, ThreadId
+from caspian.core.types import Event, ThreadId
 
 
 class Result:
@@ -88,20 +89,6 @@ class Sent:
     def __init__(self, message_id: str = "", raw: dict[str, Any] | None = None) -> None:
         self.message_id = message_id
         self.raw = raw or {}
-
-
-class Connection:
-    """A provisioned channel connection. Opaque config for the adapter."""
-
-    def __init__(
-        self,
-        id: ConnectionId,
-        channel: str,
-        config: dict[str, Any] | None = None,
-    ) -> None:
-        self.id = id
-        self.channel = channel
-        self.config = config or {}
 
 
 class AdapterPort(Protocol):

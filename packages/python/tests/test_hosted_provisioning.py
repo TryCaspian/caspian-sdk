@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from caspian.connection import Connection
 from caspian.hosted.client import FakeGatewayClient
 from caspian.hosted.provisioning import (
     Channels,
     DeviceStart,
     DeviceToken,
-    HostedConnection,
     HostedProvisioning,
     InstallLink,
     WhatsAppOnboarding,
@@ -80,7 +80,7 @@ class TestConnections:
         result = prov.add_connection("discord", {"scope": "bot"})
         assert result.is_ok
         model = result.value
-        assert isinstance(model, HostedConnection)
+        assert isinstance(model, Connection)
         assert model.authorize_url == "https://discord/oauth"
         assert client.requests[-1].method == "POST"
         assert client.requests[-1].path == "/v1/connections/discord"

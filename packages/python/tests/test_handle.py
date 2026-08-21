@@ -31,28 +31,34 @@ class TestChannelManager:
     def test_add_hosted_default(self) -> None:
         cx = Caspian(dispatch=False)
         record = cx.channels.add("email")
-        assert record.channel == "email"
+        assert record.is_ok
+        assert record.value.channel == "email"
         assert "email" in cx.channels.added()
-        assert record.inbound_owner == "gateway"
+        assert record.value.inbound_owner == "gateway"
 
     def test_add_self_host_requires_token(self) -> None:
-        from caspian.provision import ProvisionError
-
         cx = Caspian(dispatch=False)
-        with pytest.raises(ProvisionError):
-            cx.channels.add("telegram", via="self-host")
+        result = cx.channels.add("telegram", via="self-host")
+        assert not result.is_ok
+        assert result.error is not None
+        assert result.error.tag == "ProvisionError"
+        assert "bot_token" in result.error.reason
 
     def test_unknown_channel_is_hosted_only_not_an_error(self) -> None:
         """The gateway speaks channels this SDK has no adapter for (bluesky,
         zulip, gmeet). Hosted must accept them; only self-host needs an adapter."""
         cx = Caspian(dispatch=False)
         record = cx.channels.add("myspace")  # hosted default
-        assert record.inbound_owner == "gateway"
+        assert record.is_ok
+        assert record.value.inbound_owner == "gateway"
 
-    def test_self_host_unknown_channel_raises(self) -> None:
+    def test_self_host_unknown_channel_is_provision_error(self) -> None:
         cx = Caspian(dispatch=False)
-        with pytest.raises(KeyError, match="cannot be self-hosted"):
-            cx.channels.add("myspace", via="self-host", bot_token="t")
+        result = cx.channels.add("myspace", via="self-host", bot_token="t")
+        assert not result.is_ok
+        assert result.error is not None
+        assert result.error.tag == "ProvisionError"
+        assert "cannot be self-hosted" in result.error.reason
 
     def test_adapter_and_connection_resolved(self) -> None:
         cx = Caspian(dispatch=False)

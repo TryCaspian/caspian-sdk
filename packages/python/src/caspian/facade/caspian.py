@@ -47,7 +47,8 @@ class Caspian:
     Self-host::
 
         cx = Caspian()
-        cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
+        added = cx.channels.add("telegram", via="self-host", bot_token=TG, webhook_url=URL)
+        # added is Result.ok(Connection) or Result.err(ProvisionError)
 
         @cx.on_message({"channel": "telegram"})
         def reply(thread, msg, ctx):

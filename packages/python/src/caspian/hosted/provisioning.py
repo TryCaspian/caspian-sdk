@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from caspian.connection import Connection, Via
 from caspian.core.ports import Result
 from caspian.hosted.client import GatewayClient, GatewayRequest, GatewayResponse
 
@@ -35,17 +36,6 @@ class DeviceToken(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     api_key: str = ""
     project_id: str = ""
-
-
-class HostedConnection(BaseModel):
-    """A provisioned channel connection as the gateway sees it."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    id: str = ""
-    channel: str = ""
-    status: str = ""
-    address: str = ""
-    authorize_url: str = ""
 
 
 class Channels(BaseModel):
@@ -263,9 +253,10 @@ class HostedProvisioning:
             return result
         body = self._body(result.value)
         return Result.ok(
-            HostedConnection(
+            Connection(
                 id=_str(body, "id"),
                 channel=_str(body, "channel"),
+                via=Via.HOSTED,
                 status=_str(body, "status"),
                 address=_str(body, "address"),
                 authorize_url=_str(body, "authorize_url"),

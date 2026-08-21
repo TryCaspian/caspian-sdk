@@ -27,7 +27,7 @@ from caspian.facade.caspian import Caspian
 from caspian.facade.host import FacadeHost
 from caspian.hosted.client import FakeGatewayClient
 from caspian.interpreters.transport import ChaosTransport, RecordingTransport
-from caspian.provision import ProvisionError, Via
+from caspian.provision import Via
 from caspian.tools import ToolSet
 
 
@@ -167,17 +167,15 @@ class TestProvisionSkillGates:
         from caspian.provision import Channels
 
         channels = Channels()
-        try:
-            channels.add("telegram")
-        except ProvisionError as exc:
-            assert "bot_token" in str(exc)
-        else:
-            raise AssertionError("hosted telegram must require a BotFather token")
+        got = channels.add("telegram")
+        assert isinstance(got, str)
+        assert "bot_token" in got
 
     def test_email_hosted_needs_no_token(self) -> None:
         from caspian.provision import Channels
 
         conn = Channels().add("email")
+        assert isinstance(conn, Connection)
         assert conn.via == Via.HOSTED
         assert conn.inbound_owner == "gateway"
 
@@ -185,6 +183,7 @@ class TestProvisionSkillGates:
         from caspian.provision import Channels
 
         conn = Channels().add("telegram", via="self-host", bot_token="123:ABC")
+        assert isinstance(conn, Connection)
         assert conn.inbound_owner == "local"
 
 
@@ -338,21 +337,23 @@ class TestHostedOnlyChannels:
 
         cm = ChannelManager()
         for channel in ("bluesky", "zulip", "gmeet", "rcs", "instagram"):
-            record = cm.add(channel)  # hosted is the default
+            result = cm.add(channel)  # hosted is the default
+            assert result.is_ok
+            record = result.value
             assert record.channel == channel
             assert record.inbound_owner == "gateway"
         assert cm.self_hostable("bluesky") is False
         assert cm.self_hostable("telegram") is True
 
     def test_self_host_without_adapter_fails_loudly(self) -> None:
-        import pytest
-
         from caspian.facade.channels import ChannelManager
 
         cm = ChannelManager()
-        with pytest.raises(KeyError) as exc:
-            cm.add("bluesky", via="self-host", bot_token="t")
-        assert "cannot be self-hosted" in str(exc.value)
+        result = cm.add("bluesky", via="self-host", bot_token="t")
+        assert not result.is_ok
+        assert result.error is not None
+        assert result.error.tag == "ProvisionError"
+        assert "cannot be self-hosted" in result.error.reason
 
     def test_hosted_only_channel_points_at_the_gateway_pipeline(self) -> None:
         import pytest

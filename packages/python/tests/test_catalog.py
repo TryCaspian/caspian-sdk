@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from caspian.adapters import REGISTRY
 from caspian.catalog import (
     CHANNELS,
@@ -14,9 +12,10 @@ from caspian.catalog import (
     needs_bot_token,
     socket_channels,
 )
+from caspian.connection import Connection
 from caspian.core.errors import ProvisionError as CoreProvisionError
 from caspian.facade.caspian import Caspian
-from caspian.provision import Channels, ProvisionError, Via
+from caspian.provision import Channels, Via
 
 
 def test_registry_is_catalog_names() -> None:
@@ -45,9 +44,11 @@ def test_telegram_bot_token_is_a_row_not_an_if() -> None:
 
 
 def test_provision_uses_catalog_for_bot_token() -> None:
-    with pytest.raises(ProvisionError, match="bot_token"):
-        Channels().add("telegram")
+    got = Channels().add("telegram")
+    assert isinstance(got, str)
+    assert "bot_token" in got
     conn = Channels().add("email")
+    assert isinstance(conn, Connection)
     assert conn.via == Via.HOSTED
 
 
