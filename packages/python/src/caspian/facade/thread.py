@@ -276,9 +276,12 @@ class Stream:
             return
         if self.live:
             self._flush()
-        else:
+        elif not self._sent:
             # Buffered mode: one Post with the whole answer.
             self._thread.post(self._text)
+        elif self._sent != self._text:
+            # Partial send happened via live mode before fallback; post remaining.
+            self._thread.post(self._text[len(self._sent):])
 
     def _flush(self) -> None:
         if self._text == self._sent:

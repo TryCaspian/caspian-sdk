@@ -311,6 +311,14 @@ export const makeMemoryInterpreter = (
           if (transition.decision !== "execute") {
             return
           }
+          const handlerId = HashMap.get(yield* Ref.get(handlerByKey), key)
+          if (Option.isNone(handlerId)) {
+            return
+          }
+          const rule = app.rules.find((item) => item.handler_id === handlerId.value)
+          if (rule === undefined) {
+            return
+          }
           const queueOption = HashMap.get(yield* Ref.get(buffers), key)
           if (Option.isNone(queueOption)) {
             return
@@ -323,14 +331,6 @@ export const makeMemoryInterpreter = (
             return
           }
           const skipped = waiting.slice(0, -1)
-          const handlerId = HashMap.get(yield* Ref.get(handlerByKey), key)
-          if (Option.isNone(handlerId)) {
-            return
-          }
-          const rule = app.rules.find((item) => item.handler_id === handlerId.value)
-          if (rule === undefined) {
-            return
-          }
           yield* appendCommands([
             // Same shape step() emits, ack included: a drained message must not
             // silently lose the acknowledgement a fresh one would get.

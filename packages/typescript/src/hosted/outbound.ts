@@ -91,7 +91,7 @@ export const toRequest = (
     case "Typing": {
       // The gateway hangs a typing hint off a MESSAGE, not a conversation.
       // With nothing to hang it on this is a no-op: a missing indicator must
-      // never fail the reply that follows it.
+      // never fail the reply that follows it (adapter handles this via orElseSucceed).
       const target = options.replyTo ?? ""
       if (target === "") return Effect.fail(unsupported("Typing"))
       return Effect.succeed({
