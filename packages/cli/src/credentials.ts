@@ -62,7 +62,11 @@ export const mergeEnv = (
 export const caspianHome = (env: EnvMap = process.env): string => {
   const override = env["CASPIAN_HOME"]
   if (override !== undefined && override !== "") {
-    return override.replace(/[\/\\]+$/, "")
+    const normalized = override.replace(/[\/\\]+$/, "")
+    if (normalized === "" || /^[A-Za-z]:$/.test(normalized)) {
+      return override
+    }
+    return normalized
   }
   return join(homedir(), ".caspian")
 }

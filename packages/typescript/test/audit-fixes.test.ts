@@ -4,25 +4,8 @@ import { toRequest } from "../src/hosted/outbound.ts"
 import { parseDiscordUpdate } from "../src/adapters/discord/parse.ts"
 import { parseEmailUpdate } from "../src/adapters/email.ts"
 import { decodeCommand } from "../src/core/index.ts"
-
-test("C2: rule/handler lookup guards execute before Queue.takeAll", () => {
-  // Structural fix: in memory.ts drainKey(), the handlerId and rule lookups
-  // were moved BEFORE Queue.takeAll(). Previously, takeAll destructively
-  // emptied the queue, and if the rule was missing, all events were lost.
-  // Now, early-return on missing rule happens while events are still safe
-  // in the queue. The existing overlap.test.ts suite validates queue behavior
-  // end-to-end; this test documents the fix intent.
-  expect(true).toBe(true)
-})
-
-test("Typing without replyTo returns success not failure (H1)", () => {
-  const typing = Effect.runSync(
-    decodeCommand({ tag: "Typing", thread_id: "test:1" })
-  )
-  const result = Effect.runSync(toRequest(typing))
-  expect(result.method).toBe("POST")
-  expect(result.path).toBe("")
-})
+import { extractUpdates } from "../src/interpreters/polling.ts"
+import { caspianHome, cliSecretPath } from "../../cli/src/credentials.ts"
 
 test("Discord commandText includes command name when options present (H3)", () => {
   const events = Effect.runSync(
@@ -39,7 +22,7 @@ test("Discord commandText includes command name when options present (H3)", () =
   }
 })
 
-test("Email fromSimple returns undefined when from is missing (M1)", () => {
+test("Email parseEmailUpdate rejects missing from field (M1)", () => {
   const events = Effect.runSync(
     parseEmailUpdate({
       to: "bot@caspian.dev",
@@ -50,3 +33,42 @@ test("Email fromSimple returns undefined when from is missing (M1)", () => {
   )
   expect(events.length).toBe(0)
 })
+
+test("Email parseEmailUpdate rejects whitespace-only from field (M1)", () => {
+  const events = Effect.runSync(
+    parseEmailUpdate({
+      from: "   ",
+      to: "bot@caspian.dev",
+      subject: "Hello",
+      body: "hi there",
+      message_id: "<abc@example.com>"
+    })
+  )
+  expect(events.length).toBe(0)
+})
+
+test("Typing without replyTo fails cleanly for adapter to catch (H1)", () => {
+  const typing = Effect.runSync(
+    decodeCommand({ tag: "Typing", thread_id: "test:1" })
+  )
+  const result = Effect.runSync(Effect.either(toRequest(typing)))
+  expect(result._tag).toBe("Left")
+})
+
+test("extractUpdates handles non-JSON string response without crashing (M3)", () => {
+  const malformedSent = {
+    ok: true as const,
+    message_id: "",
+    raw: { body: "<html><head><title>502 Bad Gateway</title></head><body>502</body></html>" }
+  }
+  const updates = extractUpdates(malformedSent)
+  expect(updates).toEqual([])
+})
+
+test("caspianHome preserves root directories properly on Windows and POSIX (M4)", () => {
+  expect(caspianHome({ CASPIAN_HOME: "/" })).toBe("/")
+  expect(caspianHome({ CASPIAN_HOME: "/custom/path/" })).toBe("/custom/path")
+  expect(caspianHome({ CASPIAN_HOME: "C:\\" })).toBe("C:\\")
+  expect(caspianHome({ CASPIAN_HOME: "D:\\custom\\path\\" })).toBe("D:\\custom\\path")
+})
+

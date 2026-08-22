@@ -163,7 +163,11 @@ class ProcessInterpreter:
             matched_rule=matched,
             skipped_count=drained.skipped_count,
         )
-        return self._execute(pending, replay) + self._drain(key, matched)
+        try:
+            executed = self._execute(pending, replay)
+        finally:
+            drained_more = self._drain(key, matched)
+        return executed + drained_more
 
     def _maybe_dispatch(self, exec_result: Result) -> Result:
         if not exec_result.is_ok or self._transport is None:
