@@ -86,8 +86,10 @@ class ProcessInterpreter:
             admitted.append((event, sr, key))
 
         for event, sr, key in admitted:
-            results.extend(self._execute(event, sr))
-            results.extend(self._drain(key, sr.matched_rule))
+            try:
+                results.extend(self._execute(event, sr))
+            finally:
+                results.extend(self._drain(key, sr.matched_rule))
 
         return results
 

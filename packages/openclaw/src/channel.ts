@@ -11,7 +11,7 @@ export const caspianPlugin = createChatChannelPlugin({
       const cfg = (ctx.cfg.channels?.caspian ?? {}) as CaspianChannelConfig;
       const bridge = new CaspianBridge(cfg);
       ctx.log?.info?.("caspian: starting listen loop");
-      await bridge.start(async (envelope: InboundEnvelope) => {
+      bridge.start(async (envelope: InboundEnvelope) => {
         await ctx.runtime.channel.inbound.run({
           channel: "caspian",
           accountId: ctx.accountId,
@@ -21,7 +21,9 @@ export const caspianPlugin = createChatChannelPlugin({
             ingest: (raw: unknown) => raw,
           },
         });
-      }, ctx.abortSignal);
+      }, ctx.abortSignal).catch((err) => {
+        ctx.log?.error?.("caspian: listen loop failed", err);
+      });
     },
   },
 });

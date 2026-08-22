@@ -73,7 +73,11 @@ class FacadeHost:
             import asyncio
 
             try:
-                asyncio.get_running_loop()
+                loop = asyncio.get_running_loop()
             except RuntimeError:
                 asyncio.run(result)
+            else:
+                import concurrent.futures
+                future = asyncio.run_coroutine_threadsafe(result, loop)
+                future.result()  # block until handler completes
         return thread.commands

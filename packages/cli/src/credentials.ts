@@ -62,7 +62,7 @@ export const mergeEnv = (
 export const caspianHome = (env: EnvMap = process.env): string => {
   const override = env["CASPIAN_HOME"]
   if (override !== undefined && override !== "") {
-    return override.replace(/\/$/, "")
+    return override.replace(/[\/\\]+$/, "")
   }
   return join(homedir(), ".caspian")
 }
@@ -89,7 +89,9 @@ export const writeEnvFile = (
     chmodSync(dirname(path), 0o700)
     chmodSync(path, 0o600)
   } catch {
-    // Windows may ignore unix modes.
+    // Windows does not support Unix file modes. The secrets file is NOT
+    // permission-hardened on this platform. Consider using Windows ACLs
+    // or storing secrets in a credential manager.
   }
 }
 

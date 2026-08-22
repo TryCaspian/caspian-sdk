@@ -93,7 +93,7 @@ export const toRequest = (
       // With nothing to hang it on this is a no-op: a missing indicator must
       // never fail the reply that follows it.
       const target = options.replyTo ?? ""
-      if (target === "") return Effect.fail(unsupported("Typing"))
+      if (target === "") return Effect.succeed({ method: "POST" as const, path: "", body: {} })
       return Effect.succeed({
         method: "POST",
         path: `/v1/messages/${target}/typing`,

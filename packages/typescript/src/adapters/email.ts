@@ -71,7 +71,7 @@ type EmailFields = {
 
 const fromSimple = (data: Record<string, unknown>): EmailFields | undefined => {
   const keys = ["from", "to", "subject", "body", "message_id"]
-  if (!keys.some((key) => key in data)) {
+  if (!keys.some((key) => key in data) || !data.from) {
     return undefined
   }
   return {

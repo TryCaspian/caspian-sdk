@@ -22,7 +22,11 @@ export const extractUpdates = (
   const raw = sent.raw
   let parsed: unknown = raw.body ?? raw.response ?? raw.result ?? raw
   if (typeof parsed === "string") {
-    parsed = JSON.parse(parsed)
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return []
+    }
   }
   if (Array.isArray(parsed)) {
     return parsed.filter(
