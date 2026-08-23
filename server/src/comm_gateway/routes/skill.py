@@ -4,8 +4,10 @@ Coding agents (Claude Code, Codex, Cursor) fetch this and perform the whole
 integration on the developer's behalf. Keep it imperative, exact, and short.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+
+from comm_gateway.skill_templates import FORK_SECTION, SPOKES
 
 router = APIRouter()
 
@@ -18,7 +20,7 @@ agent a real presence on many channels behind ONE `on_message` handler and one
 `message.reply()` - the same code answers on every channel. The gateway is
 hosted at {base}.
 
-## How to drive this (read first)
+{fork}## How to drive this (read first)
 
 The developer may just say "add caspian-sdk" without naming channels. Do this:
 
@@ -640,5 +642,22 @@ def skill(request: Request) -> str:
     dashboard = settings.billing_dashboard_url
     email_domain = settings.ses_domain or "your-agent-domain.com"
     return SKILL_TEMPLATE.format(
-        base=base, repo=REPO, dashboard=dashboard, email_domain=email_domain
+        base=base,
+        repo=REPO,
+        dashboard=dashboard,
+        email_domain=email_domain,
+        fork=FORK_SECTION.replace("{BASE_URL}", base),
     )
+
+
+@router.get("/SKILL/{slug}.md", response_class=PlainTextResponse)
+def skill_spoke(slug: str, request: Request) -> str:
+    """One framework scaffold. Coding agents fetch exactly one of these."""
+    spoke = SPOKES.get(slug)
+    if spoke is None:
+        raise HTTPException(status_code=404, detail="Unknown scaffold")
+    base = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base.removeprefix("http://")
+    return spoke.replace("{BASE_URL}", base)
