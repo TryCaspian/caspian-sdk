@@ -345,6 +345,163 @@ export async function ask(text: string): Promise<string> {
 }
 '''
 
+
+_PY_CREWAI = '''"""The brain: CrewAI. Exports ask(); knows nothing of Caspian."""
+
+import os
+
+from crewai import Agent, Crew, Task
+
+agent = Agent(
+    role="Messaging assistant",
+    goal="Answer whoever writes in, briefly and helpfully.",
+    backstory=(
+        "You are a helpful assistant reachable on messaging channels. Keep "
+        "replies short and conversational - two paragraphs at most."
+    ),
+    llm=os.environ.get("MODEL", "gpt-4o-mini"),
+)
+
+
+def ask(text: str) -> str:
+    task = Task(
+        description=text or "Introduce yourself.",
+        expected_output="A short, conversational reply.",
+        agent=agent,
+    )
+    result = Crew(agents=[agent], tasks=[task]).kickoff()
+    return str(result).strip() or "(no answer)"
+'''
+
+_PY_AUTOGEN = '''"""The brain: Microsoft AutoGen. Exports ask(); knows nothing of Caspian."""
+
+import asyncio
+import os
+
+from autogen_agentchat.agents import AssistantAgent
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+model = OpenAIChatCompletionClient(model=os.environ.get("MODEL", "gpt-4o-mini"))
+agent = AssistantAgent(
+    "assistant",
+    model_client=model,
+    system_message=(
+        "You are a helpful assistant on a messaging channel. Keep replies "
+        "short and conversational - two paragraphs at most."
+    ),
+)
+
+
+def ask(text: str) -> str:
+    async def go() -> str:
+        result = await agent.run(task=text or "Introduce yourself.")
+        last = result.messages[-1]
+        content = getattr(last, "content", "")
+        return content if isinstance(content, str) else str(content)
+
+    return asyncio.run(go()).strip() or "(no answer)"
+'''
+
+_PY_LLAMAINDEX = '''"""The brain: LlamaIndex. Exports ask(); knows nothing of Caspian."""
+
+import asyncio
+import os
+
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.llms.openai import OpenAI
+
+agent = FunctionAgent(
+    llm=OpenAI(model=os.environ.get("MODEL", "gpt-4o-mini")),
+    system_prompt=(
+        "You are a helpful assistant on a messaging channel. Keep replies "
+        "short and conversational - two paragraphs at most."
+    ),
+    tools=[],
+)
+
+
+def ask(text: str) -> str:
+    response = asyncio.run(agent.run(text or "Introduce yourself."))
+    return str(response).strip() or "(no answer)"
+'''
+
+_TS_LLAMAINDEX = '''/* The brain: LlamaIndex.TS. Exports ask(); knows nothing of Caspian. */
+import { openai } from "@llamaindex/openai"
+import { agent } from "@llamaindex/workflow"
+
+const assistant = agent({
+  llm: openai({ model: process.env.MODEL ?? "gpt-4o-mini" }),
+  systemPrompt:
+    "You are a helpful assistant on a messaging channel. Keep replies " +
+    "short and conversational - two paragraphs at most.",
+  tools: [],
+})
+
+export async function ask(text: string): Promise<string> {
+  const result = await assistant.run(text || "Introduce yourself.")
+  return String(result.data.result ?? result).trim() || "(no answer)"
+}
+'''
+
+_TS_MASTRA = '''/* The brain: Mastra. Exports ask(); knows nothing of Caspian. */
+import { openai } from "@ai-sdk/openai"
+import { Agent } from "@mastra/core/agent"
+
+const assistant = new Agent({
+  name: "assistant",
+  instructions:
+    "You are a helpful assistant on a messaging channel. Keep replies " +
+    "short and conversational - two paragraphs at most.",
+  model: openai(process.env.MODEL ?? "gpt-4o-mini"),
+})
+
+export async function ask(text: string): Promise<string> {
+  const result = await assistant.generate(text || "Introduce yourself.")
+  return result.text.trim() || "(no answer)"
+}
+'''
+
+_PY_LANGCHAIN = '''"""The brain: LangChain v1. Exports ask(); knows nothing of Caspian."""
+
+import os
+
+from langchain.agents import create_agent
+
+agent = create_agent(
+    model=os.environ.get("MODEL", "openai:gpt-4o-mini"),
+    tools=[],
+    system_prompt=(
+        "You are a helpful assistant on a messaging channel. Keep replies "
+        "short and conversational - two paragraphs at most."
+    ),
+)
+
+
+def ask(text: str) -> str:
+    out = agent.invoke(
+        {"messages": [{"role": "user", "content": text or "Introduce yourself."}]}
+    )
+    return out["messages"][-1].content
+'''
+
+_TS_LANGCHAIN = '''/* The brain: LangChain JS v1. Exports ask(); knows nothing of Caspian. */
+import { createAgent } from "langchain"
+
+const agent = createAgent({
+  model: process.env.MODEL ?? "openai:gpt-4o-mini",
+  tools: [],
+})
+
+export async function ask(text: string): Promise<string> {
+  const out = await agent.invoke({
+    messages: [{ role: "user", content: text || "Introduce yourself." }],
+  })
+  const last = out.messages.at(-1)
+  const content = last?.content
+  return (typeof content === "string" ? content : JSON.stringify(content)).trim()
+}
+'''
+
 # ─── spoke assembly ──────────────────────────────────────────────────────────
 
 _FRAMEWORKS: dict[str, dict] = {
@@ -396,6 +553,55 @@ _FRAMEWORKS: dict[str, dict] = {
         "agent": _TS_VERCEL_AI,
         "install": "npm install caspian-sdk ai @ai-sdk/openai",
         "extra_env": "OPENAI_API_KEY=",
+    },
+    "crewai-python": {
+        "title": "CrewAI (Python)",
+        "lang": "python",
+        "agent": _PY_CREWAI,
+        "install": "pip install caspian-sdk crewai",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=gpt-4o-mini",
+    },
+    "autogen-python": {
+        "title": "Microsoft AutoGen (Python)",
+        "lang": "python",
+        "agent": _PY_AUTOGEN,
+        "install": 'pip install caspian-sdk autogen-agentchat "autogen-ext[openai]"',
+        "extra_env": "OPENAI_API_KEY=\nMODEL=gpt-4o-mini",
+    },
+    "llamaindex-python": {
+        "title": "LlamaIndex (Python)",
+        "lang": "python",
+        "agent": _PY_LLAMAINDEX,
+        "install": "pip install caspian-sdk llama-index",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=gpt-4o-mini",
+    },
+    "llamaindex-typescript": {
+        "title": "LlamaIndex.TS (TypeScript)",
+        "lang": "typescript",
+        "agent": _TS_LLAMAINDEX,
+        "install": "npm install caspian-sdk llamaindex @llamaindex/openai @llamaindex/workflow",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=gpt-4o-mini",
+    },
+    "mastra-typescript": {
+        "title": "Mastra (TypeScript)",
+        "lang": "typescript",
+        "agent": _TS_MASTRA,
+        "install": "npm install caspian-sdk @mastra/core @ai-sdk/openai",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=gpt-4o-mini",
+    },
+    "langchain-python": {
+        "title": "LangChain (Python)",
+        "lang": "python",
+        "agent": _PY_LANGCHAIN,
+        "install": "pip install caspian-sdk langchain langchain-openai",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=openai:gpt-4o-mini",
+    },
+    "langchain-typescript": {
+        "title": "LangChain JS (TypeScript)",
+        "lang": "typescript",
+        "agent": _TS_LANGCHAIN,
+        "install": "npm install caspian-sdk langchain @langchain/openai",
+        "extra_env": "OPENAI_API_KEY=\nMODEL=openai:gpt-4o-mini",
     },
     "plain-python": {
         "title": "No framework (Python)",
@@ -586,18 +792,27 @@ Before doing anything else, ask your human ONE question:
 
 If B, ask which framework, then fetch ONLY that guide and follow it:
 
-  {BASE_URL}/SKILL/openai-agents-python.md
-  {BASE_URL}/SKILL/openai-agents-typescript.md
-  {BASE_URL}/SKILL/langgraph-python.md
-  {BASE_URL}/SKILL/langgraph-typescript.md
-  {BASE_URL}/SKILL/claude-agent-sdk-python.md
-  {BASE_URL}/SKILL/claude-agent-sdk-typescript.md
-  {BASE_URL}/SKILL/vercel-ai-typescript.md
-  {BASE_URL}/SKILL/plain-python.md          (no framework, plain LLM calls)
-  {BASE_URL}/SKILL/plain-typescript.md
+Agent frameworks (they orchestrate the model for you):
+
+  {BASE_URL}/SKILL/openai-agents-python.md      {BASE_URL}/SKILL/openai-agents-typescript.md
+  {BASE_URL}/SKILL/langchain-python.md          {BASE_URL}/SKILL/langchain-typescript.md
+  {BASE_URL}/SKILL/langgraph-python.md          {BASE_URL}/SKILL/langgraph-typescript.md
+  {BASE_URL}/SKILL/claude-agent-sdk-python.md   {BASE_URL}/SKILL/claude-agent-sdk-typescript.md
+  {BASE_URL}/SKILL/llamaindex-python.md         {BASE_URL}/SKILL/llamaindex-typescript.md
+  {BASE_URL}/SKILL/crewai-python.md             (python only)
+  {BASE_URL}/SKILL/autogen-python.md            (python only)
+  {BASE_URL}/SKILL/mastra-typescript.md         (typescript only)
+  {BASE_URL}/SKILL/vercel-ai-typescript.md      (typescript only)
+
+No framework - the developer calls a model SDK directly (OpenAI, Anthropic,
+Google, or any OpenAI-compatible endpoint; set OPENAI_BASE_URL to switch):
+
+  {BASE_URL}/SKILL/plain-python.md              {BASE_URL}/SKILL/plain-typescript.md
 
 Every scaffold has the same shape: agent.* is the brain (pure framework code
 exporting ask()), and a caspian/ folder is the comms layer (connections +
-handlers). One imports the other exactly once. If A, keep reading.
+handlers). One imports the other exactly once. If the framework you want is
+not listed, take the plain scaffold and swap agent.* - the caspian/ folder
+never changes. If A, keep reading.
 
 """
