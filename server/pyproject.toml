@@ -20,6 +20,7 @@ dependencies = [
   "PyNaCl>=1.5,<2",
   "telethon>=1.36,<2",
   "pyserial>=3.5,<4",
+  "mcp>=2.0.0",
 ]
 
 [project.scripts]
