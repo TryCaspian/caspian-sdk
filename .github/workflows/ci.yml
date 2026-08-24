@@ -23,6 +23,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.5"
           python-version: "3.12"
           enable-cache: true
 
@@ -46,6 +47,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         with:
+          version: "0.12.5"
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
