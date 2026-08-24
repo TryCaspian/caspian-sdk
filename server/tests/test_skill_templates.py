@@ -88,3 +88,13 @@ def test_the_seam_is_clean() -> None:
 def test_fork_lists_every_spoke_exactly() -> None:
     listed = set(re.findall(r"/SKILL/([a-z-]+)\.md", FORK_SECTION))
     assert listed == set(SPOKES), listed ^ set(SPOKES)
+
+
+def test_coding_agent_spokes_carry_the_security_banner() -> None:
+    """A messaging channel wired to a tool-wielding CLI is RCE-by-DM; every
+    such scaffold must warn and must ship the allowlist on."""
+    for slug in ("claude-code-python", "codex-python", "opencode-python"):
+        assert "SECURITY - read this" in SPOKES[slug], slug
+        assert "CASPIAN_ALLOWED_SENDERS=you@example.com" in SPOKES[slug], slug
+    # ordinary framework spokes must NOT carry it (noise)
+    assert "SECURITY - read this" not in SPOKES["openai-agents-python"]

@@ -65,9 +65,18 @@ if os.environ.get("TELEGRAM_BOT_TOKEN"):
 #   then feed your HTTP route's bytes to cx.handle("telegram", body, headers),
 #   or hold a socket with cx.listen("discord") / cx.listen("slack").
 
+# Optional allowlist: comma-separated sender addresses/ids. Empty = everyone.
+# Set this when the brain can act on your machine (a coding agent CLI) - an
+# open inbox to a tool-wielding agent is remote code execution by DM.
+_ALLOWED = {
+    s.strip() for s in os.environ.get("CASPIAN_ALLOWED_SENDERS", "").split(",") if s.strip()
+}
+
 # ---- handlers: one rule answers every channel -------------------------------
 @cx.on_message({"overlap": "queue", "ack": "On it, one moment..."})
 def handle(thread, msg, ctx):
+    if _ALLOWED and msg.sender not in _ALLOWED:
+        return
     with thread.stream() as out:      # posts once, then edits as it writes
         out.append(ask(msg.text))
 
@@ -102,10 +111,19 @@ export async function connect(): Promise<void> {
 TS_CASPIAN_HANDLERS = '''/* caspian/handlers.ts - one rule answers every channel. */
 import { cx } from "./connections.ts"
 
+/* Optional allowlist: comma-separated sender addresses/ids. Empty = everyone.
+   Set this when the brain can act on your machine (a coding agent CLI) - an
+   open inbox to a tool-wielding agent is remote code execution by DM. */
+const ALLOWED = new Set(
+  (process.env.CASPIAN_ALLOWED_SENDERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+)
+
 export function register(ask: (text: string) => Promise<string>): void {
   cx.onMessage(
     { overlap: "queue", ack: "On it, one moment..." },
     async (thread, msg) => {
+      const sender = (msg as { sender?: string }).sender ?? ""
+      if (ALLOWED.size > 0 && !ALLOWED.has(sender)) return
       const text = msg.kind === "message" ? msg.text : ""
       const out = thread.stream()
       await out.append(await ask(text))
@@ -144,6 +162,8 @@ await start(ask)
 ENV_BASE = """CASPIAN_API_KEY=
 # optional - hosted telegram still needs a BotFather token
 TELEGRAM_BOT_TOKEN=
+# optional - restrict who the agent answers (comma-separated sender addresses)
+CASPIAN_ALLOWED_SENDERS=
 """
 
 # ─── the brains, one per framework and language ──────────────────────────────
@@ -502,6 +522,78 @@ export async function ask(text: string): Promise<string> {
 }
 '''
 
+
+# ─── coding-agent brains: the CLI you already run IS the agent ────────────────
+# ask() shells out to the coding agent in headless mode. Each reply is a fresh
+# non-interactive run in the working directory. Powerful and dangerous: the
+# brain can edit files and run commands, so option C's scaffold sets an
+# allowlist by default. `cwd` scopes what it can touch.
+
+_PY_CLAUDE_CODE = '''"""The brain: Claude Code in headless mode. Exports ask().
+
+`claude -p` runs one non-interactive turn and prints the result. This gives a
+messaging channel a direct line to the same coding agent you use in the
+terminal - it can read and change files in WORKDIR and run tools. Keep the
+allowlist on.
+"""
+
+import os
+import subprocess
+
+WORKDIR = os.environ.get("AGENT_WORKDIR", ".")
+
+
+def ask(text: str) -> str:
+    result = subprocess.run(
+        ["claude", "-p", text or "Introduce yourself."],
+        cwd=WORKDIR, capture_output=True, text=True, timeout=600,
+    )
+    out = (result.stdout or "").strip()
+    return out or (result.stderr or "").strip() or "(no output)"
+'''
+
+_PY_CODEX = '''"""The brain: OpenAI Codex CLI in headless mode. Exports ask().
+
+`codex exec` runs one non-interactive task and prints the result. Same power
+and same risk as any coding agent with tools - keep the allowlist on.
+"""
+
+import os
+import subprocess
+
+WORKDIR = os.environ.get("AGENT_WORKDIR", ".")
+
+
+def ask(text: str) -> str:
+    result = subprocess.run(
+        ["codex", "exec", text or "Introduce yourself."],
+        cwd=WORKDIR, capture_output=True, text=True, timeout=600,
+    )
+    out = (result.stdout or "").strip()
+    return out or (result.stderr or "").strip() or "(no output)"
+'''
+
+_PY_OPENCODE = '''"""The brain: OpenCode in headless mode. Exports ask().
+
+`opencode run` executes one prompt non-interactively and prints the result.
+Same power and risk as any tool-wielding coding agent - keep the allowlist on.
+"""
+
+import os
+import subprocess
+
+WORKDIR = os.environ.get("AGENT_WORKDIR", ".")
+
+
+def ask(text: str) -> str:
+    result = subprocess.run(
+        ["opencode", "run", text or "Introduce yourself."],
+        cwd=WORKDIR, capture_output=True, text=True, timeout=600,
+    )
+    out = (result.stdout or "").strip()
+    return out or (result.stderr or "").strip() or "(no output)"
+'''
+
 # ─── spoke assembly ──────────────────────────────────────────────────────────
 
 _FRAMEWORKS: dict[str, dict] = {
@@ -603,6 +695,42 @@ _FRAMEWORKS: dict[str, dict] = {
         "install": "npm install caspian-sdk langchain @langchain/openai",
         "extra_env": "OPENAI_API_KEY=\nMODEL=openai:gpt-4o-mini",
     },
+    "claude-code-python": {
+        "title": "Claude Code (this coding agent, headless)",
+        "lang": "python",
+        "agent": _PY_CLAUDE_CODE,
+        "install": "pip install caspian-sdk   # plus the Claude Code CLI on PATH",
+        "extra_env": (
+            "AGENT_WORKDIR=.\n"
+            "# STRONGLY recommended - only these senders can drive the agent\n"
+            "CASPIAN_ALLOWED_SENDERS=you@example.com"
+        ),
+        "coding_agent": True,
+    },
+    "codex-python": {
+        "title": "OpenAI Codex CLI (this coding agent, headless)",
+        "lang": "python",
+        "agent": _PY_CODEX,
+        "install": "pip install caspian-sdk   # plus the Codex CLI on PATH",
+        "extra_env": (
+            "AGENT_WORKDIR=.\n"
+            "# STRONGLY recommended - only these senders can drive the agent\n"
+            "CASPIAN_ALLOWED_SENDERS=you@example.com"
+        ),
+        "coding_agent": True,
+    },
+    "opencode-python": {
+        "title": "OpenCode (this coding agent, headless)",
+        "lang": "python",
+        "agent": _PY_OPENCODE,
+        "install": "pip install caspian-sdk   # plus the OpenCode CLI on PATH",
+        "extra_env": (
+            "AGENT_WORKDIR=.\n"
+            "# STRONGLY recommended - only these senders can drive the agent\n"
+            "CASPIAN_ALLOWED_SENDERS=you@example.com"
+        ),
+        "coding_agent": True,
+    },
     "plain-python": {
         "title": "No framework (Python)",
         "lang": "python",
@@ -622,7 +750,18 @@ _FRAMEWORKS: dict[str, dict] = {
 
 def _python_spoke(slug: str, meta: dict) -> str:
     env = ENV_BASE + meta["extra_env"] + "\n"
+    danger = (
+        "\n> SECURITY - read this. This scaffold wires a messaging channel "
+        "directly to a coding agent that can read/edit files and run commands "
+        "in AGENT_WORKDIR. Anyone who can message the connected address can "
+        "make it act. ALWAYS set CASPIAN_ALLOWED_SENDERS to just yourself, "
+        "point AGENT_WORKDIR at a scratch directory (not your home or a real "
+        "repo) until you trust it, and prefer a channel only you can reach "
+        "(email/Telegram DM), never a public group.\n"
+        if meta.get("coding_agent") else ""
+    )
     return f"""# Caspian x {meta["title"]}
+{danger}
 
 Scaffold a new agent. The framework is the brain; Caspian is how people reach
 it. Two parts, one seam:
@@ -789,6 +928,16 @@ Before doing anything else, ask your human ONE question:
 
   B) Scaffold a NEW custom agent from a template
      (a framework is the brain; Caspian is the comms layer)
+
+  C) Make THIS coding agent reachable by message
+     (Claude Code / Codex / OpenCode becomes the brain, in headless mode -
+      you can then text your own coding agent. Powerful; read its security note.)
+
+If C, fetch the guide for the coding agent you are:
+
+  {BASE_URL}/SKILL/claude-code-python.md
+  {BASE_URL}/SKILL/codex-python.md
+  {BASE_URL}/SKILL/opencode-python.md
 
 If B, ask which framework, then fetch ONLY that guide and follow it:
 
