@@ -241,3 +241,26 @@ def test_backfill_rejected_on_bot(app, client, run_jobs):
         f"/v1/conversations/{inbound['conversation_id']}/backfill", json={"limit": 5}
     )
     assert response.status_code == 422
+
+
+def test_events_order_desc_returns_newest_first(client, run_jobs, app):
+    """`order=desc` exists so a reader can get the latest few events without
+    walking the whole history (the MCP inbox tool relies on it)."""
+    _telegram_connection(client, run_jobs)
+    for i in range(3):
+        _inbound(app, client, run_jobs, text=f"msg-{i}")
+
+    asc = client.get("/v1/events", params={"type": "message.received"}).json()
+    desc = client.get(
+        "/v1/events", params={"type": "message.received", "order": "desc"}
+    ).json()
+
+    assert [e["seq"] for e in desc] == list(reversed([e["seq"] for e in asc]))
+    assert desc[0]["data"]["message"]["text"] == "msg-2"
+    # limit applies to the newest end, not the oldest
+    newest = client.get(
+        "/v1/events",
+        params={"type": "message.received", "order": "desc", "limit": 1},
+    ).json()
+    assert len(newest) == 1
+    assert newest[0]["seq"] == max(e["seq"] for e in asc)

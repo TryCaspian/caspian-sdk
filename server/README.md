@@ -18,8 +18,8 @@ The gateway comes up on `http://localhost:8000` with Postgres and the in-memory
 `fake` provider (no credentials). Point the SDK at it:
 
 ```python
-from caspian_sdk import CommClient
-client = CommClient(base_url="http://localhost:8000", api_key="comm_dev_key_change_me")
+from caspian import Caspian
+cx = Caspian(base_url="http://localhost:8000", api_key="comm_dev_key_change_me")
 ```
 
 ## Run it locally (without Docker)

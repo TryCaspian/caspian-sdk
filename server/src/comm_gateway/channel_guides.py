@@ -1,8 +1,9 @@
 """Per-channel behaviour guides for the agent's brain.
 
-These are opt-in: a developer injects them into their agent's system prompt via
-``client.behavior_prompt()`` (or fetches one with ``client.channel_guide(...)``),
-tweaks them, or ignores them entirely. They tell the LLM how to *behave* on each
+These are opt-in: a developer fetches them from ``GET /v1/channels`` (or one at a
+time from ``GET /v1/channels/{channel}/guide``), injects them into their agent's
+system prompt, tweaks them, or ignores them entirely. They tell the LLM how to
+*behave* on each
 platform (threading, formatting, length, etiquette) — separate from SKILL.md,
 which tells the coding agent how to *build* the integration.
 
@@ -87,9 +88,13 @@ Install:  pip install caspian-sdk   (or: uv add caspian-sdk)
 
 Point the SDK at THIS gateway (the base URL is the host serving this endpoint).
 The channel list/guide are public, but creating a connection is authenticated —
-you need a project API key (ask the human, or set CASPIAN_API_KEY):
-    from caspian_sdk import CommClient
-    client = CommClient()   # reads CASPIAN_BASE_URL + CASPIAN_API_KEY from env
+you need a project API key (ask the human, or read CASPIAN_API_KEY yourself —
+the SDK does not read the environment for you):
+    import os
+    from caspian import Caspian
+
+    cx = Caspian(api_key=os.environ["CASPIAN_API_KEY"],
+                 base_url=os.environ.get("CASPIAN_BASE_URL", "https://api.trycaspianai.com"))
 
 Per-connection credentials (ask the human for these two):
 - `identifier`   — the account's Bluesky handle (e.g. `myagent.bsky.social`) or email.
@@ -99,16 +104,14 @@ Create the app password: log in at https://bsky.app -> Settings -> Privacy and
 Security -> App Passwords -> Add App Password -> copy it (`xxxx-xxxx-xxxx-xxxx`).
 
 Connect, then receive & reply:
-    customer = client.create_customer("My Co")
-    agent    = client.create_agent("My Agent")
-    conn = client.connect_bluesky(identifier="myagent.bsky.social",
-                                  app_password="xxxx-xxxx-xxxx-xxxx")
+    cx.channels.add("bluesky", identifier="myagent.bsky.social",
+                    app_password="xxxx-xxxx-xxxx-xxxx")
 
-    @client.on_message
-    def handle(message):
-        message.reply("...")   # your answer to message.text
+    @cx.on_message()
+    def handle(thread, msg, ctx):
+        thread.post("...")   # your answer to msg.text
 
-    client.listen()   # polls for inbound (no webhook to configure)
+    cx.run()   # polls the gateway for inbound (no webhook to configure)
 
 Capabilities: receive, reply, send.""",
 }

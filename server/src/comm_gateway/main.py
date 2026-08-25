@@ -86,6 +86,20 @@ def create_app(
     providers = providers or build_providers(settings)
     ensure_bootstrap(session_factory, settings)
 
+    # Build the MCP sub-app up front so its session-manager lifespan can be
+    # entered inside the gateway lifespan (mounted sub-apps do not get their
+    # lifespan run automatically by Starlette).
+    mcp_app = None
+    try:
+        from comm_gateway.mcp import build_mcp
+
+        mcp_app = build_mcp(
+            base_url=f"http://{settings.host}:{settings.port}",
+            public_url=settings.public_base_url,
+        )
+    except Exception as exc:  # noqa: BLE001 - MCP is additive; never fail boot
+        logging.getLogger("comm.mcp").warning("MCP not built: %s", exc)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         stop = None
@@ -96,7 +110,11 @@ def create_app(
                 from .listeners import run_listeners
 
                 listener_stop = run_listeners(session_factory, settings)
-        yield
+        if mcp_app is not None:
+            async with mcp_app.router.lifespan_context(mcp_app):
+                yield
+        else:
+            yield
         if stop is not None:
             stop.set()
         if listener_stop is not None:
@@ -117,6 +135,11 @@ def create_app(
     app.include_router(device.router)
     app.include_router(guides.router)
     app.include_router(legal.router)
+
+    # Mount the MCP server (built above). Same process, same Caddy, one deploy.
+    if mcp_app is not None:
+        app.mount("/mcp", mcp_app)
+
     return app
 
 

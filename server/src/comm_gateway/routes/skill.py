@@ -76,9 +76,9 @@ Poll billing until `balance_cents` rises, then retry. Autopay:
 
 
 ```bash
-uv add caspian
-# or: pip install caspian
-# TypeScript: bun add caspian  (class Caspian, methods onMessage / channels.add / run)
+uv add caspian-sdk
+# or: pip install caspian-sdk
+# TypeScript: bun add caspian-sdk  (class Caspian, methods onMessage / channels.add / run)
 
 ```
 
@@ -161,7 +161,7 @@ Do not mix: hosted inbound is `handle("gateway", …)` / `run()`, never
   standalone send. Buttons: `@cx.on_action({{"channel": "…", "data": "…"}})`.
 - `channels.add` for an already-active hosted connection is idempotent (returns
   the existing one).
-- `cx.run()` / `cx.listen()` block. Persist your own cursor if you need
+- `cx.run()` / `cx.listen("<channel>")` block. Persist your own cursor if you need
   exactly-once across restarts; a single run already dedupes.
 - REST: {base}/docs
 """

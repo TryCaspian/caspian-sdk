@@ -701,7 +701,8 @@ def install_x(
         raise HTTPException(
             status_code=400,
             detail="Shared X app is not configured on this gateway "
-            "(set COMM_X_API_KEY / COMM_X_API_SECRET). Use connect_x(access_token=...) "
+            '(set COMM_X_API_KEY / COMM_X_API_SECRET). Use cx.channels.add("x", '
+            "access_token=...) "
             "to bring your own account tokens instead.",
         )
     # Gate BEFORE minting the X authorize link (but after confirming the channel
@@ -804,8 +805,8 @@ def install_shared_slack(
             status_code=400,
             detail="Shared Slack app is not configured on this gateway "
             "(set COMM_SLACK_CLIENT_ID / COMM_SLACK_CLIENT_SECRET / "
-            "COMM_SLACK_SIGNING_SECRET). Use connect_slack(slack_client_id=...) to "
-            "bring your own app instead.",
+            'COMM_SLACK_SIGNING_SECRET). Use cx.channels.add("slack", '
+            "slack_client_id=...) to bring your own app instead.",
         )
     if body.customer_id is None and body.agent_id is None:
         customer, agent = _default_scope(session, project)
@@ -930,7 +931,7 @@ def install_shared_discord(
             status_code=400,
             detail="Shared Discord bot is not configured on this gateway "
             "(set COMM_DISCORD_CLIENT_ID / COMM_DISCORD_BOT_TOKEN). Use "
-            "connect_discord(bot_token=...) to bring your own bot instead.",
+            'cx.channels.add("discord", bot_token=...) to bring your own bot instead.',
         )
     if body.customer_id is None and body.agent_id is None:
         customer, agent = _default_scope(session, project)
@@ -1491,11 +1492,16 @@ def list_events(
     after_seq: int = 0,
     limit: int = Query(default=100, ge=1, le=500),
     type: str | None = None,
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
     project: Project = Depends(get_project),
     session: Session = Depends(get_session),
 ):
+    """Events for this project, oldest first from `after_seq` (the polling
+    cursor). `order=desc` instead returns the NEWEST first, for readers that
+    want the latest few without walking the whole history."""
     query = select(Event).where(Event.project_id == project.id, Event.seq > after_seq)
     if type:
         query = query.where(Event.type == type)
-    rows = session.execute(query.order_by(Event.seq).limit(limit)).scalars()
+    sort = Event.seq.desc() if order == "desc" else Event.seq
+    rows = session.execute(query.order_by(sort).limit(limit)).scalars()
     return [event_out(e) for e in rows]
