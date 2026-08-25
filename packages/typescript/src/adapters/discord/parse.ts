@@ -40,9 +40,10 @@ const commandText = (data: Record<string, unknown>): string => {
     .filter((value) => value !== undefined && value !== null)
     .map((value) => String(value))
   if (parts.length > 0) {
-    return parts.join(" ")
+    const prefix = typeof data.name === "string" ? `/${data.name} ` : ""
+    return `${prefix}${parts.join(" ")}`
   }
-  return typeof data.name === "string" ? data.name : ""
+  return typeof data.name === "string" ? `/${data.name}` : ""
 }
 
 const parseCommand = (payload: Record<string, unknown>): ReadonlyArray<Event> => {

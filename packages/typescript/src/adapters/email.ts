@@ -74,8 +74,12 @@ const fromSimple = (data: Record<string, unknown>): EmailFields | undefined => {
   if (!keys.some((key) => key in data)) {
     return undefined
   }
+  const sender = parseAddr(String(data.from ?? ""))
+  if (!sender) {
+    return undefined
+  }
   return {
-    sender: parseAddr(String(data.from ?? "")),
+    sender,
     body: String(data.body ?? ""),
     messageId: String(data.message_id ?? ""),
   }
