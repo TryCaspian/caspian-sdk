@@ -1492,11 +1492,16 @@ def list_events(
     after_seq: int = 0,
     limit: int = Query(default=100, ge=1, le=500),
     type: str | None = None,
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
     project: Project = Depends(get_project),
     session: Session = Depends(get_session),
 ):
+    """Events for this project, oldest first from `after_seq` (the polling
+    cursor). `order=desc` instead returns the NEWEST first, for readers that
+    want the latest few without walking the whole history."""
     query = select(Event).where(Event.project_id == project.id, Event.seq > after_seq)
     if type:
         query = query.where(Event.type == type)
-    rows = session.execute(query.order_by(Event.seq).limit(limit)).scalars()
+    sort = Event.seq.desc() if order == "desc" else Event.seq
+    rows = session.execute(query.order_by(sort).limit(limit)).scalars()
     return [event_out(e) for e in rows]

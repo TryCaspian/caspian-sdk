@@ -38,6 +38,7 @@ def test_setup_guides_teach_the_current_sdk_api():
             "client.create_customer",
             "client.create_agent",
             "client.listen(",
+            "client.on_message",
             "message.reply(",
         ):
             assert stale not in text, f"stale 0.6.x API in {channel} setup guide: {stale}"

@@ -98,8 +98,6 @@ def create_app(
             public_url=settings.public_base_url,
         )
     except Exception as exc:  # noqa: BLE001 - MCP is additive; never fail boot
-        import logging
-
         logging.getLogger("comm.mcp").warning("MCP not built: %s", exc)
 
     @asynccontextmanager

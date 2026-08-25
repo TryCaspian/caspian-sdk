@@ -159,14 +159,25 @@ def build_mcp(*, base_url: str, public_url: str = "") -> Starlette:
             return await _gw(ctx, "POST", "/connections/email", json={})
         if ch in ("slack", "discord"):
             conn = await _gw(ctx, "POST", f"/connections/{ch}/install", json={})
-            conn["next"] = (
+            common = (
                 "Show authorize_url to the user as a clickable link. After they "
-                "approve, list_connections shows it active. THEN tell them the "
-                "second step, which is required for receiving: the bot must be "
-                "added to a channel - run /invite @<app name> in that channel, "
-                "or DM the app. Until then it receives nothing. Read what "
-                "arrives with the inbox tool."
+                "approve, list_connections shows it active. "
             )
+            second_step = {
+                "slack": (
+                    "THEN tell them the second step, required for receiving: the "
+                    "bot must be added to a channel - run /invite @<app name> in "
+                    "the channel it should watch, or DM the app. Until then it "
+                    "receives nothing, and @mentions elsewhere never reach it."
+                ),
+                "discord": (
+                    "During approval they pick a server and Discord adds the bot "
+                    "to it. The bot reads channels it has access to there; if a "
+                    "channel is private, they must grant it access to that "
+                    "channel. DMs work once the bot shares a server with them."
+                ),
+            }[ch]
+            conn["next"] = f"{common}{second_step} Read what arrives with the inbox tool."
             return conn
         if ch == "telegram":
             if not bot_token:
@@ -205,22 +216,13 @@ def build_mcp(*, base_url: str, public_url: str = "") -> Starlette:
         thread and channel. Call this whenever the user asks what came in, or
         asks you to answer someone. Newest first."""
         limit = max(1, min(int(limit), 100))
-        # /events pages FORWARD from a cursor (oldest first), so walk to the end
-        # and keep the tail — otherwise a busy project returns its oldest mail.
-        events: list[dict] = []
-        after, page = 0, 500
-        for _ in range(20):  # cap the walk; 10k events is plenty of history
-            batch = await _gw(ctx, "GET", "/events",
-                              params={"type": "message.received",
-                                      "after_seq": after, "limit": page})
-            if not batch:
-                break
-            events = (events + batch)[-200:]
-            after = batch[-1].get("seq", after)
-            if len(batch) < page:
-                break
+        # order=desc gives the newest straight from the DB, so this stays correct
+        # no matter how much history a project has accumulated.
+        events = await _gw(ctx, "GET", "/events",
+                           params={"type": "message.received",
+                                   "order": "desc", "limit": limit})
         msgs = []
-        for e in reversed(events):
+        for e in events or []:
             m = (e.get("data") or {}).get("message") or {}
             sender = m.get("sender") or {}
             msgs.append({
@@ -266,6 +268,12 @@ def build_mcp(*, base_url: str, public_url: str = "") -> Starlette:
                 "with /invite @<app name> in the channel they want it to watch, "
                 "or to DM the app directly. It only receives @mentions in "
                 "channels it has been added to."
+            )
+        if "discord" in chans:
+            hint += (
+                " For Discord: the bot only sees channels it has access to in "
+                "the server it was added to. If the channel is private, the user "
+                "must grant it access there."
             )
         return {"messages": [], "count": 0, "hint": hint}
 
@@ -326,7 +334,9 @@ def build_mcp(*, base_url: str, public_url: str = "") -> Starlette:
     # DNS-rebinding protection defaults to localhost-only allowed hosts, which
     # 421s every request arriving via the public hostname. Keep the protection
     # on, but allow the host users actually reach us on (plus local binds).
-    allowed_hosts = ["127.0.0.1:*", "localhost:*"]
+    # Both bare and :port forms, or a bare `Host: localhost` 421s.
+    allowed_hosts = ["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*",
+                     "[::1]", "[::1]:*"]
     for url in (public_url, base_url):
         h = urlsplit(url).hostname if url else None
         if h and h not in ("127.0.0.1", "localhost"):
