@@ -93,7 +93,10 @@ def create_app(
     try:
         from comm_gateway.mcp import build_mcp
 
-        mcp_app = build_mcp(base_url=f"http://{settings.host}:{settings.port}")
+        mcp_app = build_mcp(
+            base_url=f"http://{settings.host}:{settings.port}",
+            public_url=settings.public_base_url,
+        )
     except Exception as exc:  # noqa: BLE001 - MCP is additive; never fail boot
         import logging
 
