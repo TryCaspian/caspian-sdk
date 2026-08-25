@@ -27,9 +27,11 @@ What the agent gets on connect (all self-described through the protocol):
 from __future__ import annotations
 
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
 from starlette.applications import Starlette
 
@@ -220,4 +222,16 @@ def build_mcp(*, base_url: str, public_url: str = "") -> Starlette:
             "on a reply, and for each suggest a one-line response I can approve."
         )
 
-    return mcp.streamable_http_app(streamable_http_path="/", stateless_http=True)
+    # DNS-rebinding protection defaults to localhost-only allowed hosts, which
+    # 421s every request arriving via the public hostname. Keep the protection
+    # on, but allow the host users actually reach us on (plus local binds).
+    allowed_hosts = ["127.0.0.1:*", "localhost:*"]
+    for url in (public_url, base_url):
+        h = urlsplit(url).hostname if url else None
+        if h and h not in ("127.0.0.1", "localhost"):
+            allowed_hosts += [h, f"{h}:*"]
+    security = TransportSecuritySettings(allowed_hosts=allowed_hosts)
+
+    return mcp.streamable_http_app(
+        streamable_http_path="/", stateless_http=True, transport_security=security
+    )
