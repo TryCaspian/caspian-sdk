@@ -20,3 +20,26 @@ def test_behavior_prompt_reflects_connected_channels(client, run_jobs):
     assert "## Email" in body
     # A channel the project did NOT connect is not included.
     assert "## Slack" not in body
+
+
+def test_setup_guides_teach_the_current_sdk_api():
+    """Setup guides are served to coding agents in the `setup` field of
+    GET /v1/channels, so stale 0.6.x text makes them write code that cannot
+    work. Asserted against the source dict, not the endpoint, so the guard
+    holds regardless of which providers a given deployment enables."""
+    from comm_gateway.channel_guides import _SETUP
+
+    assert _SETUP, "expected at least one channel setup guide"
+    for channel, text in _SETUP.items():
+        for stale in (
+            "caspian_sdk",
+            "CommClient",
+            "client.connect_",
+            "client.create_customer",
+            "client.create_agent",
+            "client.listen(",
+            "message.reply(",
+        ):
+            assert stale not in text, f"stale 0.6.x API in {channel} setup guide: {stale}"
+        assert "from caspian import Caspian" in text, channel
+        assert "cx.channels.add(" in text, channel
