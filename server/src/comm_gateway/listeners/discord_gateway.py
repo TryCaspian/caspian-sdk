@@ -46,6 +46,7 @@ class DiscordGatewayClient:
         self._seq: int | None = None
         self._session_id: str | None = None
         self._resume_url: str | None = None
+        self._heartbeat_acked = True
         self._stop = asyncio.Event()
 
     def stop(self) -> None:
@@ -92,9 +93,20 @@ class DiscordGatewayClient:
                 hb.cancel()
 
     async def _heartbeat(self, ws, interval: float) -> None:
+        self._heartbeat_acked = True  # fresh connection: nothing outstanding yet
         # first beat jittered per Discord's guidance
         await asyncio.sleep(interval * random.random())
         while True:
+            if not self._heartbeat_acked:
+                # No ACK since the last beat: Discord calls this a "zombied"
+                # connection and says to close and reconnect. Close so the read
+                # loop's recv() raises and run()'s existing backoff-and-retry
+                # picks it up - no separate reconnect path needed.
+                log.warning("discord gateway %s missed heartbeat ack; closing to reconnect",
+                            self._app_id)
+                await ws.close(code=4000, reason="missed heartbeat ack")
+                return
+            self._heartbeat_acked = False
             await ws.send(json.dumps({"op": _OP_HEARTBEAT, "d": self._seq}))
             await asyncio.sleep(interval)
 
@@ -106,13 +118,15 @@ class DiscordGatewayClient:
                 self._seq = frame["s"]
             if op == _OP_DISPATCH:
                 await self._dispatch(frame)
+            elif op == _OP_HEARTBEAT_ACK:
+                self._heartbeat_acked = True
             elif op == _OP_RECONNECT:
                 return  # reconnect + resume
             elif op == _OP_INVALID_SESSION:
                 self._session_id = None
                 self._resume_url = None
                 return
-            # _OP_HEARTBEAT_ACK / others: ignore
+            # other ops: ignore
 
     async def _dispatch(self, frame: dict) -> None:
         event = frame.get("t")
