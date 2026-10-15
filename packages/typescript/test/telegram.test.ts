@@ -26,6 +26,41 @@ const vectorsUrl = new URL(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
+for (const updateType of ["channel_post", "edited_channel_post"]) {
+  for (const contentField of ["text", "caption"]) {
+    test(`parse ${updateType} with ${contentField} and no sender`, () => {
+      const post = {
+        message_id: 42,
+        chat: { id: -100555, type: "channel" },
+        [contentField]: "channel news",
+        ...(contentField === "caption"
+          ? { photo: [{ file_id: "channel-photo" }] }
+          : {}),
+      }
+      const update = { update_id: 1, [updateType]: post }
+      const events = parseTelegramUpdate(update)
+
+      expect(events).toHaveLength(1)
+      const event = events[0]
+      expect(event?.kind).toBe(updateType === "edited_channel_post" ? "edited" : "message")
+      expect(String(event?.thread_id)).toBe("telegram:-100555")
+      if (event?.kind !== "message" && event?.kind !== "edited") {
+        return
+      }
+      expect(event.message_id).toBe("42")
+      expect(event.text).toBe("channel news")
+      expect(event.sender).toBe("")
+      expect(event.raw).toEqual(update)
+      if (event.kind === "message") {
+        expect(event.chat_kind).toBe("channel")
+        if (contentField === "caption") {
+          expect(event.attachments[0]?.file_id).toBe("channel-photo")
+        }
+      }
+    })
+  }
+}
+
 test("golden Telegram parse vectors", async () => {
   const file = Bun.file(vectorsUrl)
   expect(await file.exists()).toBe(true)

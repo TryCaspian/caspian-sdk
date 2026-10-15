@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from caspian.adapters.telegram import TelegramAdapter
 from caspian.core.commands import (
     Delete,
@@ -20,6 +22,33 @@ from caspian.core.types import Action, Attachment, Button, ConnectionId, ThreadI
 
 class TestTelegramParse:
     """adapter.parse turns Update bytes into kernel Events."""
+
+    @pytest.mark.parametrize("update_type", ["channel_post", "edited_channel_post"])
+    @pytest.mark.parametrize("content_field", ["text", "caption"])
+    def test_parse_channel_post(self, update_type: str, content_field: str) -> None:
+        post = {
+            "message_id": 42,
+            "chat": {"id": -100555, "type": "channel"},
+            content_field: "channel news",
+        }
+        if content_field == "caption":
+            post["photo"] = [{"file_id": "channel-photo"}]
+        update = {"update_id": 1, update_type: post}
+        result = TelegramAdapter().parse(RawInbound(body=json.dumps(update).encode()))
+
+        assert result.is_ok
+        assert len(result.value) == 1
+        event = result.value[0]
+        assert event.kind == ("edited" if update_type == "edited_channel_post" else "message")
+        assert event.thread_id == "telegram:-100555"
+        assert event.message_id == "42"
+        assert event.text == "channel news"
+        assert event.sender == ""
+        assert event.raw == post
+        if update_type == "channel_post":
+            assert event.chat_kind == "channel"
+            if content_field == "caption":
+                assert event.attachments[0].file_id == "channel-photo"
 
     def test_parse_text_message(self) -> None:
         adapter = TelegramAdapter()

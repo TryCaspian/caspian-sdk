@@ -233,8 +233,16 @@ export const parseTelegramUpdate = (raw: unknown): ReadonlyArray<Event> => {
     return parseMessage(raw.message, payload)
   }
 
+  if (isRecord(raw.channel_post)) {
+    return parseMessage(raw.channel_post, payload)
+  }
+
   if (isRecord(raw.edited_message)) {
     return parseEdited(raw.edited_message, payload)
+  }
+
+  if (isRecord(raw.edited_channel_post)) {
+    return parseEdited(raw.edited_channel_post, payload)
   }
 
   if (isRecord(raw.callback_query)) {

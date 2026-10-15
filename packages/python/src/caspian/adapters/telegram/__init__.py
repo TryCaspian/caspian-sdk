@@ -76,8 +76,12 @@ class _Telegram:
 
         if "message" in update:
             events.extend(self._parse_message(update["message"]))
+        elif "channel_post" in update:
+            events.extend(self._parse_message(update["channel_post"]))
         elif "edited_message" in update:
             events.extend(self._parse_edited(update["edited_message"]))
+        elif "edited_channel_post" in update:
+            events.extend(self._parse_edited(update["edited_channel_post"]))
         elif "callback_query" in update:
             events.extend(self._parse_callback(update["callback_query"]))
         elif "message_reaction" in update:
